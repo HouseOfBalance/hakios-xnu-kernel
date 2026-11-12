@@ -45,6 +45,10 @@ is rebased onto it, work is carried over.
 | `tools/`: `mk-ath11k.sh`, `mk-wlfw.sh`, `qmi-test/`, `wpa-test/`, `ufs-*.py`, `darwin-write.py`, `flash-fingerprint.sh`, `buttons-*.sh`, `camsensor.py`, `new-workspace.sh`, `kernel-delta.sh`, `update-prebuilt.sh` | Tools of the Qualcomm phone or of the old layout | branch `mtk` |
 | Pictures in `docs/` | They show another system's interface | nowhere in the new repositories |
 
+Comments in the kernel, the loader and the tools still name files of the list above in about 130 places
+(`hakios_adreno.c`, `hakios_ufs.c`, `xnuloader`, `HakiosGPU`): they are where a design was taken
+from, and those files are in xnu-kernel-qcom under their names there (`redwood_…`).
+
 `userland/src/var_store.c` came over but has nothing to write to: it kept `/private/var` in a
 partition through the Qualcomm phone's storage driver. On a MediaTek phone the kernel's eMMC driver
 only reads. `userland/build.sh` still has the branches that packed the Qualcomm phone's firmware
