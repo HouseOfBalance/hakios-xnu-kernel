@@ -42,7 +42,7 @@ compile_main(void *context)
 	}
 	/* No entry names: a module out of a .metallib has one entry point, and the compiler takes it. Named, it insists
 	 * the two agree, which refuses an alias -- a second function-list entry over another's module, which is how
-	 * QuartzCore's library here answers for the few functions iOS 16.5 asks for and the macOS library it comes from
+	 * QuartzCore's library here answers for the few functions the system image 20F66 asks for and the macOS library it comes from
 	 * has not got (p3_clamp, display_overdrive_*, path_stroke_*: userland/build.sh, QC_METALLIB). */
 	c->render = air->render_create(c->device, r->vertex, r->vertex_size, nullptr, r->fragment, r->fragment_size,
 				       nullptr, c->shape, c->info, c->why, c->why_size);

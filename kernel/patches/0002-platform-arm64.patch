@@ -250,7 +250,7 @@ diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
  	ppnum_t pp)
  {
 -	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
-+	/* (redwood: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
++	/* (hakios: the page number is 32 bits wide and memory goes on above 4 GB: widen before shifting) */
 +	flush_dcache((vm_offset_t) pp << PAGE_SHIFT, PAGE_SIZE, TRUE);
  }
  
@@ -434,7 +434,7 @@ diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
 +	}
 +}
 +
-+/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (redwood_cpufreq.c's cpuload). */
++/* How long processor cpu_id has been idle since it started, in mach_absolute_time() units (hakios_cpufreq.c's cpuload). */
 +bool ml_cpu_idle_time(int cpu_id, uint64_t *idle);
 +
 +bool

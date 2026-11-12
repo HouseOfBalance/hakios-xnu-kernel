@@ -44,5 +44,19 @@ for f in $(found -E "0x[0-9a-f]{2}, ?0x[0-9a-f]{2}, ?0x[0-9a-f]{2}, ?0x[0-9a-f]{
 	n=$(grep -cE "0x[0-9a-f]{2}, ?0x[0-9a-f]{2}, ?0x[0-9a-f]{2}, ?0x[0-9a-f]{2}, ?0x" "$f")
 	[ "$n" -gt 64 ] && say "byte array ($n rows): $f"
 done
+# The working name of the project's first phone: gone from code, paths and interfaces. It is said only
+# where the origin is told and where the old names are mapped to the new ones.
+echo "$files" | grep -i "redw[o]od" | while read -r f; do echo "old name in a path: $f"; done | grep . && bad=1
+found -i "redw[o]od" | grep -vE "^(README\.md|README\.ru\.md|NOTICE\.md|CHANGELOG\.md|docs/migrating\.md)$" |
+	while read -r f; do echo "old name: $f"; done | grep . && bad=1
+# The system image's trade names: only as the literal names of inputs and of what the system itself
+# looks for, and in the notices. Everything else says "the system" and "the reference phone".
+allowed='iPhoneOS[0-9.]*\.sdk|iPhone10,3|toolchain/linux/iphone|apple-ios|subsystem = .ios.|API_UNAVAILABLE\(ios\)|~iphone|/System/Volumes/iOS|chosen\[64\] = "iPhone"|trademarks? of Apple|товарные знаки'
+echo "$files" | grep -vE "^(NOTICE\.md|CHANGELOG\.md|docs/migrating\.md|kernel/patches/.*\.patch)$" | tr '\n' '\0' |
+	xargs -0 grep -nIwiE "ios|iphone" 2>/dev/null | grep -v "^$me:" | grep -vE "$allowed" |
+	while read -r l; do echo "the system's trade name: ${l:0:150}"; done | grep . && bad=1
+# ... and in the patches, on the lines they add (the lines around them are Apple's)
+grep -n "^+" kernel/patches/*.patch 2>/dev/null | grep -wiE "ios|iphone" | grep -vE "$allowed" |
+	while read -r l; do echo "the system's trade name: ${l:0:150}"; done | grep . && bad=1
 [ $bad = 0 ] && echo "nothing found"
 exit $bad

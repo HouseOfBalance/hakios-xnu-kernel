@@ -1,15 +1,15 @@
 /*
- * The data volume of iOS between two boots: /private/var packed into the phone's flash and
+ * The data volume of the system between two boots: /private/var packed into the phone's flash and
  * unpacked out of it again.
  *
  * /private/var is a memory filesystem (bsd/miscfs/ramfs), mounted empty by init at every boot and
- * given the directories of the template iOS ships with (system/mkvarskel.py), so nothing iOS keeps
+ * given the directories of the template the system ships with (system/mkvarskel.py), so nothing the system keeps
  * there outlives the boot that wrote it: no home screen layout, no application data, no baked
  * wallpaper. The kernel's APFS driver reads and does not write, and writing APFS is not the point
  * here -- what is needed is that the bytes come back. So the tree is packed into a plain archive
  * and the archive is written into the one place on the phone's flash this port owns and nothing of
- * it uses: the partition darwin, past the iOS volume and both cryptexes. The kernel takes those
- * writes on /dev/rufs_darwin alone and refuses anything else (bsd/dev/redwood_ufs.c, ufs_write=1).
+ * it uses: the partition darwin, past the system's volume and both cryptexes. The kernel takes those
+ * writes on /dev/rufs_darwin alone and refuses anything else (bsd/dev/hakios_ufs.c, ufs_write=1).
  *
  *   var_store save          pack /private/var into the store
  *   var_store load          unpack the newest good store into /private/var (init, at boot)
@@ -19,15 +19,15 @@
  *   var_store erase         forget both slots (the next boot starts empty again)
  *   var_store stamp PATH    write a line into PATH saying when: a marker for a run
  *
- * Nobody has to remember to save. `watch` registers with the kernel (kern.redwood.var_save), and
+ * Nobody has to remember to save. `watch` registers with the kernel (kern.hakios.var_save), and
  * on the orderly way back to the loader -- the run's time up, or "xl stop" -- the kernel asks it
- * for the volume and waits, bounded, before it goes (bsd/dev/redwood_ufs.c,
- * redwood_var_save_on_return). A save every SECS seconds is there as well but is not the default:
+ * for the volume and waits, bounded, before it goes (bsd/dev/hakios_ufs.c,
+ * hakios_var_save_on_return). A save every SECS seconds is there as well but is not the default:
  * one costs seconds of the run and a hundred-odd megabytes of flash, and while it runs the
  * storage is read through the loader rather than through this kernel's own driver.
  *
  * One saver at a time: a write to the store is refused unless the writer holds the claim
- * (kern.redwood.var_busy), so two of them cannot interleave into one slot. Even if they did, the
+ * (kern.hakios.var_busy), so two of them cannot interleave into one slot. Even if they did, the
  * slot being written is never the one holding the newest good archive, and a header is written
  * last and over a zeroed one -- so the worst an interrupted or doubled save can do is lose itself.
  *
@@ -55,7 +55,7 @@
 #define ROOT            "/private/var"
 #define MAX_PATH        1024
 #define MAX_DEPTH       32
-#define MAX_XATTR       (256u << 10)            /* one attribute's value; iOS keeps small ones */
+#define MAX_XATTR       (256u << 10)            /* one attribute's value; the system keeps small ones */
 #define XPACK           (512u << 10)            /* all the attributes of one file, packed */
 #define LINKS           8192                    /* names remembered for hard links */
 #define LINK_PATH       256
@@ -168,7 +168,7 @@ sysctl_set_int(const char *name, int value)
 static int
 claim(void)
 {
-	if (sysctl_set_int("kern.redwood.var_busy", 1) != 0) {
+	if (sysctl_set_int("kern.hakios.var_busy", 1) != 0) {
 		printf("var_store: the store is claimed by another saver (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -178,7 +178,7 @@ claim(void)
 static void
 release(void)
 {
-	(void)sysctl_set_int("kern.redwood.var_busy", 0);
+	(void)sysctl_set_int("kern.hakios.var_busy", 0);
 }
 
 /* ---- checksum (the same one the loader reads a write back with) ---- */
@@ -301,7 +301,7 @@ out_flush(int last)
 	}
 	/*
 	 * What is already there is read first, and if it is what we were about to write, it is not
-	 * written. A volume that iOS has stopped touching packs to the very same bytes -- measured:
+	 * written. A volume that the system has stopped touching packs to the very same bytes -- measured:
 	 * two saves a minute apart came out with the same checksum -- and the slots hold alternate
 	 * copies of it, so a save that changes nothing then costs reads and no writes at all. Reads
 	 * of this storage are several times cheaper than writes, and flash wears by writing.
@@ -481,7 +481,7 @@ newest(struct head *out_head)
  * How much of this save is new since the last one: an entry whose time of writing is later than
  * the second the previous generation was saved at. It costs nothing to count -- the walk has every
  * entry's time in hand anyway -- and it is what says whether saving only the difference would be
- * worth building, or whether iOS rewrites the volume faster than any such thing could help.
+ * worth building, or whether the system rewrites the volume faster than any such thing could help.
  */
 static uint64_t last_saved_at, changed_entries, changed_bytes;
 
@@ -522,7 +522,7 @@ link_name(uint64_t ino, const char *relative)
 }
 
 /*
- * The extended attributes of path -- iOS keeps container metadata and much else in them -- packed
+ * The extended attributes of path -- the system keeps container metadata and much else in them -- packed
  * into a buffer of their own, because the entry's head says how many there are and has to go out
  * before them. One that does not fit is left out and counted.
  */
@@ -1246,8 +1246,8 @@ save_once(void)
 	/*
 	 * The device is opened for the save and closed again, not held: while a write is in flight
 	 * this kernel's own transfer list is out of the controller, and it goes back in when the
-	 * device is closed (bsd/dev/redwood_ufs.c, ufs_cclose). A watcher that kept the device open
-	 * would leave iOS reading the flash through the loader for the rest of the run.
+	 * device is closed (bsd/dev/hakios_ufs.c, ufs_cclose). A watcher that kept the device open
+	 * would leave the system reading the flash through the loader for the rest of the run.
 	 */
 	fd = open(DEVICE, O_RDWR, 0);
 	if (fd < 0) {
@@ -1275,7 +1275,7 @@ watch(int seconds)
 	}
 	close(fd);
 	fd = -1;
-	if (sysctl_set_int("kern.redwood.var_save", VAR_SAVE_IDLE) != 0) {
+	if (sysctl_set_int("kern.hakios.var_save", VAR_SAVE_IDLE) != 0) {
 		printf("var_store: this kernel does not keep the data volume (%s)\n", strerror(errno));
 		return 0;
 	}
@@ -1291,7 +1291,7 @@ watch(int seconds)
 		struct timeval tv = { 0, 0 };
 		int state = VAR_SAVE_NONE;
 
-		if (sysctl_int("kern.redwood.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
+		if (sysctl_int("kern.hakios.var_save", &state) == 0 && state == VAR_SAVE_WANTED) {
 			asked = 1;
 		}
 		gettimeofday(&tv, NULL);
@@ -1304,7 +1304,7 @@ watch(int seconds)
 			last = (uint64_t)tv.tv_sec;
 			if (asked) {
 				/* answered either way: the kernel is waiting on this to go back to the loader */
-				(void)sysctl_set_int("kern.redwood.var_save", VAR_SAVE_DONE);
+				(void)sysctl_set_int("kern.hakios.var_save", VAR_SAVE_DONE);
 				return ok;
 			}
 		}
@@ -1363,7 +1363,7 @@ main(int argc, char **argv, char **envp)
 	(void)envp;
 	crc_init();
 	if (strcmp(what, "stamp") == 0) {
-		return stamp(argc > 2 ? argv[2] : "/private/var/redwood-stamp") ? 0 : 1;
+		return stamp(argc > 2 ? argv[2] : "/private/var/hakios-stamp") ? 0 : 1;
 	}
 	buffer = mmap(NULL, BUFFER, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	links = mmap(NULL, LINKS * sizeof(*links), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);

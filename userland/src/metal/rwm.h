@@ -1,11 +1,11 @@
 /*
  * The core of this port's Metal driver, in C++ (userland/src/metal/*.cpp), as C for the plug-in
- * (src/redwoodmetal.m). The shape is hakios-metal's (include/hakios-metal/hakios_metal.h on the
+ * (src/hakiosmetal.m). The shape is hakios-metal's (include/hakios-metal/hakios_metal.h on the
  * hakios-metal branch): the plug-in keeps Metal's own classes -- subclasses of Metal's private base
  * classes, which only Objective-C can make -- and the core keeps the work behind them, so that the
  * work can be built and read without the Objective-C runtime around it.
  *
- * Moved here so far: the compiler library (libredwoodair.dylib, the contract of
+ * Moved here so far: the compiler library (libhakiosair.dylib, the contract of
  * tools/mesa/air/air_metal.h) and buffers. The plug-in used to carry a copy of air_metal.h's
  * declarations "because build.sh knows nothing of Mesa's tree"; it is the same repository, so the
  * core includes the original, and a call's type is the library's own (__typeof__ of its prototype)
@@ -27,8 +27,8 @@ extern "C" {
 #endif
 
 /*
- * What the driver says, core and plug-in alike: "redwoodmetal[process pid]: " and the line, to stdout,
- * flushed; the first of each sentence that says something went wrong also to kern.redwood.say.
+ * What the driver says, core and plug-in alike: "hakiosmetal[process pid]: " and the line, to stdout,
+ * flushed; the first of each sentence that says something went wrong also to kern.hakios.say.
  */
 void rwm_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
@@ -118,7 +118,7 @@ const struct rwm_air *rwm_air(void);
 /*
  * A buffer. With the compiler library loaded the memory is Mesa's (rwa_buffer_create), because only
  * such a buffer can be handed to a dispatch or a draw; without it, the kernel's GEM interface on
- * `gpu` (the device's RedwoodGPU client, not owned) gives memory a program can still write. Either
+ * `gpu` (the device's HakiosGPU client, not owned) gives memory a program can still write. Either
  * way it is write-combined and the GPU reads it through no cache of this processor.
  * NULL with the reason in `why` when neither would give it.
  */
@@ -465,7 +465,7 @@ void rwm_drawn_add(struct rwm_drawn *drawn, uint32_t surface);
 void rwm_drawn_done(const struct rwm_drawn *drawn, uint64_t seq);
 
 /* at -commit, over a buffer's works: the surfaces they read counted in use, those they draw into pending for the
- * display, and the surfaces they sample copied in (the plug-in's -redwoodCopyInNow, counted in rwm_perf) */
+ * display, and the surfaces they sample copied in (the plug-in's -hakiosCopyInNow, counted in rwm_perf) */
 void rwm_works_sampled(struct rwm_work *const *works, unsigned count, struct rwm_sampled *sampled);
 void rwm_works_drawn(struct rwm_work *const *works, unsigned count, struct rwm_drawn *drawn);
 void rwm_works_copy_in(struct rwm_work *const *works, unsigned count);
@@ -506,7 +506,7 @@ int rwm_run_works(struct rwa_device *device, struct rwm_work *const *works, unsi
 
 /*
  * A command buffer (src/metal/cmdbuf.cpp): Metal's status numbers (MTLCommandBufferStatus -- until 21 October this
- * driver answered 3, 4 and 6, see the note above RedwoodMetalCommandBuffer), when it was made, its last GPU job, whether
+ * driver answered 3, 4 and 6, see the note above HakiosMetalCommandBuffer), when it was made, its last GPU job, whether
  * the driver's worker has it and has done it, and its surfaces. The plug-in keeps its works alive, its NSError, its
  * handlers and the queue's slot.
  */
@@ -654,12 +654,12 @@ void rwm_compile_unlock(void);
 /* CoreAnimation's draw.PBGRAXm_ pipelines given the fixed function's premultiplied source-over (the Mali reads
  * [[color(0)]] as 0); boot-arg rwm_xm_blend=0 leaves them */
 void rwm_xm_blend_apply(const char *label, struct rwa_render_shape *shape);
-/* what this process built, once per label, at once to kern.redwood.host_keep as "rwr PROCESS N K/M text";
+/* what this process built, once per label, at once to kern.hakios.host_keep as "rwr PROCESS N K/M text";
  * vertex and fragment: the functions' names for one whose shaders are not the pipeline library's, else NULL */
 void rwm_recipe_record(const char *label, const struct rwa_render_shape *shape, const char *vertex,
 		       const char *fragment, const struct rwa_constant *vc, unsigned nv, const struct rwa_constant *fc,
 		       unsigned nf);
-void rwm_recipes_say(void);       /* all of them to the log (the com.redwood.rwm_recipes notification) */
+void rwm_recipes_say(void);       /* all of them to the log (the com.hakios.rwm_recipes notification) */
 void rwm_recipes_say_new(void);   /* those built since the last time (once a minute) */
 /* the warm-up: this process's recipes read from the first of `files` that opens; how many */
 unsigned rwm_warm_load(const char *const *files, unsigned file_count);

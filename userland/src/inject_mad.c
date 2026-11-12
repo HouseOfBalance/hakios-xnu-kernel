@@ -1,5 +1,5 @@
 /*
- * libredwood.mad.dylib: code of ours inside mobileactivationd.
+ * libhakios.mad.dylib: code of ours inside mobileactivationd.
  *
  * mobileactivationd's DeviceType::init reads four MobileGestalt fusing answers --
  * CertificateProductionStatus, EffectiveProductionStatusAp, CertificateSecurityMode and
@@ -39,20 +39,20 @@ say(const char *format, ...)
 	}
 	write(2, line, (size_t)n);
 	{
-		int fd = open("/private/var/mobile/redwood_mad.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+		int fd = open("/private/var/mobile/hakios_mad.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
 
 		if (fd >= 0) {
 			write(fd, line, (size_t)n);
 			close(fd);
 		}
 	}
-	/* and into the kernel's kept log (kern.redwood.say, "!" = kept), so it comes back in the run log */
+	/* and into the kernel's kept log (kern.hakios.say, "!" = kept), so it comes back in the run log */
 	{
 		char kept[520];
 		int k = snprintf(kept, sizeof(kept), "!%.*s", n > 0 && line[n - 1] == '\n' ? n - 1 : n, line);
 
 		if (k > 0) {
-			sysctlbyname("kern.redwood.say", NULL, NULL, kept, (size_t)k);
+			sysctlbyname("kern.hakios.say", NULL, NULL, kept, (size_t)k);
 		}
 	}
 }
@@ -92,7 +92,7 @@ watched_MGCopyAnswer(CFStringRef key)
 		char name[64] = "";
 
 		CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8);
-		say("redwood: mad: MGCopyAnswer(%s) -> forced %d (dev-fused)\n", name, forced);
+		say("hakios: mad: MGCopyAnswer(%s) -> forced %d (dev-fused)\n", name, forced);
 		return CFNumberCreate(NULL, kCFNumberIntType, &forced);
 	}
 	return MGCopyAnswer(key);
@@ -106,10 +106,10 @@ __attribute__((used)) static struct {
 
 __attribute__((constructor))
 static void
-redwood_mad_init(void)
+hakios_mad_init(void)
 {
 	const char *name = getprogname();
 
 	ours = name != NULL && strcmp(name, "mobileactivationd") == 0;
-	say("redwood: mad: ours is in, loaded by \"%s\"%s\n", name != NULL ? name : "(null)", ours ? "" : " (watching nothing)");
+	say("hakios: mad: ours is in, loaded by \"%s\"%s\n", name != NULL ? name : "(null)", ours ? "" : " (watching nothing)");
 }

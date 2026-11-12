@@ -1,6 +1,6 @@
 /*
  * tolog [NAME=VALUE...] PROGRAM [ARGUMENT...]: run a program (with those in its environment) and hand every line it prints (standard output and
- * error together) to the kernel as a line to keep (kern.redwood.say, "!" first), which the kernel
+ * error together) to the kernel as a line to keep (kern.hakios.say, "!" first), which the kernel
  * says again every minute: a job's own output is kept nowhere, and what it printed early in a run
  * would otherwise be in the middle of the log, which is not kept. The lines are said as they come;
  * the last one says how the program ended.
@@ -23,7 +23,7 @@ keep(const char *text)
 	char line[200];
 
 	snprintf(line, sizeof(line), "%s%s", plain ? "" : "!", text);
-	sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 }
 
 int

@@ -1,5 +1,5 @@
 /*
- * libredwood.kc.dylib -- injected into akd.
+ * libhakios.kc.dylib -- injected into akd.
  *
  * Why: Apple ID sign-in persists ~20 GrandSlam tokens into the keychain. One of them,
  * com.apple.gs.icloud.storage.buy, is stored in the protection class
@@ -11,7 +11,7 @@
  * (PersistGrandslamTokens -> Global signout -> the account is removed -> "Could Not Sign In"),
  * although every other token and the account credential itself persist fine.
  *
- * A genuine passcode-free iPhone never hits this because such a token would not be put in a
+ * A genuine passcode-free the reference phone never hits this because such a token would not be put in a
  * passcode-only class. So, only for akd, we rewrite the one unsatisfiable protection class to its
  * passcode-free neighbour, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly ("cku"): same
  * this-device-only confinement and same "available after first unlock" lifetime, but wrapped with
@@ -74,18 +74,18 @@ say(const char *format, ...)
 
 		write(2, line, (size_t)n);
 		/* Also to a file the kernel log flood cannot evict. */
-		fd = open("/private/var/root/redwood_kc.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+		fd = open("/private/var/root/hakios_kc.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
 		if (fd >= 0) {
 			write(fd, line, (size_t)n);
 			close(fd);
 		}
-		/* and into the kernel's kept log (kern.redwood.say, "!" = kept), so it comes back in the run log */
+		/* and into the kernel's kept log (kern.hakios.say, "!" = kept), so it comes back in the run log */
 		{
 			char kept[280];
 			int k = snprintf(kept, sizeof(kept), "!%.*s", n > 0 && line[n - 1] == '\n' ? n - 1 : n, line);
 
 			if (k > 0) {
-				sysctlbyname("kern.redwood.say", NULL, NULL, kept, (size_t)k);
+				sysctlbyname("kern.hakios.say", NULL, NULL, kept, (size_t)k);
 			}
 		}
 	}
@@ -123,7 +123,7 @@ downgrade(CFDictionaryRef dict)
 		}
 		CFDictionaryRemoveValue(copy, kSecAttrAccessControl);
 		CFDictionarySetValue(copy, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
-		say("redwood: kc: stripped SecAccessControl -> AfterFirstUnlockThisDeviceOnly\n");
+		say("hakios: kc: stripped SecAccessControl -> AfterFirstUnlockThisDeviceOnly\n");
 		return copy;
 	}
 
@@ -135,7 +135,7 @@ downgrade(CFDictionaryRef dict)
 			return NULL;
 		}
 		CFDictionarySetValue(copy, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
-		say("redwood: kc: downgraded WhenPasscodeSetThisDeviceOnly -> AfterFirstUnlockThisDeviceOnly\n");
+		say("hakios: kc: downgraded WhenPasscodeSetThisDeviceOnly -> AfterFirstUnlockThisDeviceOnly\n");
 		return copy;
 	}
 	return NULL;
@@ -156,7 +156,7 @@ trace_call(const char *fn, CFDictionaryRef d)
 	if (service != NULL && CFGetTypeID(service) == CFStringGetTypeID()) {
 		CFStringGetCString(service, svc, sizeof(svc), kCFStringEncodingUTF8);
 	}
-	say("redwood: kc: %s service=\"%s\" accessControl=%s\n", fn, svc, ac != NULL ? "YES" : "no");
+	say("hakios: kc: %s service=\"%s\" accessControl=%s\n", fn, svc, ac != NULL ? "YES" : "no");
 }
 
 /*
@@ -213,17 +213,17 @@ install_hooks(void)
 		h = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
 	}
 	if (h == NULL) {
-		say("redwood: kc: dlopen(libsubstrate) failed: %s\n", dlerror());
+		say("hakios: kc: dlopen(libsubstrate) failed: %s\n", dlerror());
 		return;
 	}
 	MSHookFunction = (MSHookFunction_t)dlsym(h, "MSHookFunction");
 	if (MSHookFunction == NULL) {
-		say("redwood: kc: MSHookFunction not found\n");
+		say("hakios: kc: MSHookFunction not found\n");
 		return;
 	}
 	MSHookFunction((void *)SecItemAdd, (void *)hooked_SecItemAdd, (void **)&orig_SecItemAdd);
 	MSHookFunction((void *)SecItemUpdate, (void *)hooked_SecItemUpdate, (void **)&orig_SecItemUpdate);
-	say("redwood: kc: inline hooks installed (SecItemAdd=%p SecItemUpdate=%p)\n",
+	say("hakios: kc: inline hooks installed (SecItemAdd=%p SecItemUpdate=%p)\n",
 	    (void *)orig_SecItemAdd, (void *)orig_SecItemUpdate);
 
 	/*
@@ -234,14 +234,14 @@ install_hooks(void)
 	 */
 	{
 		const void *k[2] = { kSecClass, kSecAttrService };
-		const void *v[2] = { kSecClassGenericPassword, CFSTR("redwood.kc.hooktest") };
+		const void *v[2] = { kSecClassGenericPassword, CFSTR("hakios.kc.hooktest") };
 		CFDictionaryRef q = CFDictionaryCreate(NULL, k, v, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 		int before = hook_fired;
 
 		SecItemAdd(q, NULL);
 		SecItemDelete(q);
 		CFRelease(q);
-		say("redwood: kc: hook self-test: hooked_SecItemAdd fired=%s\n", hook_fired > before ? "YES" : "NO");
+		say("hakios: kc: hook self-test: hooked_SecItemAdd fired=%s\n", hook_fired > before ? "YES" : "NO");
 	}
 }
 
@@ -265,7 +265,7 @@ probe_class(const char *label, CFStringRef accessible)
 
 	data = CFDataCreate(NULL, &one, 1);
 	keys[0] = kSecClass;          vals[0] = kSecClassGenericPassword;
-	keys[1] = kSecAttrService;    vals[1] = CFSTR("redwood.kc.probe");
+	keys[1] = kSecAttrService;    vals[1] = CFSTR("hakios.kc.probe");
 	keys[2] = kSecAttrAccount;    vals[2] = account;
 	keys[3] = kSecAttrAccessible; vals[3] = accessible;
 	query = CFDictionaryCreate(NULL, keys, vals, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -278,7 +278,7 @@ probe_class(const char *label, CFStringRef accessible)
 		CFRelease(add_q);
 	}
 	del = SecItemDelete(query);
-	say("redwood: kc: probe %s (%s): SecItemAdd=%d SecItemDelete=%d\n", label,
+	say("hakios: kc: probe %s (%s): SecItemAdd=%d SecItemDelete=%d\n", label,
 	    accessible == kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly ? "akpu" : "cku", (int)add, (int)del);
 	CFRelease(query);
 	CFRelease(data);
@@ -306,14 +306,14 @@ probe_acl(const char *label, CFTypeRef protection, SecAccessControlCreateFlags f
 	CFDataRef data = CFDataCreate(NULL, &one, 1);
 
 	if (ac == NULL) {
-		say("redwood: kc: probe %s: SecAccessControlCreateWithFlags FAILED (err set=%d)\n", label, err != NULL);
+		say("hakios: kc: probe %s: SecAccessControlCreateWithFlags FAILED (err set=%d)\n", label, err != NULL);
 		if (err) { CFRelease(err); }
 		CFRelease(account);
 		CFRelease(data);
 		return;
 	}
 	keys[0] = kSecClass;             vals[0] = kSecClassGenericPassword;
-	keys[1] = kSecAttrService;       vals[1] = CFSTR("redwood.kc.probe");
+	keys[1] = kSecAttrService;       vals[1] = CFSTR("hakios.kc.probe");
 	keys[2] = kSecAttrAccount;       vals[2] = account;
 	keys[3] = kSecAttrAccessControl; vals[3] = ac;
 	add_q = CFDictionaryCreateMutable(NULL, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -325,7 +325,7 @@ probe_acl(const char *label, CFTypeRef protection, SecAccessControlCreateFlags f
 	CFDictionaryRemoveValue(add_q, kSecValueData);
 	CFDictionaryRemoveValue(add_q, kSecAttrAccessControl);
 	del = SecItemDelete(add_q);
-	say("redwood: kc: probe %s (ACL flags %#x): SecItemAdd=%d SecItemDelete=%d\n", label, flags, (int)add, (int)del);
+	say("hakios: kc: probe %s (ACL flags %#x): SecItemAdd=%d SecItemDelete=%d\n", label, flags, (int)add, (int)del);
 	CFRelease(add_q);
 	CFRelease(ac);
 	CFRelease(account);
@@ -334,7 +334,7 @@ probe_acl(const char *label, CFTypeRef protection, SecAccessControlCreateFlags f
 
 __attribute__((constructor))
 static void
-redwood_kc_init(void)
+hakios_kc_init(void)
 {
 	const char *name = getprogname();
 
@@ -345,7 +345,7 @@ redwood_kc_init(void)
 	 */
 	ours = name != NULL && (strcmp(name, "akd") == 0 || strcmp(name, "accountsd") == 0
 	    || strcmp(name, "itunesstored") == 0 || strcmp(name, "appstored") == 0);
-	say("redwood: kc: loaded by \"%s\"%s\n", name != NULL ? name : "(null)", ours ? "" : " (watching nothing)");
+	say("hakios: kc: loaded by \"%s\"%s\n", name != NULL ? name : "(null)", ours ? "" : " (watching nothing)");
 	if (ours) {
 		install_hooks();
 	}

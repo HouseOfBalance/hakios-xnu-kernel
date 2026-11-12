@@ -66,34 +66,34 @@ diff --git a/bsd/conf/files b/bsd/conf/files
  
  bsd/dev/monotonic.c optional monotonic
 +bsd/dev/hakios_board.c		standard
-+bsd/dev/redwood_input.c		standard
-+bsd/dev/redwood_virtio_input.c	standard
-+bsd/dev/redwood_tcm.c	standard
-+bsd/dev/redwood_mtkkeys.c	standard
-+bsd/dev/redwood_mali.c	standard
-+bsd/dev/redwood_connsys.c	standard
-+bsd/dev/redwood_btsk.c	standard
-+bsd/dev/redwood_mtkwifi.c	standard
-+bsd/dev/redwood_wpa.c	standard
-+bsd/dev/redwood_emmc.c	standard
-+bsd/dev/redwood_ustack.c	standard
-+bsd/dev/redwood_scp.c	standard
-+bsd/dev/redwood_battery.c	standard
-+bsd/dev/redwood_net.c		standard
-+bsd/dev/redwood_virtio_net.c	standard
-+bsd/dev/redwood_apple80211.c	standard
-+bsd/dev/redwood_audio.c		standard
-+bsd/dev/redwood_virtio_sound.c	standard
-+bsd/dev/redwood_guard.c		standard
-+bsd/dev/redwood_mtkcam.c	standard
-+bsd/dev/redwood_mtkbatt.c	standard
-+bsd/dev/redwood_fbgrab.c	standard
-+bsd/dev/redwood_image.c		standard
-+bsd/dev/redwood_virtio_blk.c	standard
-+bsd/dev/redwood_sparse.c	standard
-+bsd/dev/redwood_apfs_check.c	optional apfs
-+bsd/dev/redwood_sta.c		standard
-+bsd/dev/redwood_wifi_given.c	standard
++bsd/dev/hakios_input.c		standard
++bsd/dev/hakios_virtio_input.c	standard
++bsd/dev/mtk_tcm.c	standard
++bsd/dev/mtk_keys.c	standard
++bsd/dev/mtk_mali.c	standard
++bsd/dev/mtk_connsys.c	standard
++bsd/dev/mtk_btsk.c	standard
++bsd/dev/mtk_wifi.c	standard
++bsd/dev/hakios_wpa.c	standard
++bsd/dev/mtk_emmc.c	standard
++bsd/dev/hakios_ustack.c	standard
++bsd/dev/mtk_scp.c	standard
++bsd/dev/hakios_battery.c	standard
++bsd/dev/hakios_net.c		standard
++bsd/dev/hakios_virtio_net.c	standard
++bsd/dev/hakios_apple80211.c	standard
++bsd/dev/hakios_audio.c		standard
++bsd/dev/hakios_virtio_sound.c	standard
++bsd/dev/hakios_guard.c		standard
++bsd/dev/mtk_camera.c	standard
++bsd/dev/mtk_battery.c	standard
++bsd/dev/hakios_fbgrab.c	standard
++bsd/dev/hakios_image.c		standard
++bsd/dev/hakios_virtio_blk.c	standard
++bsd/dev/hakios_sparse.c	standard
++bsd/dev/hakios_apfs_check.c	optional apfs
++bsd/dev/hakios_sta.c		standard
++bsd/dev/hakios_wifi_given.c	standard
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
@@ -213,10 +213,10 @@ diff --git a/iokit/conf/files b/iokit/conf/files
 +iokit/Kernel/GenericARMPE.cpp			optional iokitcpp
 +iokit/Kernel/MiniIOSurface.cpp			optional iokitcpp
 +iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
-+iokit/Kernel/RedwoodMali.cpp				optional iokitcpp
-+iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
-+iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
-+iokit/Kernel/RedwoodBluetooth.cpp		optional iokitcpp
++iokit/Kernel/HakiosMali.cpp				optional iokitcpp
++iokit/Kernel/HakiosWLAN.cpp			optional iokitcpp
++iokit/Kernel/HakiosBattery.cpp			optional iokitcpp
++iokit/Kernel/HakiosBluetooth.cpp		optional iokitcpp
 +iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
 +iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
 +iokit/Kernel/MiniFairPlay.cpp			optional iokitcpp
@@ -341,9 +341,9 @@ diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
  LD_KERNEL_LIBS	   = -lcc_kext
 -LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
 +LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
-+# Darwin-on-redwood: objects made outside this tree, linked when the build is given any (the
-+# Wi-Fi driver, see bsd/dev/redwood_lx.c)
-+LD_KERNEL_ARCHIVES += $(REDWOOD_OBJECTS)
++# HakiOS: objects made outside this tree, linked when the build is given any (the
++# Wi-Fi driver, see bsd/dev/hakios_lx.c)
++LD_KERNEL_ARCHIVES += $(HAKIOS_OBJECTS)
  # Link opensource binary library
  ifneq ($(filter T6000 T8101 VMAPPLE T6000 T8101 VMAPPLE,$(CURRENT_MACHINE_CONFIG)),)
  	LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a

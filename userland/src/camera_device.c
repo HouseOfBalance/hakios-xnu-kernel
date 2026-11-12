@@ -1,28 +1,28 @@
 /*
- * The wide camera as iOS's capture stack wants a camera: a FigCaptureDevice with one FigCaptureStream
+ * The wide camera as the system's capture stack wants a camera: a FigCaptureDevice with one FigCaptureStream
  * (the back camera), made for mediaserverd's BWFigCaptureDeviceVendor in place of the one Apple's
- * H10ISP.mediacapture makes of the iPhone's ISP (part of libredwood-media.dylib; inject_media.c
+ * H10ISP.mediacapture makes of the reference phone's ISP (part of libhakios-media.dylib; inject_media.c
  * gives the vendor our device's create function when the kernel has a camera: cam=5).
  *
  * Both are CoreMedia "derived objects" (CMDerivedObjectCreate): a table of functions for the base
- * class (properties) and one for the device or stream class, as H10ISP's are laid out in iOS 16.5:
+ * class (properties) and one for the device or stream class, as H10ISP's are laid out in the system image 20F66:
  *   device  RequestStreams, RelinquishStreams (and a processing session and Pearl calibration, not here)
  *   stream  Start, Stop, AddAttachmentsToSampleBuffer
  * The stream's frames go to the capture graph through the blocks it is given in its property
  * "VideoOutputHandlers" ({ output: { PixelBufferHandler: ^(CVPixelBufferRef, CMTime) } }), for the
  * outputs "VideoOutputConfigurations" describes (size, pixel format) and "VideoOutputsEnabled"
- * switches on. A frame: read from the kernel's /dev/redwood-camera (RAW10), made into a picture by
+ * switches on. A frame: read from the kernel's /dev/hakios-camera (RAW10), made into a picture by
  * camera_isp.c (exposure, white balance, gamma, scaling), one pixel buffer for each output.
  *
- * The formats the stream offers are named as the iPhone X's back camera's are in CMCapture's
+ * The formats the stream offers are named as the reference phone's back camera's are in CMCapture's
  * D22/AVCaptureSession.plist (FigCaptureStreamFormats "Photo" and "Video-60", by the sensor sizes
  * and frame rates the plist matches them by), so that its AVCaptureDevice formats and session presets
  * resolve: the pictures are scaled from the sensor's 4000x3000 to whatever size is asked for.
  *
  * Everything asked of the device and the stream that is not answered here is said in mediaserverd's
- * log ("redwood: camera: ..."), once per property.
+ * log ("hakios: camera: ..."), once per property.
  *
- * STATE (7 November, the Infinix X6826B, docs/camera-x6826b.md): Camera.app's viewfinder shows this camera's frames. What the capture graph needed beyond the
+ * STATE (7 November, the first phone the first phone, the first phone's journal (camera)): Camera.app's viewfinder shows this camera's frames. What the capture graph needed beyond the
  * obvious: tccd running (the camera permission), a processing session (device slot 1: device_processing_session_create), the stream's ModuleInfo (the sensor ID
  * and module IDs that find the sensor's tuning in D22/CameraSetup.plist), VideoOutputsColorInfo, no picture before the graph has enabled the outputs / called
  * Start, and the pictures made in each output's own BufferPool (VideoOutputConfigurations). Not done: autofocus, stills (the shutter), recording, the other cameras.
@@ -51,14 +51,14 @@
 #include <unistd.h>
 #include "camera_isp.h"
 
-void redwood_camera_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void hakios_camera_say(const char *format, ...) __attribute__((format(printf, 1, 2)));
 
 void
-redwood_camera_say(const char *format, ...)
+hakios_camera_say(const char *format, ...)
 {
 	char line[400];
 	va_list ap;
-	int n = snprintf(line, sizeof(line), "redwood: camera: ");
+	int n = snprintf(line, sizeof(line), "hakios: camera: ");
 
 	va_start(ap, format);
 	n += vsnprintf(line + n, sizeof(line) - (size_t)n, format, ap);
@@ -69,14 +69,14 @@ redwood_camera_say(const char *format, ...)
 	line[n++] = '\n';
 	write(2, line, (size_t)n);
 	{
-		/* the kernel keeps the line (kern.redwood.say, "!" first) and says it again every minute: mediaserverd's stderr is not in any log */
+		/* the kernel keeps the line (kern.hakios.say, "!" first) and says it again every minute: mediaserverd's stderr is not in any log */
 		char kept[200];
 
 		snprintf(kept, sizeof(kept), "!%.*s", n - 1 > 190 ? 190 : n - 1, line);
-		sysctlbyname("kern.redwood.say", NULL, NULL, kept, strlen(kept));
+		sysctlbyname("kern.hakios.say", NULL, NULL, kept, strlen(kept));
 	}
 }
-#define say redwood_camera_say
+#define say hakios_camera_say
 #if __has_include("camera_trace_local.h")
 #include "camera_trace_local.h"          /* (not in git: a diagnostic build's CAM_TRACE=1 and CAM_TRACE_STUB=0x...) */
 #endif
@@ -112,7 +112,7 @@ trace_key(const char *who, CFStringRef key)
 	say("%s", tag);
 }
 
-uintptr_t redwood_cache_slide(void);
+uintptr_t hakios_cache_slide(void);
 
 /* who calls us: the return addresses, unslid, for tools/dsc to name (the capture graph's calls on our device and stream) */
 static void
@@ -122,7 +122,7 @@ say_bt(const char *what)
 	void *frames[40];
 	char line[200];
 	int k, used;
-	uintptr_t slide = redwood_cache_slide();
+	uintptr_t slide = hakios_cache_slide();
 
 	if (said++ >= 120) {
 		return;
@@ -142,7 +142,7 @@ say_bt(const char *what)
 /*
  * A trace of CMCapture's Objective-C messages, to see what its capture graph does just before it gives our streams back: every objc_msgSend stub of
  * CMCapture (the objc_stubs section, five instructions each: adrp/ldr of the selector, adrp/ldr of objc_msgSend's pointer in the image's GOT, br)
- * jumps through ONE slot of that GOT; the slot is pointed at redwood_msg_hook, which records (self's class, selector, thread) in a ring and goes on
+ * jumps through ONE slot of that GOT; the slot is pointed at hakios_msg_hook, which records (self's class, selector, thread) in a ring and goes on
  * to the real objc_msgSend with every argument register as it was. dump_msgs() says the last ones of the calling thread.
  */
 struct msg_entry {
@@ -152,9 +152,9 @@ struct msg_entry {
 #define MSG_N 16384
 static struct msg_entry msg_ring[MSG_N];
 static volatile uint64_t msg_count;
-void *redwood_msg_orig;
-void redwood_msg_log(void *self, void *sel);
-void redwood_msg_hook(void);
+void *hakios_msg_orig;
+void hakios_msg_log(void *self, void *sel);
+void hakios_msg_hook(void);
 
 /*
  * Every selector sent since the trace began, and how often (the ring above holds only the last 16384 messages, which the preview's traffic replaces in seconds):
@@ -194,7 +194,7 @@ seltab_note(void *cls, void *sel)
 }
 
 void
-redwood_msg_log(void *self, void *sel)
+hakios_msg_log(void *self, void *sel)
 {
 	uint64_t i = __atomic_fetch_add(&msg_count, 1, __ATOMIC_RELAXED) % MSG_N;
 	void *cls = self != NULL ? (void *)object_getClass((id)self) : NULL;
@@ -220,11 +220,11 @@ seltab_mark(void)
 static void keep_for_host(const char *line);
 static void keep_for_host_fmt(const char *format, ...) __printflike(1, 2);
 
-/* a line for the host, kept whole (kern.redwood.host_keep: the console log keeps only its last 261 KB) */
+/* a line for the host, kept whole (kern.hakios.host_keep: the console log keeps only its last 261 KB) */
 static void
 keep_for_host(const char *line)
 {
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, 400));
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, 400));
 }
 
 static void
@@ -292,7 +292,7 @@ dump_new_selectors(const char *what)
 }
 
 __asm__(
-	".text\n.align 4\n.globl _redwood_msg_hook\n_redwood_msg_hook:\n"
+	".text\n.align 4\n.globl _hakios_msg_hook\n_hakios_msg_hook:\n"
 	"stp x29, x30, [sp, #-0xe0]!\n"
 	"mov x29, sp\n"
 	"stp x0, x1, [sp, #0x10]\n"
@@ -304,7 +304,7 @@ __asm__(
 	"stp q2, q3, [sp, #0x80]\n"
 	"stp q4, q5, [sp, #0xa0]\n"
 	"stp q6, q7, [sp, #0xc0]\n"
-	"bl _redwood_msg_log\n"
+	"bl _hakios_msg_log\n"
 	"ldp q6, q7, [sp, #0xc0]\n"
 	"ldp q4, q5, [sp, #0xa0]\n"
 	"ldp q2, q3, [sp, #0x80]\n"
@@ -315,8 +315,8 @@ __asm__(
 	"ldp x2, x3, [sp, #0x20]\n"
 	"ldp x0, x1, [sp, #0x10]\n"
 	"ldp x29, x30, [sp], #0xe0\n"
-	"adrp x16, _redwood_msg_orig@PAGE\n"
-	"ldr x16, [x16, _redwood_msg_orig@PAGEOFF]\n"
+	"adrp x16, _hakios_msg_orig@PAGE\n"
+	"ldr x16, [x16, _hakios_msg_orig@PAGEOFF]\n"
 	"br x16\n"
 );
 
@@ -327,16 +327,16 @@ static void
 crash_handler(int sig, siginfo_t *info, void *context)
 {
 	ucontext_t *uc = context;
-	uintptr_t slide = redwood_cache_slide(), pc = (uintptr_t)uc->uc_mcontext->__ss.__pc, lr = (uintptr_t)uc->uc_mcontext->__ss.__lr;
+	uintptr_t slide = hakios_cache_slide(), pc = (uintptr_t)uc->uc_mcontext->__ss.__pc, lr = (uintptr_t)uc->uc_mcontext->__ss.__lr;
 	uintptr_t fp = (uintptr_t)uc->uc_mcontext->__ss.__fp;
 	char line[200];
-	int used = snprintf(line, sizeof(line), "!redwood: camera: CRASH signal %d addr %p pc %lx lr %lx frames:", sig, info->si_addr, (unsigned long)(pc - slide), (unsigned long)(lr - slide));
+	int used = snprintf(line, sizeof(line), "!hakios: camera: CRASH signal %d addr %p pc %lx lr %lx frames:", sig, info->si_addr, (unsigned long)(pc - slide), (unsigned long)(lr - slide));
 
 	for (int i = 0; i < 9 && fp != 0 && (fp & 7) == 0 && used < (int)sizeof(line) - 12; i++) {
 		used += snprintf(line + used, sizeof(line) - (size_t)used, " %lx", (unsigned long)((((uintptr_t *)fp)[1] & 0xfffffffffULL) - slide));
 		fp = ((uintptr_t *)fp)[0];
 	}
-	sysctlbyname("kern.redwood.say", NULL, NULL, line, strnlen(line, sizeof(line)));
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strnlen(line, sizeof(line)));
 	if (CAM_TRACE) {
 		keep_for_host(line + 1);
 		dump_new_selectors("crash");
@@ -365,11 +365,11 @@ install_msg_hook(void)
 	static bool done;
 #ifndef CAM_TRACE_STUB
 	/* No address of the user's own cache is kept in the tree: for CAM_TRACE=1 build with -DCAM_TRACE_STUB=0x... (the unslid address of an
-	 * objc_stubs entry of CMCapture in the iOS cache you built from, found with tools/dsc/objcstub.py) */
+	 * objc_stubs entry of CMCapture in the system's cache you built from, found with tools/dsc/objcstub.py) */
 	say("msg hook: CAM_TRACE_STUB is not set in this build: no message trace");
 	return;
 #else
-	uintptr_t stub = (uintptr_t)(CAM_TRACE_STUB) + redwood_cache_slide();
+	uintptr_t stub = (uintptr_t)(CAM_TRACE_STUB) + hakios_cache_slide();
 	const uint32_t *w = (const uint32_t *)stub;
 	uintptr_t page, slot;
 	int64_t imm;
@@ -392,9 +392,9 @@ install_msg_hook(void)
 		say("msg hook: the slot %lx cannot be written (%d)", (unsigned long)slot, kr);
 		return;
 	}
-	redwood_msg_orig = *(void **)slot;
-	*(void **)slot = (void *)redwood_msg_hook;
-	say("msg hook: slot %lx, objc_msgSend %p -> %p", (unsigned long)slot, redwood_msg_orig, (void *)redwood_msg_hook);
+	hakios_msg_orig = *(void **)slot;
+	*(void **)slot = (void *)hakios_msg_hook;
+	say("msg hook: slot %lx, objc_msgSend %p -> %p", (unsigned long)slot, hakios_msg_orig, (void *)hakios_msg_hook);
 #endif /* CAM_TRACE_STUB */
 }
 
@@ -411,7 +411,7 @@ dump_selector_counts(const char *what)
 	char line[200];
 	int used;
 
-	if (redwood_msg_orig == NULL) {
+	if (hakios_msg_orig == NULL) {
 		return;
 	}
 	memset(seen, 0, sizeof(seen));
@@ -538,7 +538,7 @@ dump_msgs(const char *what, unsigned want)
 	static const char *names[600];
 	unsigned have = 0;
 
-	if (redwood_msg_orig == NULL || want > 600) {
+	if (hakios_msg_orig == NULL || want > 600) {
 		return;
 	}
 	for (uint64_t k = 0; k < MSG_N && k < n && got < want; k++) {   /* (the ring holds the last 16384 messages of all threads) */
@@ -570,7 +570,7 @@ dump_msgs(const char *what, unsigned want)
 	say("%s", line);
 }
 
-/* ---- CoreMedia's derived objects, as iOS 16.5 lays them out ---------------------------------------- */
+/* ---- CoreMedia's derived objects, as the system image 20F66 lays them out ---------------------------------------- */
 
 typedef struct OpaqueCMBaseObject *CMBaseObjectRef;
 typedef const void *CMBaseClassID;
@@ -919,7 +919,7 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 		value = CFRetain(port_back);
 	} else if (key_is(key, "ModuleInfo")) {
 		/* what FigCaptureCameraParameters reads (+sensorIDStringFromModuleInfo: formats ["sensorID"] as "0x%04x") to find the tuning data of the sensor in
-		 * D22/CameraSetup.plist: the iPhone X's back camera, 0x0343. Without it the graph has no sensor ID dictionary and BWVISNode refuses to be made. */
+		 * D22/CameraSetup.plist: the reference phone's back camera, 0x0343. Without it the graph has no sensor ID dictionary and BWVISNode refuses to be made. */
 		CFMutableDictionaryRef info = (CFMutableDictionaryRef)new_dict();
 
 		put(info, "sensorID", number_i(0x343));
@@ -981,7 +981,7 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 	} else if (key_is(key, "SupportedPropertiesDictionary")) {
 		value = CFRetain(s->supported);
 	} else if (key_is(key, "FocalLength")) {
-		value = number_f(4.0);          /* (the iPhone X's wide camera's, in millimetres) */
+		value = number_f(4.0);          /* (the reference phone's wide camera's, in millimetres) */
 	} else if (key_is(key, "LensFNumber")) {
 		value = number_f(1.8);
 	} else if (key_is(key, "PixelSize")) {
@@ -989,7 +989,7 @@ stream_copy_property(CMBaseObjectRef o, CFStringRef key, CFAllocatorRef allocato
 		 * The capture-graph builder REQUIRES this of the stream: -[BWFigVideoCaptureStream
 		 * initWithCaptureStream:...] does a getProperty: (not IfSupported:) for it, and without it the
 		 * init fails, so FigVideoCaptureSourcesActivateAndCreateDevices errors and the graph is never
-		 * built. The sensor's pixel pitch in micrometres (the iPhone X wide camera's); any value in
+		 * built. The sensor's pixel pitch in micrometres (the reference phone wide camera's); any value in
 		 * (0, 100) is accepted.
 		 */
 		value = number_f(1.22);
@@ -1110,7 +1110,7 @@ stream_set_property(CMBaseObjectRef o, CFStringRef key, CFTypeRef value)
 	return 0;
 }
 
-/* the flashlight: TorchLevel (0 to 1) as thousandths to the kernel's /dev/redwood-torch (torch=3) */
+/* the flashlight: TorchLevel (0 to 1) as thousandths to the kernel's /dev/hakios-torch (torch=3) */
 static void
 torch_set(struct stream *s, CFTypeRef value)
 {
@@ -1123,10 +1123,10 @@ torch_set(struct stream *s, CFTypeRef value)
 	level = level < 0 ? 0 : level > 1 ? 1 : level;
 	thousandths = (uint32_t)(level * 1000 + 0.5f);
 	if (s->torch < 0) {
-		s->torch = open("/dev/redwood-torch", O_WRONLY);
+		s->torch = open("/dev/hakios-torch", O_WRONLY);
 	}
 	if (s->torch < 0 || write(s->torch, &thousandths, sizeof(thousandths)) != (ssize_t)sizeof(thousandths)) {
-		say("the flashlight at %u of 1000 NOT TAKEN (no /dev/redwood-torch)", thousandths);
+		say("the flashlight at %u of 1000 NOT TAKEN (no /dev/hakios-torch)", thousandths);
 	} else {
 		say("the flashlight at %u of 1000", thousandths);
 	}
@@ -1136,7 +1136,7 @@ torch_set(struct stream *s, CFTypeRef value)
 
 struct render_job {
 	const struct isp *isp;
-	const struct redwood_camera_frame *f;
+	const struct hakios_camera_frame *f;
 	const uint8_t *raw;
 	CVPixelBufferRef pb;
 	uint32_t format, width, height, pieces;
@@ -1195,7 +1195,7 @@ output_buffer(struct output *out, int width, int height, uint32_t pf)
 typedef void (^pixel_buffer_handler)(CVPixelBufferRef, CMTime);
 
 static void
-deliver(struct stream *s, struct output *out, const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw)
+deliver(struct stream *s, struct output *out, const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw)
 {
 	int width = (int)get_i(out->config, "Width", 0), height = (int)get_i(out->config, "Height", 0);
 	uint32_t pf = (uint32_t)get_i(out->config, "PixelFormat", PF_420F);
@@ -1331,17 +1331,17 @@ worker(void *context)
 {
 	CMBaseObjectRef o = context;
 	struct stream *s = stream_of(o);
-	struct redwood_camera_frame head;
+	struct hakios_camera_frame head;
 	struct isp isp;
 	struct isp_stats st;
 	uint8_t *buffer = NULL;
 	size_t bytes = 0;
-	int device = open(REDWOOD_CAMERA_DEVICE, O_RDWR), failures = 0;
+	int device = open(HAKIOS_CAMERA_DEVICE, O_RDWR), failures = 0;
 
-	pthread_setname_np("redwood-camera");
+	pthread_setname_np("hakios-camera");
 	say("worker: running, device fd %d", device);
 	if (device < 0) {
-		say("no %s (%s): no frames", REDWOOD_CAMERA_DEVICE, strerror(errno));
+		say("no %s (%s): no frames", HAKIOS_CAMERA_DEVICE, strerror(errno));
 		return NULL;
 	}
 	isp_init(&isp);
@@ -1374,9 +1374,9 @@ worker(void *context)
 		}
 		failures = 0;
 
-		const struct redwood_camera_frame *f = (const void *)buffer;
+		const struct hakios_camera_frame *f = (const void *)buffer;
 		const uint8_t *raw = buffer + f->header_bytes;
-		struct redwood_camera_command c;
+		struct hakios_camera_command c;
 
 		isp_measure(f, raw, &st);
 		isp_awb(&isp, &st);
@@ -1572,7 +1572,7 @@ static CFStringRef
 stream_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<RedwoodCaptureStream: the wide camera>"));
+	return CFRetain(CFSTR("<HakiosCaptureStream: the wide camera>"));
 }
 
 static const struct base_class stream_base = {
@@ -1736,7 +1736,7 @@ static CFStringRef
 device_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<RedwoodCaptureDevice: the POCO X5 Pro's wide camera>"));
+	return CFRetain(CFSTR("<HakiosCaptureDevice: the Qualcomm phone's wide camera>"));
 }
 
 static const struct base_class device_base = {
@@ -1854,7 +1854,7 @@ static CFStringRef
 session_description(CMBaseObjectRef o)
 {
 	(void)o;
-	return CFRetain(CFSTR("<RedwoodISPProcessingSession>"));
+	return CFRetain(CFSTR("<HakiosISPProcessingSession>"));
 }
 
 static OSStatus
@@ -1948,7 +1948,7 @@ static const struct device_class device_derived = { 3, (void *)device_processing
 static const struct vtable device_vtable = { NULL, &device_base, &device_derived };
 
 /* The vendor's device create function (as H10ISPCaptureDeviceCreate is called). */
-OSStatus redwood_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out);
+OSStatus hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out);
 
 /*
  * What the still pipeline's steps answer (run 584: Camera.app is told -16800, -11819, -16409 by the shutter): the photo compression session's calls and the capture
@@ -2082,7 +2082,7 @@ probe_still_errors(void)
 }
 
 OSStatus
-redwood_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out)
+hakios_camera_device_create(CFAllocatorRef allocator, CFDictionaryRef options, CMBaseObjectRef *out)
 {
 	probe_still_errors();
 	say_bt("device_create");

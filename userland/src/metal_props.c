@@ -20,7 +20,7 @@
  * Asking Metal is bin/metal_drv_test's job, in a process of its own, afterwards.
  *
  *   metal_props                 show what the service carries now
- *   metal_props on              set RedwoodMetal / RedwoodMetalDevice (what this port installs)
+ *   metal_props on              set HakiosMetal / HakiosMetalDevice (what this port installs)
  *   metal_props on NAME CLASS   set those two instead
  *   metal_props off             remove both (an empty string removes, see setProperties)
  */
@@ -32,7 +32,7 @@
 
 /*
  * The call itself, under a name of ours. IOKit's header marks IORegistryEntrySetCFProperties
- * API_UNAVAILABLE(ios), which is a statement about the declaration and not about the code: iOS
+ * API_UNAVAILABLE(ios), which is a statement about the declaration and not about the code: The system
  * 16.5's IOKit exports _IORegistryEntrySetCFProperties all the same (the SDK's own IOKit.tbd
  * lists it), so the symbol is reached by an asm label and the link finds it. Redeclaring it by
  * its own name does not work -- the header's attribute stays attached to that name.
@@ -85,7 +85,7 @@ show_path(io_service_t service)
 	CFRelease(value);
 	snprintf(path, sizeof(path), "/System/Library/Extensions/%s.bundle", name);
 	printf("metal_props: Metal would open %s: %s\n", path,
-	    access(path, F_OK) == 0 ? "it is there" : "NOT THERE (userland/build.sh links it from /redwood/lib)");
+	    access(path, F_OK) == 0 ? "it is there" : "NOT THERE (userland/build.sh links it from /hakios/lib)");
 }
 
 static int
@@ -133,8 +133,8 @@ main(int argc, char **argv)
 		return 1;
 	}
 	if (strcmp(what, "on") == 0) {
-		bad = set_both(service, argc > 3 ? argv[2] : "RedwoodMetal",
-		    argc > 3 ? argv[3] : "RedwoodMetalDevice");
+		bad = set_both(service, argc > 3 ? argv[2] : "HakiosMetal",
+		    argc > 3 ? argv[3] : "HakiosMetalDevice");
 	} else if (strcmp(what, "off") == 0) {
 		bad = set_both(service, "", "");
 	} else if (strcmp(what, "show") != 0) {

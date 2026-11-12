@@ -21,14 +21,14 @@ namespace {
 void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 /* one of the compiler library's profile calls, if it is loaded and has it (not part of the contract) */
 void *
 profile_call(const char *name)
 {
-	void *lib = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW | RTLD_NOLOAD);
+	void *lib = dlopen("/hakios/lib/libhakiosair.dylib", RTLD_NOW | RTLD_NOLOAD);
 
 	return lib != nullptr ? dlsym(lib, name) : nullptr;
 }

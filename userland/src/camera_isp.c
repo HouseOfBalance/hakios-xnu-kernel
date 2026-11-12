@@ -66,7 +66,7 @@ cell(const uint8_t *top, size_t stride, uint32_t cx, int v[4])
 }
 
 void
-isp_measure(const struct redwood_camera_frame *f, const uint8_t *raw, struct isp_stats *s)
+isp_measure(const struct hakios_camera_frame *f, const uint8_t *raw, struct isp_stats *s)
 {
 	uint32_t cells_w = f->width / 2, cells_h = f->height / 2;
 	double sum[3] = { 0, 0, 0 };
@@ -110,7 +110,7 @@ isp_measure(const struct redwood_camera_frame *f, const uint8_t *raw, struct isp
  * to max_frame_lines, then gain to the most; beyond that, digital gain (up to 4x).
  */
 bool
-isp_ae(struct isp *isp, const struct redwood_camera_frame *f, const struct isp_stats *s, struct redwood_camera_command *c)
+isp_ae(struct isp *isp, const struct hakios_camera_frame *f, const struct isp_stats *s, struct hakios_camera_command *c)
 {
 	double now = (double)f->exposure_lines * f->gain / f->gain_unity * isp->digital, ratio, want;
 	double target = 0.15 * WHITE, mean = s->mean[1] * isp->digital > 0.5 ? s->mean[1] * isp->digital : 0.5;
@@ -157,7 +157,7 @@ isp_ae(struct isp *isp, const struct redwood_camera_frame *f, const struct isp_s
 	isp->asked_frame_lines = frame_lines;
 	isp->asked = true;
 	memset(c, 0, sizeof(*c));
-	c->command = REDWOOD_CAMERA_EXPOSURE;
+	c->command = HAKIOS_CAMERA_EXPOSURE;
 	c->a = lines;
 	c->b = gain;
 	c->c = frame_lines;
@@ -180,7 +180,7 @@ isp_awb(struct isp *isp, const struct isp_stats *s)
 
 /* the part of the sensor's cells the picture shows: its middle, in the picture's proportions */
 static void
-crop(const struct redwood_camera_frame *f, uint32_t width, uint32_t height, uint32_t *x0, uint32_t *y0, uint32_t *cw, uint32_t *ch)
+crop(const struct hakios_camera_frame *f, uint32_t width, uint32_t height, uint32_t *x0, uint32_t *y0, uint32_t *cw, uint32_t *ch)
 {
 	uint32_t w = f->width / 2, h = f->height / 2;
 
@@ -266,7 +266,7 @@ lsc_at(const struct isp *isp, float u, float v, float g[3])
 
 /* one line of the picture as 8-bit R, G, B */
 static void
-render_line(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint32_t width, uint32_t height,
+render_line(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint32_t width, uint32_t height,
     uint32_t row, uint8_t *rgb)
 {
 	uint32_t x0, y0, cw, ch, cells_w = f->width / 2, cells_h = f->height / 2;
@@ -338,7 +338,7 @@ nv12_pair(const uint8_t *rgb0, const uint8_t *rgb1, uint32_t width, uint8_t *y0,
 }
 
 void
-isp_render_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+isp_render_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row, bool video_range)
 {
 	uint8_t line[2][3 * 8192];
@@ -357,7 +357,7 @@ isp_render_nv12(const struct isp *isp, const struct redwood_camera_frame *f, con
 }
 
 void
-isp_render_bgra(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
+isp_render_bgra(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
     uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row)
 {
 	uint8_t line[3 * 8192];
@@ -394,7 +394,7 @@ cfa(uint32_t bayer, int colour[4])
 
 /* line y of the frame as values above black (y clamped into the frame) */
 static void
-unpack_line(const struct redwood_camera_frame *f, const uint8_t *raw, int y, int *out)
+unpack_line(const struct hakios_camera_frame *f, const uint8_t *raw, int y, int *out)
 {
 	y = y < 0 ? 0 : y >= (int)f->height ? (int)f->height - 1 : y;
 	const uint8_t *line = raw + (size_t)y * f->stride;
@@ -412,7 +412,7 @@ unpack_line(const struct redwood_camera_frame *f, const uint8_t *raw, int y, int
 
 /* one line (y) at full size as 8-bit R, G, B, from the lines y - 1, y, y + 1 (l[0..2]) */
 static void
-full_line(const struct isp *isp, const struct redwood_camera_frame *f, const int *const l[3], uint32_t y, const int colour[4],
+full_line(const struct isp *isp, const struct hakios_camera_frame *f, const int *const l[3], uint32_t y, const int colour[4],
     const struct pipe *p, uint8_t *rgb)
 {
 	int w = (int)f->width;
@@ -450,7 +450,7 @@ full_line(const struct isp *isp, const struct redwood_camera_frame *f, const int
 }
 
 void
-isp_render_full_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t first_row, uint32_t end_row, bool video_range)
 {
 	uint32_t width = f->width;
@@ -491,7 +491,7 @@ isp_render_full_nv12(const struct isp *isp, const struct redwood_camera_frame *f
 /* ---- lens shading from a flat field --------------------------------------------------------------------- */
 
 bool
-isp_lsc_from_flat(struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, float *min_ratio)
+isp_lsc_from_flat(struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, float *min_ratio)
 {
 	uint32_t cells_w = f->width / 2, cells_h = f->height / 2, half_w = cells_w / (LSC_W - 1) / 2, half_h = cells_h / (LSC_H - 1) / 2;
 	float level[3][LSC_H][LSC_W], top[3] = { 0, 0, 0 };

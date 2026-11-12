@@ -197,7 +197,7 @@ struct loader_live {
  * loader to hand to the host once the kernel is back. { physical address, bytes, kernel address }.
  */
 uint64_t loader_recording[3];
-/* ... and of the sound (/dev/redwood-audio makes one with boot-arg rec_sound). */
+/* ... and of the sound (/dev/hakios-audio makes one with boot-arg rec_sound). */
 uint64_t loader_sound[3];
 
 struct loader_live loader_live = {
@@ -500,11 +500,11 @@ extern void MiniIOSurfaceUsage(uint32_t *count, uint64_t *bytes);
  * daemons, and once none is left and it is below the second, whatever is next in line -- the
  * window server included.
  */
-void redwood_memory_line(char *buf, size_t len);
+void hakios_memory_line(char *buf, size_t len);
 
-/* The line itself (also kern.redwood_memory, for a job list to keep: bsd/miscfs/apfs/apfs_vfsops.c) */
+/* The line itself (also kern.hakios_memory, for a job list to keep: bsd/miscfs/apfs/apfs_vfsops.c) */
 void
-redwood_memory_line(char *buf, size_t len)
+hakios_memory_line(char *buf, size_t len)
 {
 #define MB(pages)       ((unsigned int)(((uint64_t)(pages) * PAGE_SIZE) >> 20))
 	uint32_t surfaces = 0;
@@ -527,7 +527,7 @@ memory_report(void)
 {
 	char line[256];
 
-	redwood_memory_line(line, sizeof(line));
+	hakios_memory_line(line, sizeof(line));
 	printf("%s", line);
 }
 

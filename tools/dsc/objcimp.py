@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """usage: tools/dsc/objcimp.py ADDR [ADDR...]   -- name the Objective-C method (-[Class sel] / +[Class sel]) whose implementation starts
-at or just before each (unslid) address, over every image of the iOS 16.5 cache that has the address in its __TEXT.
+at or just before each (unslid) address, over every image of the system image 20F66 cache that has the address in its __TEXT.
 Small (relative) method lists only, as the cache has them; no capstone."""
 import struct, sys, bisect
 sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])

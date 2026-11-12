@@ -283,7 +283,7 @@ GenericARMPE::probe(IOService * provider, SInt32 * score)
 bool
 GenericARMPE::start(IOService * provider)
 {
-	mt6577_uart_puts("[GenericARMPE] Starting platform expert for MediaTek MT6768 (X6826B)\n");
+	mt6577_uart_puts("[GenericARMPE] Starting platform expert for MediaTek MT6768 (the first phone)\n");
 
 	if (!super::start(provider)) {
 		return false;
@@ -371,7 +371,7 @@ GenericARMPE::start(IOService * provider)
 	/* BSD looks the platform expert up by class (IOSecureBSDRoot). */
 	registerService();
 
-	/* Stand-ins for the closed graphics drivers that the iOS window server talks to. */
+	/* Stand-ins for the closed graphics drivers that the system's window server talks to. */
 	MiniIOSurfaceStart(this);
 	MiniIOMobileFramebufferStart(this);
 	MiniAppleKeyStoreStart();
@@ -458,7 +458,7 @@ GenericARMPE::excludeList(void)
 
 /*
  * hw.machine. On Apple's devices it is the product type ("iPhone10,3"), from the device tree's
- * "model", and iOS decides from it what kind of device it is on: with anything it does not know
+ * "model", and the system decides from it what kind of device it is on: with anything it does not know
  * MobileGestalt settles for an iPod touch.
  */
 bool
@@ -468,7 +468,7 @@ GenericARMPE::getMachineName(char * name, int maxLength)
 
 	/*
 	 * hw.machine is the model the loader put into the device tree, "iPhone10,3". It has to
-	 * begin with "iPhone": CoreFoundation picks the device-specific variants of resources
+	 * begin with "the reference phone": CoreFoundation picks the device-specific variants of resources
 	 * (Something~iphone.plist, Key~iphone in an Info.plist) by this string, and for a name it
 	 * does not know it picks none at all -- Control Center, for one, then lays its modules out
 	 * without their sizes. (boot-arg machine_name=0: the plain "arm64" this used to be.)

@@ -1,5 +1,5 @@
 /*
- * QuartzCore's own shaders, as the firmware has them. The iPhone X image carries no default.metallib for
+ * QuartzCore's own shaders, as the firmware has them. the reference phone image carries no default.metallib for
  * QuartzCore, but its default.pipelinelib holds the uber shader already SPECIALIZED for every pipeline
  * CoreAnimation 16.5 builds: `functions` is 451 complete .metallibs in AIR for air64-apple-ios16.5.0 behind an
  * LPPM table, and `pipelines.desc` names each one (com.apple.coreanimation.{vert,frag}.<spec>, function i = the
@@ -340,7 +340,7 @@ score(const char *ours, const char *theirs)
 void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 bool

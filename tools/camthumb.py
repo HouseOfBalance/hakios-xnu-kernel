@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make a PNG of the 64x48 thumbnail redwood_mtkcam.c logs ("THUMB nn: <64 hex pairs>").
+"""Make a PNG of the 64x48 thumbnail mtk_camera.c logs ("THUMB nn: <64 hex pairs>").
 usage: tools/camthumb.py logs/xnu-camtlNNN.log out.png   (the last thumbnail in the log; stretched to the full range, 8x enlarged)"""
 import re, sys, zlib, struct
 rows = {}

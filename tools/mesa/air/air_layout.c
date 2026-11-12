@@ -1,11 +1,11 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
 /*
  * Sizes and alignments from the module's datalayout string, by LLVM's rules
- * (LangRef, "Data Layout"). Every AIR module of iOS 16.5 has the same layout,
+ * (LangRef, "Data Layout"). Every AIR module of the system image 20F66 has the same layout,
  * but it is read rather than assumed: GEP offsets are computed from it, and
  * a wrong offset is a wrong read.
  */

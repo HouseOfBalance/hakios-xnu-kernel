@@ -1,5 +1,5 @@
 /*
- * mali_test: the Mali through the kernel's RedwoodMali service, the way Mesa's panfrost will reach
+ * mali_test: the Mali through the kernel's HakiosMali service, the way Mesa's panfrost will reach
  * it, before there is any Mesa: open the service, ask a few parameters, make a buffer, map it,
  * write a job into it, submit it, and see the GPU's work in the buffer.
  *
@@ -8,7 +8,7 @@
  * it got; the last line says whether the GPU did the work.
  *
  * The request numbers and structures are Linux's panfrost ones (include/uapi/drm/panfrost_drm.h),
- * as tools/mesa/redwood-drm will send them for Mesa.
+ * as tools/mesa/hakios-drm will send them for Mesa.
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -29,11 +29,11 @@ struct drm_gem_close { uint32_t handle, pad; };
 
 static io_connect_t connection;
 
-/* The outcome for the kernel too, which repeats it where a run's log is kept (kern.redwood.mali_user). */
+/* The outcome for the kernel too, which repeats it where a run's log is kept (kern.hakios.mali_user). */
 static int
 said(uint32_t what)
 {
-	sysctlbyname("kern.redwood.mali_user", NULL, NULL, &what, sizeof(what));
+	sysctlbyname("kern.hakios.mali_user", NULL, NULL, &what, sizeof(what));
 	return what == 1 ? 0 : 1;
 }
 
@@ -61,9 +61,9 @@ main(void)
 
 	setvbuf(stdout, NULL, _IONBF, 0);       /* every line out as it is printed: a crash must not take them along */
 	printf("mali_test: started\n");
-	service = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodMali"));
+	service = IOServiceGetMatchingService(0, IOServiceMatching("HakiosMali"));
 	if (service == 0) {
-		printf("mali_test: there is no RedwoodMali service (boot-arg mali=1?)\n");
+		printf("mali_test: there is no HakiosMali service (boot-arg mali=1?)\n");
 		return said(2);
 	}
 	kr = IOServiceOpen(service, mach_task_self(), 0, &connection);

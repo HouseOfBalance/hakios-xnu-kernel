@@ -25,8 +25,8 @@
 
 #include "MiniDrivers.h"
 
-/* the host-kept log (kern.redwood.host_keep); ported from origin/AppleID (hakios_tl there) */
-extern "C" void redwood_host_keep_add(const char * format, ...) __printflike(1, 2);
+/* the host-kept log (kern.hakios.host_keep); ported from origin/AppleID (hakios_tl there) */
+extern "C" void hakios_host_keep_add(const char * format, ...) __printflike(1, 2);
 
 /* Selectors are not small numbers here, so they are not a bit per selector: the ones already
  * reported are kept as a short list, and the list is what bounds the log. */
@@ -73,7 +73,7 @@ com_apple_driver_FairPlayIOKit::start(IOService * provider)
 	setProperty(kIOUserClientClassKey, "com_apple_driver_FairPlayIOKitUserClient");
 	setName("com_apple_driver_FairPlayIOKit");
 	registerService();
-	redwood_host_keep_add("MiniFairPlay: the service is up");
+	hakios_host_keep_add("MiniFairPlay: the service is up");
 	return true;
 }
 
@@ -87,7 +87,7 @@ com_apple_driver_FairPlayIOKit::newUserClient(task_t owningTask, void * security
 	IOReturn ret = IOService::newUserClient(owningTask, securityID, type, properties, handler);
 
 	proc_selfname(procname, sizeof(procname));
-	redwood_host_keep_add("MiniFairPlay: %s[%d] opens a user client of type %u = %#x", procname, proc_selfpid(),
+	hakios_host_keep_add("MiniFairPlay: %s[%d] opens a user client of type %u = %#x", procname, proc_selfpid(),
 	    (unsigned) type, ret);
 	return ret;
 }
@@ -100,7 +100,7 @@ com_apple_driver_FairPlayIOKit::newUserClient(task_t owningTask, void * security
 	IOReturn ret = IOService::newUserClient(owningTask, securityID, type, handler);
 
 	proc_selfname(procname, sizeof(procname));
-	redwood_host_keep_add("MiniFairPlay: %s[%d] opens a user client of type %u (no properties) = %#x", procname,
+	hakios_host_keep_add("MiniFairPlay: %s[%d] opens a user client of type %u (no properties) = %#x", procname,
 	    proc_selfpid(), (unsigned) type, ret);
 	return ret;
 }
@@ -144,7 +144,7 @@ com_apple_driver_FairPlayIOKitUserClient::externalMethod(uint32_t selector, IOEx
 	}
 	proc_selfname(procname, sizeof(procname));
 	if (fairplayFirstTime(selector)) {
-		redwood_host_keep_add("MiniFairPlay: %s[%d] selector %u (scalars %u in, %u out; structure %u in [%s], %u out)",
+		hakios_host_keep_add("MiniFairPlay: %s[%d] selector %u (scalars %u in, %u out; structure %u in [%s], %u out)",
 		    procname, proc_selfpid(), selector, args->scalarInputCount, args->scalarOutputCount,
 		    args->structureInputSize, head, args->structureOutputSize);
 	}
@@ -186,7 +186,7 @@ MiniFairPlayStart(void)
 
 	if (resources == NULL || fairplay == NULL || !fairplay->init() || !fairplay->attach(resources)) {
 		OSSafeReleaseNULL(fairplay);
-		redwood_host_keep_add("MiniFairPlay: cannot create the service");
+		hakios_host_keep_add("MiniFairPlay: cannot create the service");
 		return;
 	}
 	if (!fairplay->start(resources)) {

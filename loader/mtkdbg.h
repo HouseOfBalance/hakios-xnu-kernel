@@ -23,7 +23,7 @@
 #define RAMOOPS_CONSOLE_SIZE HAKIOS_RAMOOPS_CONSOLE_SIZE
 #define RAMOOPS_SIG          0x43474244u
 /* the pmsg zone: Android's request for one XNU boot comes in it (boot-xnu.sh), the kernel's lines for the
- * host go out in it (kern.redwood.host_keep) */
+ * host go out in it (kern.hakios.host_keep) */
 #define RAMOOPS_PMSG         HAKIOS_RAMOOPS_PMSG
 #define RAMOOPS_PMSG_SIZE    HAKIOS_RAMOOPS_PMSG_SIZE
 

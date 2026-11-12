@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Make pictures of the frames the kernel's camera driver left in memory (boot-arg cam=3 and up;
-bsd/dev/redwood_camera.c), as the loader hands them over ("xl camera").
+bsd/dev/hakios_camera.c), as the loader hands them over ("xl camera").
 
 usage: camraw.py CAMERA.raw PREFIX [--bayer N]
 
@@ -11,7 +11,7 @@ four, their low two bits together in the fifth. Each frame becomes PREFIX-N.png,
 taking each 2x2 cell (bayer 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR) as one pixel -- half the resolution, no
 interpolation -- with a plain grey-world white balance and a gamma of 2.2: a first look, not a
 finished photograph; PREFIX-N-raw.png is the frame's raw values as they are (grey, 8 bits).
-Formats 2 and 3 are a picture iOS made of a frame (cam=5): NV12 (full-range YCbCr 4:2:0, the chroma plane
+Formats 2 and 3 are a picture the system made of a frame (cam=5): NV12 (full-range YCbCr 4:2:0, the chroma plane
 after the luma one, both of the stride) or BGRA, which becomes PREFIX.png as it is.
 --bayer N takes the frames for that order instead of the header's. The OV02B10's picture is RGGB
 here (in a picture of a room the second and third sites of each cell track each other, the
@@ -63,7 +63,7 @@ def main():
     print(f'camraw.py: {sensor}: {width}x{height}, stride {stride}, format {fmt}, bayer {bayer}, {frames} frame(s) written whole, '
           f'the last in place {last}')
     if fmt in (2, 3):
-        # a picture iOS made of a frame (cam=5, camera_test or mediaserverd): NV12 (full range) or BGRA
+        # a picture the system made of a frame (cam=5, camera_test or mediaserverd): NV12 (full range) or BGRA
         base = 4096
         rows = []
         for y in range(height):

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.redwood.bt_test</string>
+	<string>com.hakios.bt_test</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>bt_test scans for Bluetooth devices</string>
 </dict>

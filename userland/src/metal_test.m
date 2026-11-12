@@ -1,7 +1,7 @@
 /*
- * metal_test: what iOS here believes about Metal, and what it does with the answer.
+ * metal_test: what the system here believes about Metal, and what it does with the answer.
  *
- * Nothing in iOS says a word when Metal is missing. A program asks for the system's device with
+ * Nothing in the system says a word when Metal is missing. A program asks for the system's device with
  * MTLCreateSystemDefaultDevice(); if there is none it gets nil, with no log line, no error and no
  * reason, and whatever the caller does next -- fall back, draw nothing, or stop at an assertion --
  * is all that is ever seen. This prints the whole chain instead, so that a failure somewhere above
@@ -21,11 +21,11 @@
  *      an empty list is an answer given once and kept, silently, for the life of the process.
  *
  * So the question "is there Metal" has exactly one answer, and no capability bit anywhere stands
- * in for it. What iOS publishes about graphics besides -- MobileGestalt's GraphicsFeatureSetClass
+ * in for it. What the system publishes about graphics besides -- MobileGestalt's GraphicsFeatureSetClass
  * and GraphicsFeatureSetFallbacks, from the device tree's "graphics-featureset-class" and
  * "graphics-featureset-fallbacks" -- is read by CoreUI and CoreThemeDefinition to choose which
  * compiled artwork to take out of an asset catalog, not by anything that decides how to draw; it
- * is printed here to show that it says the iPhone X's "APPLE4" whether or not a device exists.
+ * is printed here to show that it says the reference phone's "APPLE4" whether or not a device exists.
  *
  * The last part asks a framework that has a path without Metal whether that path works: CoreImage
  * runs a filter kernel over four pixels and the result is read back. It is the one thing here that
@@ -122,7 +122,7 @@ static void
 in_a_new_process(const char *what, const char *argument, int secs)
 {
 	extern char **environ;
-	char *const argv[] = { (char *)"/redwood/bin/metal_test", (char *)argument, NULL };
+	char *const argv[] = { (char *)"/hakios/bin/metal_test", (char *)argument, NULL };
 	pid_t pid;
 	int status = 0, waited = 0;
 
@@ -217,7 +217,7 @@ accelerators(void)
 static void
 gpu_services(void)
 {
-	static const char *const classes[] = { "RedwoodGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
+	static const char *const classes[] = { "HakiosGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
 	int found = 0;
 
 	for (size_t i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
@@ -310,7 +310,7 @@ the_device(void)
 	    (int)[device supportsFamily:MTLGPUFamilyApple1], (int)[device supportsFamily:MTLGPUFamilyApple4]);
 }
 
-/* What iOS publishes about graphics besides: artwork, not rendering (see the note above). */
+/* What the system publishes about graphics besides: artwork, not rendering (see the note above). */
 static void
 gestalt(void)
 {
@@ -347,7 +347,7 @@ static NSDictionary *coreimage_options;
 static int coreimage_over_eagl;
 
 /*
- * The way back for CoreImage, if there is one. iOS 16.5's CoreImage carries a whole second back
+ * The way back for CoreImage, if there is one. the system image 20F66's CoreImage carries a whole second back
  * end on OpenGL ES -- CI::GLContext, CI::GLMainProgram, CI::GLTextureManager beside the
  * CI::MetalContext family -- it is linked against OpenGLES, it compiles its shaders as GLSL (not
  * AIR), and CIGLIsUsable() is compiled to "return 1". The public way in is
@@ -356,7 +356,7 @@ static int coreimage_over_eagl;
  * an EAGLContext (which on an image built with GL=1, on a phone with gpu=1, is our Mesa behind
  * src/eagl.c) and hand it over.
  */
-#define REDWOOD_GL      "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL      "/hakios/lib/libhakios-gl.dylib"
 
 static EAGLContext *
 make_eagl(void)
@@ -364,15 +364,15 @@ make_eagl(void)
 	EAGLContext *gl;
 
 	/*
-	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libredwood.dylib does
+	 * Our OpenGL ES has to be put behind EAGLContext in THIS process first. libhakios.dylib does
 	 * it only for backboardd (src/inject.c, opengl_es(), which is called for that name alone), and
 	 * the way it does it -- replacing methods of EAGLContext through the ObjC runtime -- is local
 	 * to a process. The library installs itself from a constructor, so loading it is enough; what
-	 * it replaced it says itself in lines "redwood-gl:". Without this, EAGLContext here would be
-	 * iOS's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
+	 * it replaced it says itself in lines "hakios-gl:". Without this, EAGLContext here would be
+	 * the system's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
 	 */
-	if (access(REDWOOD_GL, R_OK) != 0) {
-		printf("metal_test:   %s is not in this image: build it with GL=1\n", REDWOOD_GL);
+	if (access(HAKIOS_GL, R_OK) != 0) {
+		printf("metal_test:   %s is not in this image: build it with GL=1\n", HAKIOS_GL);
 		return nil;
 	}
 	/*
@@ -385,11 +385,11 @@ make_eagl(void)
 		setenv("OSMESA_SOFTWARE", "1", 1);
 		printf("metal_test:   OSMESA_SOFTWARE=1: Mesa's software driver, not the GPU\n");
 	}
-	if (dlopen(REDWOOD_GL, RTLD_NOW) == NULL) {
-		printf("metal_test:   %s: %s\n", REDWOOD_GL, dlerror());
+	if (dlopen(HAKIOS_GL, RTLD_NOW) == NULL) {
+		printf("metal_test:   %s: %s\n", HAKIOS_GL, dlerror());
 		return nil;
 	}
-	printf("metal_test:   %s loaded; EAGLContext is ours now\n", REDWOOD_GL);
+	printf("metal_test:   %s loaded; EAGLContext is ours now\n", HAKIOS_GL);
 	gl = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
 
 	if (gl == nil) {
@@ -438,7 +438,7 @@ coreimage(void)
 			return;
 		}
 		/*
-		 * Which of CoreImage's two backends the default context took. iOS 16.5 has both:
+		 * Which of CoreImage's two backends the default context took. the system image 20F66 has both:
 		 * CI::GLContext (with CI::GLMainProgram, CI::GLTextureManager) and CI::MetalContext
 		 * (with CI::MetalDAG, CI::MetalKernel); -[CIContext initWithOptions:] chooses between
 		 * them by CIGLIsUsable(). -isOpenGLBased and -device are private, so they are asked for
@@ -545,7 +545,7 @@ main(int argc, char **argv)
 	gpu_services();
 	printf("metal_test: the device a program gets\n");
 	the_device();
-	printf("metal_test: what iOS publishes about graphics (artwork, not rendering)\n");
+	printf("metal_test: what the system publishes about graphics (artwork, not rendering)\n");
 	gestalt();
 	printf("metal_test: CoreImage, which has a path without Metal\n");
 	/*

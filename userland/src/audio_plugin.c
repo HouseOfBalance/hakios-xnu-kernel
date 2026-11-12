@@ -1,53 +1,53 @@
 /*
- * RedwoodAudio.driver: the output device of iOS on this machine.
+ * HakiosAudio.driver: the output device of the system on this machine.
  *
  * Audio devices reach the audio server's hardware layer (the "HAL" of CoreAudio, inside
- * mediaserverd) in two ways: kernel drivers through IOAudio2 -- that is how an iPhone's own
+ * mediaserverd) in two ways: kernel drivers through IOAudio2 -- that is how a reference phone's own
  * speaker, codec and microphones arrive, and none of it exists here -- and plug-ins in
  * /System/Library/Audio/Plug-Ins/HAL, which is how Bluetooth, AirPlay, CarPlay and USB audio
  * arrive. This is such a plug-in. Its interface is the one macOS documents for user-space
  * audio drivers (AudioServerPlugIn: a CFPlugIn with one COM-style table of functions; the HAL
- * asks for objects and their properties, then runs the I/O); the iOS SDK has no header for it,
+ * asks for objects and their properties, then runs the I/O); the system's SDK has no header for it,
  * so what is needed of it is declared below.
  *
  * Above the HAL sits the virtual audio device (/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin),
- * through which everything in iOS is routed. It knows an iPhone's own devices by their names
- * (their UIDs) and makes a port of each: "Speaker" becomes the speaker port, the route an iPhone
+ * through which everything in the system is routed. It knows a reference phone's own devices by their names
+ * (their UIDs) and makes a port of each: "Speaker" becomes the speaker port, the route a reference phone
  * with nothing plugged in plays through, with a volume, the volume display and the place in
  * Control Center that go with it. So this presents four devices under those names:
  *
- *   "Speaker"   a stereo output whose samples are written to /dev/redwood-audio, where the
- *               kernel takes them to whatever can play them (see sys/redwood_audio.h), and a
- *               stereo input that is always silent (on an iPhone: what the amplifiers measure)
+ *   "Speaker"   a stereo output whose samples are written to /dev/hakios-audio, where the
+ *               kernel takes them to whatever can play them (see sys/hakios_audio.h), and a
+ *               stereo input that is always silent (on a reference phone: what the amplifiers measure)
  *   "Hawking"   one silent input and nothing else. The virtual audio device will not build the
  *               speaker route without a second virtual device of its own (its type 'vhaw', a
- *               mandatory companion of the default one in the iPhone X's routing tables) whose
+ *               mandatory companion of the default one in the reference phone's routing tables) whose
  *               only port is this input; without it everything stays on the null port.
- *   "Actuator"  one output of one channel: the iPhone's Taptic Engine, on which iOS plays its
+ *   "Actuator"  one output of one channel: the reference phone's Taptic Engine, on which the system plays its
  *               haptics as waveforms (through the chain 'd22_actuator_general'); its samples go to
- *               the kernel's motor driver, /dev/redwood-haptic (see actuator_write())
- *   "Codec"     one input of one channel: on an iPhone, the audio codec that the built-in
+ *               the kernel's motor driver, /dev/hakios-haptic (see actuator_write())
+ *   "Codec"     one input of one channel: on a reference phone, the audio codec that the built-in
  *               microphones are on, of which the virtual audio device makes the built-in microphone
- *               port; its samples come from the kernel, /dev/redwood-mic (the phone's main
+ *               port; its samples come from the kernel, /dev/hakios-mic (the phone's main
  *               microphone, boot-arg mic=4), which listens only while this input runs (see codec_read())
  *
  * CoreAudio's own null device ("Null_Device", described in the framework's Info.plist, playing
  * into nowhere) stays as it is: it is the only device the virtual audio device takes while it
  * starts, and ours are taken a moment later, when it says it allows all devices.
  *
- * What is played through the speaker port passes the iPhone X's chain of effects for its own
+ * What is played through the speaker port passes the reference phone's chain of effects for its own
  * speakers first ('d22_speaker_general', from /Library/Audio/Tunings/D22: equalisers,
- * compressors, speaker protection), at the volume iOS has set.
+ * compressors, speaker protection), at the volume the system has set.
  *
- * The device has no clock but the system's: it claims to play exactly REDWOOD_AUDIO_RATE frames
+ * The device has no clock but the system's: it claims to play exactly HAKIOS_AUDIO_RATE frames
  * a second of mach_absolute_time(), and the HAL's I/O thread paces itself by that.
  *
- * The speaker's output has a volume control, as the iPhone's own speaker has: what is set on it
- * goes to the kernel (ioctl REDWOOD_AUDIO_SET_VOLUME), which sets the amplifiers' level by it -- on
+ * The speaker's output has a volume control, as the reference phone's own speaker has: what is set on it
+ * goes to the kernel (ioctl HAKIOS_AUDIO_SET_VOLUME), which sets the amplifiers' level by it -- on
  * the phone, so far under the loudest it allows. Its scale is 48 dB in a straight line of
- * decibels, 3 dB for each of iOS's sixteen steps; 0 is silence. What iOS does with it (the phone,
+ * decibels, 3 dB for each of the system's sixteen steps; 0 is silence. What the system does with it (the phone,
  * 15 October): the virtual audio device sets it once, to its top (0 dB), when it takes the
- * device, and leaves it there -- its routing tables keep the iPhone X's speaker in software volume
+ * device, and leaves it there -- its routing tables keep the reference phone's speaker in software volume
  * mode, so the volume buttons and Control Center scale the samples themselves, and at 0 what is
  * written is silence (on which the kernel keeps the amplifiers off).
  */
@@ -65,7 +65,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "redwood_audio.h"
+#include "hakios_audio.h"
 
 /* ---- the AudioServerPlugIn interface (macOS: CoreAudio/AudioServerPlugIn.h, AudioHardwareBase.h) ---- */
 
@@ -215,7 +215,7 @@ struct device {
 
 static struct device devices[] = {
 	{ .object = OBJECT_SPEAKER, .uid = CFSTR("Speaker"), .output = OBJECT_SPEAKER_OUTPUT, .input = OBJECT_SPEAKER_INPUT,
-	  .output_channels = REDWOOD_AUDIO_CHANNELS, .input_channels = 2 },
+	  .output_channels = HAKIOS_AUDIO_CHANNELS, .input_channels = 2 },
 	{ .object = OBJECT_HAWKING, .uid = CFSTR("Hawking"), .input = OBJECT_HAWKING_INPUT, .input_channels = 1 },
 	{ .object = OBJECT_ACTUATOR, .uid = CFSTR("Actuator"), .output = OBJECT_ACTUATOR_OUTPUT, .output_channels = 1 },
 	{ .object = OBJECT_CODEC, .uid = CFSTR("Codec"), .input = OBJECT_CODEC_INPUT, .input_channels = 1 },
@@ -228,20 +228,20 @@ static struct device devices[] = {
  * take a codec without them (VirtualAudio asks for kAudioDevicePropertyDataSources on its input, and
  * keeps those it knows: 'imic', 'smic', 'fmic', 'lmic', 'tmic', 'umic', 'imi1' to 'imi4'). A plug-in
  * has them as a data source control on the input, which the HAL answers those properties from. There
- * is one microphone here, at the bottom: 'imic', the iPhone's internal (bottom) one.
+ * is one microphone here, at the bottom: 'imic', the reference phone's internal (bottom) one.
  */
 #define MIC_SOURCE              'imic'
-#define MANUFACTURER            CFSTR("redwood")
+#define MANUFACTURER            CFSTR("hakios")
 /* how often a device says where its clock is, in frames: also the largest I/O buffer the HAL will use */
 #define TIMESTAMP_PERIOD        16384
 
 static AudioServerPlugInHostRef host;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static int sink = -1;                   /* /dev/redwood-audio */
+static int sink = -1;                   /* /dev/hakios-audio */
 static Float64 ticks_per_frame;
 static UInt64 written, refused;         /* frames since the speaker's I/O started */
 static Boolean inactive[OBJECT_LAST + 1];       /* streams the HAL has switched off */
-static Float32 volume = 1.0f;           /* the speaker's volume control, 0 to 1 (iOS sets it once it routes there) */
+static Float32 volume = 1.0f;           /* the speaker's volume control, 0 to 1 (the system sets it once it routes there) */
 
 static void
 say(const char *format, ...)
@@ -279,13 +279,13 @@ db_to_scalar(Float32 db)
 static void
 volume_to_kernel(void)
 {
-	struct redwood_audio_volume v = { (uint32_t)lround(-scalar_to_db(volume) * 8), volume <= 0 };
+	struct hakios_audio_volume v = { (uint32_t)lround(-scalar_to_db(volume) * 8), volume <= 0 };
 
-	if (sink < 0 || ioctl(sink, REDWOOD_AUDIO_SET_VOLUME, &v) < 0) {
-		say("redwood: audio: the volume %.3f could not be given to the kernel (%s)\n", volume, strerror(errno));
+	if (sink < 0 || ioctl(sink, HAKIOS_AUDIO_SET_VOLUME, &v) < 0) {
+		say("hakios: audio: the volume %.3f could not be given to the kernel (%s)\n", volume, strerror(errno));
 		return;
 	}
-	say("redwood: audio: the volume is %.3f: %s%.1f dB under the loudest\n", volume, v.muted ? "silence, " : "",
+	say("hakios: audio: the volume is %.3f: %s%.1f dB under the loudest\n", volume, v.muted ? "silence, " : "",
 	    v.below / 8.0);
 }
 
@@ -301,7 +301,7 @@ device_of(AudioObjectID object)
 	return NULL;
 }
 
-/* The one format of a stream: 16-bit samples at REDWOOD_AUDIO_RATE, so many channels. */
+/* The one format of a stream: 16-bit samples at HAKIOS_AUDIO_RATE, so many channels. */
 static AudioStreamBasicDescription
 format_of(AudioObjectID stream)
 {
@@ -309,7 +309,7 @@ format_of(AudioObjectID stream)
 	UInt32 channels = stream == d->output ? d->output_channels : d->input_channels;
 
 	return (AudioStreamBasicDescription) {
-		       .mSampleRate = REDWOOD_AUDIO_RATE, .mFormatID = kAudioFormatLinearPCM,
+		       .mSampleRate = HAKIOS_AUDIO_RATE, .mFormatID = kAudioFormatLinearPCM,
 		       .mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
 		       .mBytesPerPacket = 2 * channels, .mFramesPerPacket = 1, .mBytesPerFrame = 2 * channels,
 		       .mChannelsPerFrame = channels, .mBitsPerChannel = 16,
@@ -349,9 +349,9 @@ initialize(__unused AudioServerPlugInDriverRef driver, AudioServerPlugInHostRef 
 
 	host = the_host;
 	mach_timebase_info(&timebase);
-	ticks_per_frame = 1e9 * timebase.denom / timebase.numer / REDWOOD_AUDIO_RATE;
-	sink = open(REDWOOD_AUDIO_DEVICE, O_WRONLY);
-	say("redwood: audio: the speaker is with the HAL (%s: %s)\n", REDWOOD_AUDIO_DEVICE, sink < 0 ? strerror(errno) : "open");
+	ticks_per_frame = 1e9 * timebase.denom / timebase.numer / HAKIOS_AUDIO_RATE;
+	sink = open(HAKIOS_AUDIO_DEVICE, O_WRONLY);
+	say("hakios: audio: the speaker is with the HAL (%s: %s)\n", HAKIOS_AUDIO_DEVICE, sink < 0 ? strerror(errno) : "open");
 	return 0;
 }
 
@@ -585,11 +585,11 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
 			v.empty = v.size == 0;
 			break;
 		case kAudioDevicePropertyNominalSampleRate:
-			v.u.number = REDWOOD_AUDIO_RATE;
+			v.u.number = HAKIOS_AUDIO_RATE;
 			v.size = sizeof(Float64);
 			break;
 		case kAudioDevicePropertyAvailableNominalSampleRates:
-			v.u.range.mMinimum = v.u.range.mMaximum = REDWOOD_AUDIO_RATE;
+			v.u.range.mMinimum = v.u.range.mMaximum = HAKIOS_AUDIO_RATE;
 			v.size = sizeof(AudioValueRange);
 			break;
 		case kAudioDevicePropertyPreferredChannelsForStereo:
@@ -626,7 +626,7 @@ property(AudioObjectID object, const AudioObjectPropertyAddress *address, UInt32
 		case kAudioStreamPropertyAvailableVirtualFormats:
 		case kAudioStreamPropertyAvailablePhysicalFormats:
 			v.u.ranged.mFormat = format_of(object);
-			v.u.ranged.mSampleRateRange.mMinimum = v.u.ranged.mSampleRateRange.mMaximum = REDWOOD_AUDIO_RATE;
+			v.u.ranged.mSampleRateRange.mMinimum = v.u.ranged.mSampleRateRange.mMaximum = HAKIOS_AUDIO_RATE;
 			v.size = sizeof(AudioStreamRangedDescription);
 			break;
 		}
@@ -663,7 +663,7 @@ unknown(AudioObjectID object, const AudioObjectPropertyAddress *address)
 	unknown_told[unknown_count][1] = s;
 	unknown_told[unknown_count][2] = c;
 	unknown_count++;
-	say("redwood: audio: asked of object %u (%s) what it does not have: '%c%c%c%c' (%#x), scope '%c%c%c%c', element %u\n",
+	say("hakios: audio: asked of object %u (%s) what it does not have: '%c%c%c%c' (%#x), scope '%c%c%c%c', element %u\n",
 	    (unsigned)object, device_of(object) ? CFStringGetCStringPtr(device_of(object)->uid, kCFStringEncodingUTF8) : "-",
 	    (int)(s >> 24 & 0xff), (int)(s >> 16 & 0xff), (int)(s >> 8 & 0xff), (int)(s & 0xff), (unsigned)s,
 	    (int)(c >> 24 & 0xff), (int)(c >> 16 & 0xff), (int)(c >> 8 & 0xff), (int)(c & 0xff), (unsigned)address->mElement);
@@ -812,7 +812,7 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
 		return 0;
 	}
 	if (address->mSelector == kAudioDevicePropertyNominalSampleRate) {
-		return size == sizeof(Float64) && *(const Float64 *)data == REDWOOD_AUDIO_RATE ? 0 : kAudioDeviceUnsupportedFormatError;
+		return size == sizeof(Float64) && *(const Float64 *)data == HAKIOS_AUDIO_RATE ? 0 : kAudioDeviceUnsupportedFormatError;
 	}
 	/* a format: the one we have, or nothing */
 	if (size != sizeof(AudioStreamBasicDescription)) {
@@ -827,7 +827,7 @@ set_property_data(AudioServerPlugInDriverRef driver, AudioObjectID object, pid_t
 }
 
 /*
- * The microphone (the device "Codec"): /dev/redwood-mic is open while the input runs, and the kernel
+ * The microphone (the device "Codec"): /dev/hakios-mic is open while the input runs, and the kernel
  * listens only while it is open. A read gives what has come and never waits; what it does not
  * give is silence. Said when it starts and stops, with how much came.
  */
@@ -838,18 +838,18 @@ static int mic_peak;
 static void
 codec_open(void)
 {
-	mic = open("/dev/redwood-mic", O_RDONLY | O_NONBLOCK);
+	mic = open("/dev/hakios-mic", O_RDONLY | O_NONBLOCK);
 	mic_frames = mic_heard = mic_short = 0;
 	mic_peak = 0;
-	say("redwood: audio: the microphone is listened to (/dev/redwood-mic: %s)\n", mic < 0 ? strerror(errno) : "open");
+	say("hakios: audio: the microphone is listened to (/dev/hakios-mic: %s)\n", mic < 0 ? strerror(errno) : "open");
 }
 
 static void
 codec_close(void)
 {
-	say("redwood: audio: the microphone stops: %llu.%02llu s asked for, %llu.%02llu s of it from the kernel (peak %d of 32768), "
-	    "%llu reads short\n", mic_frames / REDWOOD_AUDIO_RATE, mic_frames % REDWOOD_AUDIO_RATE * 100 / REDWOOD_AUDIO_RATE,
-	    mic_heard / REDWOOD_AUDIO_RATE, mic_heard % REDWOOD_AUDIO_RATE * 100 / REDWOOD_AUDIO_RATE, mic_peak, mic_short);
+	say("hakios: audio: the microphone stops: %llu.%02llu s asked for, %llu.%02llu s of it from the kernel (peak %d of 32768), "
+	    "%llu reads short\n", mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE,
+	    mic_heard / HAKIOS_AUDIO_RATE, mic_heard % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, mic_peak, mic_short);
 	if (mic >= 0) {
 		close(mic);
 	}
@@ -863,8 +863,8 @@ codec_read(int16_t *samples, UInt32 frames)
 	UInt32 have = got > 0 ? (UInt32)got / 2 : 0;
 
 	if (have > 0 && mic_heard == 0) {
-		say("redwood: audio: the microphone's first samples, %llu.%02llu s after the input started\n",
-		    mic_frames / REDWOOD_AUDIO_RATE, mic_frames % REDWOOD_AUDIO_RATE * 100 / REDWOOD_AUDIO_RATE);
+		say("hakios: audio: the microphone's first samples, %llu.%02llu s after the input started\n",
+		    mic_frames / HAKIOS_AUDIO_RATE, mic_frames % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE);
 	}
 	for (UInt32 i = 0; i < have; i++) {
 		int v = samples[i] < 0 ? -samples[i] : samples[i];
@@ -893,7 +893,7 @@ start_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unu
 		d->periods = 0;
 		if (d->output != 0) {
 			written = refused = 0;
-			say("redwood: audio: playing\n");
+			say("hakios: audio: playing\n");
 		}
 		if (d->object == OBJECT_CODEC) {
 			codec_open();
@@ -916,8 +916,8 @@ stop_io(__unused AudioServerPlugInDriverRef driver, AudioObjectID object, __unus
 		if (d->object == OBJECT_CODEC) {
 			codec_close();
 		} else if (d->output != 0) {
-			say("redwood: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / REDWOOD_AUDIO_RATE,
-			    written % REDWOOD_AUDIO_RATE * 100 / REDWOOD_AUDIO_RATE, refused, REDWOOD_AUDIO_DEVICE);
+			say("hakios: audio: stopped after %llu.%02llu s (%llu frames not taken by %s)\n", written / HAKIOS_AUDIO_RATE,
+			    written % HAKIOS_AUDIO_RATE * 100 / HAKIOS_AUDIO_RATE, refused, HAKIOS_AUDIO_DEVICE);
 		}
 	}
 	pthread_mutex_unlock(&lock);
@@ -964,10 +964,10 @@ begin_end_io_operation(__unused AudioServerPlugInDriverRef driver, __unused Audi
 }
 
 /*
- * What iOS plays on the actuator -- the haptics: the system's feedbacks and the ringer's vibration,
+ * What the system plays on the actuator -- the haptics: the system's feedbacks and the ringer's vibration,
  * CoreHaptics' patterns, UIKit's feedbacks, as waveforms of one channel -- goes to the kernel's motor
- * driver (/dev/redwood-haptic, bsd/dev/redwood_haptic.c, haptic=5), which plays Android's own
- * waveforms on the phone's motor by it. (iOS plays on this device at all only because the device
+ * driver (/dev/hakios-haptic, bsd/dev/hakios_haptic.c, haptic=5), which plays Android's own
+ * waveforms on the phone's motor by it. (the system plays on this device at all only because the device
  * tree says the phone's haptics are "closed-loop": see mkidentity.py.) Said the first times, with
  * how loud.
  */
@@ -985,7 +985,7 @@ actuator_write(const int16_t *samples, UInt32 frames)
 		peak = v > peak ? v : peak;
 	}
 	if (haptic == -1) {
-		haptic = open("/dev/redwood-haptic", O_WRONLY | O_NONBLOCK);
+		haptic = open("/dev/hakios-haptic", O_WRONLY | O_NONBLOCK);
 		haptic = haptic >= 0 ? haptic : -2;
 	}
 	if (haptic >= 0) {
@@ -993,8 +993,8 @@ actuator_write(const int16_t *samples, UInt32 frames)
 	}
 	if (peak > 0 && haptic_said < 12) {
 		haptic_said++;
-		say("redwood: audio: the actuator plays: %u frames, peak %d of 32768%s\n", (unsigned)frames, peak,
-		    haptic >= 0 ? "" : " (no /dev/redwood-haptic: not felt)");
+		say("hakios: audio: the actuator plays: %u frames, peak %d of 32768%s\n", (unsigned)frames, peak,
+		    haptic >= 0 ? "" : " (no /dev/hakios-haptic: not felt)");
 	}
 }
 
@@ -1017,7 +1017,7 @@ do_io_operation(__unused AudioServerPlugInDriverRef driver, __unused AudioObject
 		actuator_write(buffer, frames);
 	} else if (operation == kAudioServerPlugInIOOperationWriteMix && stream == d->output) {
 		/* the kernel takes it all or leaves it: this thread must not wait */
-		if (sink < 0 || write(sink, buffer, (size_t)frames * REDWOOD_AUDIO_FRAME) < 0) {
+		if (sink < 0 || write(sink, buffer, (size_t)frames * HAKIOS_AUDIO_FRAME) < 0) {
 			refused += frames;
 		}
 		written += frames;
@@ -1035,7 +1035,7 @@ static AudioServerPlugInDriverInterface *driver = &interface;
 
 /* The factory named in the bundle's Info.plist. */
 void *
-RedwoodAudio_Create(__unused CFAllocatorRef allocator, CFUUIDRef type)
+HakiosAudio_Create(__unused CFAllocatorRef allocator, CFUUIDRef type)
 {
 	return CFEqual(type, kAudioServerPlugInTypeUUID) ? &driver : NULL;
 }

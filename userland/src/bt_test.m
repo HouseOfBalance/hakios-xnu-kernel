@@ -1,7 +1,7 @@
 /*
  * bt_test: Bluetooth as an application sees it: CoreBluetooth's central manager -- its state, then a scan for what advertises around
  * (names, RSSI, services) for SECONDS (default 30). The way from here to the radio is bluetoothd's: XPC to it, its HCI over
- * /dev/uart.bluetooth's Skywalk channel, and the MediaTek controller behind CONNSYS (bsd/dev/redwood_connsys.c, connsys_bt=2).
+ * /dev/uart.bluetooth's Skywalk channel, and the MediaTek controller behind CONNSYS (bsd/dev/mtk_connsys.c, connsys_bt=2).
  *
  * usage: bt_test [SECONDS [SERVICE-UUID]]   (a service to scan for; without it every advertiser)
  */

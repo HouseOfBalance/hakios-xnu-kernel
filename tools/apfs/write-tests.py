@@ -8,7 +8,7 @@ by at least one reader that is not apfs_write.c's and preferably by all of them 
   apfsck      linux-apfs/apfsprogs: checksums, every tree, the space manager's bitmaps against
               every block anything refers to, reference counts, extents.  Knows nothing of us.
   apfs.py     this repository's own Python reader, which verify.py has already checked against
-              7-Zip over the whole iOS root volume.
+              7-Zip over the whole the system root volume.
   7-Zip       a third implementation entirely.
   apfs-tool   the kernel's own apfs_lib.c -- the one reader that is partly the code under test
               (it shares struct definitions), so it is never the only witness.
@@ -403,7 +403,7 @@ def test_store_refusals():
     # a volume that is not the store: the name is the gate
     base, img = fresh('store-notstore')
     rc, out = store_save(img, b'x' * 100)
-    say(rc != 0 and 'not named' in out, 'refused: a volume that is not named RedwoodStore' +
+    say(rc != 0 and 'not named' in out, 'refused: a volume that is not named HakiosStore' +
         ('' if rc != 0 else ':\n' + out.strip()))
     say(changed_blocks(base, img) == [], '  and nothing in it was written')
 
@@ -442,7 +442,7 @@ def test_store_refusals():
         argv = [sys.executable, os.path.join(HERE, 'mkapfs.py'), '-o', img]
         if compress:
             argv.append('-z')
-        argv.append('RedwoodStore=' + tree)
+        argv.append('HakiosStore=' + tree)
         rc, out = run(*argv)
         if rc != 0:
             say(False, '%s: the image could not be made:\n%s' % (what, out))
@@ -638,7 +638,7 @@ def test_volume_gates():
     for what, off, value in (('a sealed volume', 56, 0x08 | 0x20),
                              ('a volume with snapshots', 216, 1),
                              ('a volume with integrity metadata', 1024, 999),
-                             ("iOS's own system volume, by its role", 964, 1),
+                             ("the system's own system volume, by its role", 964, 1),
                              ('the preboot volume, by its role', 964, 0x10)):
         base, img = fresh('g-%d-%d' % (off, value))
         sb = find_object(img, 0x0d)             # APFS_OBJECT_TYPE_FS: the volume superblock
@@ -798,7 +798,7 @@ def test_power_failure():
 
 
 def test_real_images():
-    """What the gates say about the images this port really has.  The iOS root volume is the one
+    """What the gates say about the images this port really has.  The system's root volume is the one
     that matters: it is read through apfs.py because apfs-tool does not open a .dmg, and what it
     says about it is the reason apfs_write_volume_ok() refuses a volume by its role as well."""
     for rel in ('userland/root.apfs', 'userland/system.apfs', 'userland/flashboot.apfs'):
@@ -822,10 +822,10 @@ def test_real_images():
     finally:
         c.close()
     sealed = bool(incompat & 0x20)
-    print('       the iOS root volume: incompatible 0x%x (sealed: %s), snapshots %d, '
+    print('       the root volume of the system: incompatible 0x%x (sealed: %s), snapshots %d, '
           'integrity metadata %d, role 0x%04x' % (incompat, sealed, snaps, integrity, role))
     say(not sealed and snaps == 0 and integrity == 0,
-        'the iOS root volume would pass every APFS gate there is -- so the role gate is the '
+        'the root volume of the system would pass every APFS gate there is -- so the role gate is the '
         'one that refuses it, and where a write may go is what really keeps it safe')
     say(role == 0x0001, '  and it is refused: its role is the system volume')
 

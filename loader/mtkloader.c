@@ -71,7 +71,7 @@ _Static_assert(XNU_CORES >= 1 && XNU_CORES <= HAKIOS_SOC_CORES - 1, "one core at
 /*
  * The processors in the order the kernel is offered them (the board file's core_order): the one
  * this code runs on first (LK leaves us on core 0), then the big cores, then the rest of the
- * small ones. So a few cores already give iOS the fast ones.
+ * small ones. So a few cores already give the system the fast ones.
  */
 static const uint8_t core_order[HAKIOS_LOADER_CORE_ORDER_COUNT] = HAKIOS_LOADER_CORE_ORDER;
 #define WATCH_CORE          core_order[XNU_CORES]
@@ -109,7 +109,7 @@ static const uint8_t core_order[HAKIOS_LOADER_CORE_ORDER_COUNT] = HAKIOS_LOADER_
 #endif
 /*
  * 1: the kernel's text console on the screen (-v). It is a slow way to run -- scrolling reads
- * the whole framebuffer back -- and iOS cannot draw while it is on, so a real boot goes without
+ * the whole framebuffer back -- and the system cannot draw while it is on, so a real boot goes without
  * it and the log comes back through the loader instead (v_display = 1 says "graphics mode").
  */
 #ifndef XNU_VERBOSE
@@ -119,14 +119,14 @@ static const uint8_t core_order[HAKIOS_LOADER_CORE_ORDER_COUNT] = HAKIOS_LOADER_
 #ifndef XNU_EXTRA_ARGS
 #define XNU_EXTRA_ARGS      "cpus=1"
 #endif
-/* The serial number iOS is told (the device tree's serial-number): a placeholder, not any real device's.
+/* The serial number the system is told (the device tree's serial-number): a placeholder, not any real device's.
  * A real build sets its own with -DXNU_SERIAL=..., which is never committed. */
 #ifndef XNU_SERIAL
 #define XNU_SERIAL          "HAKIOS0000000000"
 #endif
 /*
  * 1: the system image stays on the eMMC and the kernel reads it as it needs it (emmc_root=1,
- * bsd/dev/redwood_emmc.c), the default; 0: it is read into DRAM here as md0 -- 2.4 GB of the kernel's 4 GB,
+ * bsd/dev/mtk_emmc.c), the default; 0: it is read into DRAM here as md0 -- 2.4 GB of the kernel's 4 GB,
  * wired from the start, and three and a half minutes of every boot (run 320).
  */
 #ifndef XNU_ROOT_EMMC
@@ -435,7 +435,7 @@ static void display_alpha_off(void)
 	/*
 	 * LK composes two layers: layer 0 is the picture, and layer 3 is its own overlay with the
 	 * warning it prints on an unlocked phone ("Orange State: your device has been unlocked"),
-	 * from a buffer of its own. Nothing of iOS writes to that buffer, so the words stayed on
+	 * from a buffer of its own. Nothing of the system writes to that buffer, so the words stayed on
 	 * top of the home screen. Leave the overlay's layers out of what the hardware composes.
 	 */
 	uint32_t src = rd32(OVL0_BASE + OVL_SRC_CON);
@@ -500,7 +500,7 @@ static void find_syms(const uint8_t *kernel, struct xnu_syms *s)
 		"_vmapple_uart_receive_ready", "_uart_putc", "_uart_putc_options", "_loader_log_putc",
 		"_nprocs", "_tasks_count", "_initproc", "_gic_v3_irq_cpu_init",
 		"_gic_unhandled_count", "_gic_last_unhandled", "_gic_active_iar",
-		"_redwood_host_keep", "_redwood_host_keep_len", "_redwood_host_keep_dropped",
+		"_hakios_host_keep", "_hakios_host_keep_len", "_hakios_host_keep_dropped",
 		/* (the same in a kernel of the common tree, hakios-xnu-kernel's mtk/mt6768/drivers/gpu/hakios.mali.c) */
 		"_hakios_host_keep", "_hakios_host_keep_len", "_hakios_host_keep_dropped",
 	};
@@ -743,21 +743,21 @@ static void dt_end(struct dt_writer *w)
 }
 
 
-/* What the iPhone's own device tree says (model, compatible, product ...), from xnuloader. */
+/* What the reference phone's own device tree says (model, compatible, product ...), from xnuloader. */
 static void dt_identity(struct dt_writer *w, const struct identity_prop *props, uint32_t count, const unsigned char *data)
 {
 	for (uint32_t i = 0; i < count; i++) {
-		/* the panel is sRGB, not the iPhone X's P3 (see xnuloader/loader.c) */
+		/* the panel is sRGB, not the reference phone's P3 (see xnuloader/loader.c) */
 		if (strcmp(props[i].name, "artwork-display-gamut") == 0) {
 			dt_prop(w, props[i].name, "sRGB", 5);
 			continue;
 		}
 		/*
-		 * The screen class iOS lays itself out for. The identity was generated with the panel's
-		 * own height here, 1640, which no iPhone has: iOS takes an unknown class for a phone
+		 * The screen class the system lays itself out for. The identity was generated with the panel's
+		 * own height here, 1640, which no the reference phone has: The system takes an unknown class for a phone
 		 * with a home button, and the Control Centre came up from the bottom edge as on an
-		 * iPhone 8. The display driver reports the iPhone X's 1125 x 2436 whatever the panel,
-		 * so the class has to be the iPhone X's too.
+		 * the reference phone 8. The display driver reports the reference phone's 1125 x 2436 whatever the panel,
+		 * so the class has to be the reference phone's too.
 		 */
 		if (strcmp(props[i].name, "artwork-device-subtype") == 0) {
 			static const uint32_t subtype = 2436;
@@ -1058,7 +1058,7 @@ static void save_log(const struct span *sp, int nsp)
 }
 
 /*
- * The kernel's lines for the host (kern.redwood.host_keep, bsd/dev/redwood_mali.c) into ramoops' pmsg
+ * The kernel's lines for the host (kern.hakios.host_keep, bsd/dev/mtk_mali.c) into ramoops' pmsg
  * zone, whole: Android shows them as /sys/fs/pstore/pmsg-ramoops-0, and tools/xnu-cycle.sh appends them
  * to the run's log. Called on each way back from XNU, after the boot request in that zone was taken.
  */
@@ -2072,7 +2072,7 @@ static uint8_t touch_bring_up_once(void)
 /*
  * The whole sequence, up to six times, waiting a little longer between tries each time. Now and then the chip takes the image and then says
  * nothing after the go command -- two runs in four did -- and a fresh start from a reset brings
- * it up; this was what left iOS without a touch screen.
+ * it up; this was what left the system without a touch screen.
  */
 static uint8_t touch_bring_up(void)
 {
@@ -2246,7 +2246,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	/*
 	 * EOImode is per processor, and gic_fix_eoimode() below only reaches the one this code runs
 	 * on. Every other core comes out of PSCI CPU_ON with the bit set again, takes one timer
-	 * interrupt and goes deaf: with four cores iOS crawled on the one that worked, and the
+	 * interrupt and goes deaf: with four cores the system crawled on the one that worked, and the
 	 * kernel's own heartbeat beat 3 times in 840 seconds.
 	 *
 	 * Each core calls gic_v3_irq_cpu_init() for itself, and in it writes zero to ICC_BPR1_EL1.
@@ -2310,7 +2310,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	ba->deviceTreeP = dt_pa - XNU_SLIDE;
 	ba->deviceTreeLength = dt_len;
 	ba->video.v_baseAddr = fb_base;
-	ba->video.v_display = XNU_VERBOSE ? 0 : 1; /* 0: the kernel's text console, 1: for iOS to draw */
+	ba->video.v_display = XNU_VERBOSE ? 0 : 1; /* 0: the kernel's text console, 1: for the system to draw */
 	ba->video.v_rowBytes = fb_pitch;
 	ba->video.v_width = PANEL_W;
 	ba->video.v_height = PANEL_H;
@@ -2400,7 +2400,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	big_cores_clock();
 #endif
 	/*
-	 * Nothing of ours is left on the panel: iOS paints only what it draws, and where it does not
+	 * Nothing of ours is left on the panel: The system paints only what it draws, and where it does not
 	 * reach, what LK wrote there stays -- its "Orange State: your device has been unlocked"
 	 * showed through the home screen.
 	 */
@@ -2985,7 +2985,7 @@ static void touch_hand_back(void)
  * (tools/boot-xnu.sh): ramoops keeps it in its pmsg zone across the reboot, where this finds it
  * and wipes it, so the boot after XNU is Android again.
  */
-static const char boot_xnu_flag[] = "DARWIN-REDWOOD:BOOT-XNU";
+static const char boot_xnu_flag[] = "HAKIOS:BOOT-XNU";
 
 /*
  * Whether Android left `flag` in the pmsg zone before rebooting, and if so wipe it, so it is taken
@@ -3047,7 +3047,7 @@ static int boot_choice(void)
 #include "mtkpwrap.h"
 #include "mtkmali.h"
 
-static const char gpu_probe_flag[] = "DARWIN-REDWOOD:GPU-PROBE";
+static const char gpu_probe_flag[] = "HAKIOS:GPU-PROBE";
 
 static void say_mv(const char *name, int on, uint16_t selector)
 {
@@ -3384,7 +3384,7 @@ rails_off:
 #if CAM_PROBE
 #include "mtkcam.h"
 
-static const char cam_probe_flag[] = "DARWIN-REDWOOD:CAM-PROBE";
+static const char cam_probe_flag[] = "HAKIOS:CAM-PROBE";
 #endif /* CAM_PROBE */
 
 void mtkloader_main(uint64_t dtb)

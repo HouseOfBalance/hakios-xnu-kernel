@@ -1,5 +1,5 @@
 /*
- * Pipeline recipes (src/redwoodmetal.m has the measurements behind them, at rw_warm_start's call): what a
+ * Pipeline recipes (src/hakiosmetal.m has the measurements behind them, at rw_warm_start's call): what a
  * process built, as one line of text each -- the label, the shape's non-zero words, and for a pipeline
  * whose shaders are not the pipeline library's, its two functions and their constants -- and, read back
  * from userland/share/rwm-recipes.txt at the next start, the same pipelines built by a thread of their
@@ -98,7 +98,7 @@ char warm_first_refusal[160];  /* the first build the compiler refused, and why 
 void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 const char *
@@ -198,7 +198,7 @@ say_recipe(const char *text, size_t n, bool to_host)
 		char line[200];
 
 		snprintf(line, sizeof(line), "rwr %s %zu %zu/%zu %.150s", getprogname(), n, k + 1, pieces, text + k * 150);
-		sysctlbyname(to_host ? "kern.redwood.host_keep" : "kern.redwood.say", NULL, NULL, line, strlen(line));
+		sysctlbyname(to_host ? "kern.hakios.host_keep" : "kern.hakios.say", NULL, NULL, line, strlen(line));
 	}
 }
 
@@ -286,7 +286,7 @@ rwm_recipe_record(const char *label, const struct rwa_render_shape *shape, const
 		if (whole) {
 			recipes[nrecipes++] = recipe.take();
 			/* and at once to the kernel's buffer for the host, which comes back whole however long the
-			 * run (kern.redwood.host_keep): the log's middle is lost, and with it a long run's recipes
+			 * run (kern.hakios.host_keep): the log's middle is lost, and with it a long run's recipes
 			 * (run 352) */
 			say_recipe(recipes[nrecipes - 1], nrecipes - 1, true);
 		}

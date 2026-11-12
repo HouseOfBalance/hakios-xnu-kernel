@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage: tools/dsc/textdump.py IMAGE OUT.macho   -- the __text of an image of the iOS 16.5 cache as a bare arm64 Mach-O at its own addresses,
+"""usage: tools/dsc/textdump.py IMAGE OUT.macho   -- the __text of an image of the system image 20F66 cache as a bare arm64 Mach-O at its own addresses,
 so that `otool -arch arm64 -tV OUT.macho` (Apple's, no capstone needed) shows it; also writes OUT.macho.cstring with the __cstring section
 and the segment/section addresses on stdout."""
 import struct, sys

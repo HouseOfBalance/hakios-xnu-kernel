@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fbjpg.py LOG OUT.jpg [NAME]: the last whole picture that /redwood/bin/fbgrab -log NAME put on the console (lines "fbjpg NAME I/N: base64"),
+"""fbjpg.py LOG OUT.jpg [NAME]: the last whole picture that /hakios/bin/fbgrab -log NAME put on the console (lines "fbjpg NAME I/N: base64"),
 as the JPEG it was. Run fbgrab as the last thing of a run: the log has the console's last 261 KB."""
 import base64, re, sys
 

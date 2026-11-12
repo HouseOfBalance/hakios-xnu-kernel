@@ -337,7 +337,7 @@ apfs_vnop_lookup(struct vnop_lookup_args *ap)
 	/*
 	 * A name that is not there stays not there (the volume cannot change; a synthetic
 	 * directory added later purges its parent's entries): the name cache says so from now on,
-	 * instead of asking again -- iOS asks for missing files thousands of times after a boot.
+	 * instead of asking again -- the system asks for missing files thousands of times after a boot.
 	 */
 	if (error == ENOENT && cnp->cn_nameiop == LOOKUP && (cnp->cn_flags & MAKEENTRY)) {
 		cache_enter(dvp, NULLVP, cnp);
@@ -1138,7 +1138,7 @@ apfs_vnop_mnomap(__unused struct vnop_mnomap_args *ap)
  * pieces nobody was reading.  Here each file gives it back as soon as it is closed, and
  * the cache still covers what it is for: the reads of one file, one after another.
  * (This was first suspected of resetting the phone on long walks; it was not -- memory
- * stayed flat throughout -- see redwood_apfs_check.c for what was.)
+ * stayed flat throughout -- see hakios_apfs_check.c for what was.)
  */
 static int
 apfs_vnop_inactive(struct vnop_inactive_args *ap)
@@ -1188,7 +1188,7 @@ apfs_vnop_reclaim(struct vnop_reclaim_args *ap)
 
 /*
  * No ioctl or fsctl means anything here.  ENOTTY is what callers take for "this filesystem
- * does not have that"; the default, ENOTSUP, is not -- the iOS dyld, probing the root
+ * does not have that"; the default, ENOTSUP, is not -- the system's dyld, probing the root
  * volume for APFS features, gives up on it.
  */
 static int

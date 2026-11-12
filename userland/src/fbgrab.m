@@ -2,7 +2,7 @@
  * fbgrab -log NAME [WIDTH [QUALITY]]    the picture on the panel, scaled to WIDTH pixels (default 375: a point a pixel) as a JPEG
  * fbgrab HOST PORT NAME                 ... or whole, as a PNG, sent to HOST:PORT (tools/fbrecv.py) as POST /NAME.png
  *
- * The kernel's side is sysctl kern.redwood.fbgrab (bsd/dev/redwood_fbgrab.c): 16 bytes -- width, height, stride, 'BGRA' -- and the rows.
+ * The kernel's side is sysctl kern.hakios.fbgrab (bsd/dev/hakios_fbgrab.c): 16 bytes -- width, height, stride, 'BGRA' -- and the rows.
  * fbshot's pictures go through the log too but are 60 to 130 pixels wide, a blur. The JPEG goes to the console in base64 lines
  *     fbjpg NAME I/N: ...
  * and the last 261 KB of the console come back with the run, so a picture of 60 to 100 KB is the last thing a run says; tools/fbjpg.py
@@ -25,7 +25,7 @@ panel(uint8_t **keep)
 	uint8_t *buffer = malloc(size);
 
 	*keep = buffer;
-	if (buffer == NULL || sysctlbyname("kern.redwood.fbgrab", buffer, &size, NULL, 0) != 0) {
+	if (buffer == NULL || sysctlbyname("kern.hakios.fbgrab", buffer, &size, NULL, 0) != 0) {
 		printf("fbgrab: the picture was not given (errno %d)\n", errno);
 		return NULL;
 	}
@@ -76,7 +76,7 @@ main(int argc, char **argv)
 			for (size_t i = 0; i < lines; i++) {
 				NSString *line = [NSString stringWithFormat:@"fbjpg %s %zu/%zu: %@\n", argv[2], i + 1, lines, [text substringWithRange:NSMakeRange(i * 200, MIN((size_t)200, text.length - i * 200))]];
 
-				sysctlbyname("kern.redwood.say", NULL, NULL, line.UTF8String, line.length - 1);       /* the kernel's log: the console's own is a tty that drops lines (run 759: 20 of 128 came back) */
+				sysctlbyname("kern.hakios.say", NULL, NULL, line.UTF8String, line.length - 1);       /* the kernel's log: the console's own is a tty that drops lines (run 759: 20 of 128 came back) */
 				usleep(2000);
 			}
 			return 0;

@@ -47,8 +47,8 @@ note_drawn(const struct rwm_work *w, struct rwm_texture **drawn, unsigned &ndraw
 
 } // namespace
 
-/* a texture over another process's surface brought up to date, counted in rwm_perf (also -[RedwoodMetalTexture
- * redwoodCopyInNow]) */
+/* a texture over another process's surface brought up to date, counted in rwm_perf (also -[HakiosMetalTexture
+ * hakiosCopyInNow]) */
 extern "C" void
 rwm_copy_in(struct rwm_texture *texture)
 {

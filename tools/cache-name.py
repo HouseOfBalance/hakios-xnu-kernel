@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 cache-name.py ADDRESS... (hex, unslid, as src/inject_media.c's "!media tN" lines give them): which image of
-the iOS shared cache (system/<build>/dyld_shared_cache_arm64) each address is in, and how far into it.
+the system's shared cache (system/<build>/dyld_shared_cache_arm64) each address is in, and how far into it.
 A line of a log can be given whole on standard input instead: every hex word in it is named.
 """
 import os, re, struct, sys

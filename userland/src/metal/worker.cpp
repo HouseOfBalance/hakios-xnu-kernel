@@ -35,13 +35,13 @@ bool busy;                              /* a job taken off the queue and not yet
 void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 void *
 main_loop(void *)
 {
-	pthread_setname_np("rwm worker");       /* (redwood_drm tells its waits apart by this name) */
+	pthread_setname_np("rwm worker");       /* (hakios_drm tells its waits apart by this name) */
 	rwm_bind_big(2);
 	for (;;) {
 		job j;
@@ -103,7 +103,7 @@ rwm_worker_on(void)
 }
 
 /*
- * The window server's two busiest threads on the two Cortex-A75s (kern.redwood.bind_cpu: logical processors 1 and 2):
+ * The window server's two busiest threads on the two Cortex-A75s (kern.hakios.bind_cpu: logical processors 1 and 2):
  * CoreAnimation's render thread, the one that commits, on 1, and this worker on 2 -- with boot-arg bigcore=1 only:
  * since 26 October a thread bound to one core waited for that core more than it ran (runs 194, 195).
  */
@@ -116,7 +116,7 @@ rwm_bind_big(int cpu)
 		wanted = strcmp(getprogname(), "backboardd") == 0 && rwm_boot_arg("bigcore=1");
 	}
 	if (wanted) {
-		(void)sysctlbyname("kern.redwood.bind_cpu", NULL, NULL, &cpu, sizeof(cpu));
+		(void)sysctlbyname("kern.hakios.bind_cpu", NULL, NULL, &cpu, sizeof(cpu));
 	}
 }
 

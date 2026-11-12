@@ -19,7 +19,7 @@ rwm_print(const char *fmt, ...)
 	va_list ap;
 
 	if (who[0] == '\0') {
-		snprintf(who, sizeof(who), "redwoodmetal[%s %d]", getprogname(), getpid());
+		snprintf(who, sizeof(who), "hakiosmetal[%s %d]", getprogname(), getpid());
 	}
 	printf("%s: ", who);
 	va_start(ap, fmt);
@@ -61,6 +61,6 @@ rwm_print(const char *fmt, ...)
 		vsnprintf(line + at, sizeof(line) - at, fmt, ap);
 		va_end(ap);
 		line[strcspn(line, "\n")] = 0;
-		sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 	}
 }

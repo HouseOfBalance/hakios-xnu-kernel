@@ -7,7 +7,7 @@
  * surfaces of its layers into that memory, and "vsync" is a timer.
  *
  * The protocol (selectors and the layout of the swap request) was worked out from the
- * user-space side of iOS 16.5. Everything not implemented is logged once.
+ * user-space side of the system image 20F66. Everything not implemented is logged once.
  */
 
 #include <IOKit/IOLib.h>
@@ -48,7 +48,7 @@ extern struct vc_info vinfo;            /* the boot framebuffer, as the text con
  * the MT6768's frequencies, so the cores run at whatever LK left them at -- which this tells.
  */
 static uint32_t
-redwood_core_mhz(int *cpu)
+hakios_core_mhz(int *cpu)
 {
 	uint64_t v0, v1, ns, x = 0;
 	const uint64_t rounds = 20000;          /* of 50 adds: a million cycles */
@@ -68,10 +68,10 @@ redwood_core_mhz(int *cpu)
 
 #include "MiniIOSurface.h"
 
-extern "C" void redwood_tl(const char * format, ...) __printflike(1, 2);
-extern "C" void redwood_keep(const char * format, ...) __printflike(1, 2);
+extern "C" void hakios_tl(const char * format, ...) __printflike(1, 2);
+extern "C" void hakios_keep(const char * format, ...) __printflike(1, 2);
 
-/* IOConnectCallMethod selectors of the framebuffer user client (iOS 16.5) */
+/* IOConnectCallMethod selectors of the framebuffer user client (the system image 20F66) */
 enum {
 	kFBMethodGetLayerDefaultSurface = 3,
 	kFBMethodSwapBegin              = 4,
@@ -121,10 +121,10 @@ static uint64_t gFBLogged[2];           /* selectors already reported */
 static uint8_t  gFBCalls[128];          /* how many calls of each selector were traced */
 
 /*
- * The display user space is told about. The system carries the identity of the iPhone X
- * (see the loader), and iOS knows what screen that phone has: with any other size
+ * The display user space is told about. The system carries the identity of the reference phone
+ * (see the loader), and the system knows what screen that phone has: with any other size
  * MobileGestalt reports an unknown screen class and the user interface has no layout for it.
- * So the display is always the iPhone's, and a swap scales the picture to the panel that is
+ * So the display is always the reference phone's, and a swap scales the picture to the panel that is
  * really there (in QEMU the loader makes the panel exactly this size and nothing is scaled).
  * Boot-args fbwidth= and fbheight= change the size reported.
  */
@@ -144,8 +144,8 @@ static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
 #define kFBDefaultScale         3
 static TUNABLE(uint32_t, gFBScale, "fbscale", 0);
 /*
- * Boot-arg fbxr=1 (with fbscale=2): the iPhone XR's screen instead, 414 x 896 points at two pixels a
- * point. iOS has a status bar for that one; for the iPhone X's 375 points at two it has none and puts
+ * Boot-arg fbxr=1 (with fbscale=2): the reference phoneR's screen instead, 414 x 896 points at two pixels a
+ * point. The system has a status bar for that one; for the reference phone's 375 points at two it has none and puts
  * up a red bar that says so ("Please see rdar://45025538"). It is also more room: 414 points across
  * instead of 375, so less of everything is too large on a big panel.
  */
@@ -156,9 +156,9 @@ static TUNABLE(uint32_t, gFBXR, "fbxr", 0);
 /* Boot-arg fbtrace=N: log the first N calls of every selector (default 3). */
 static TUNABLE(uint32_t, gFBTrace, "fbtrace", 3);
 /*
- * Boot-arg fbfit=1: keep the iPhone's proportions on a taller panel, black bands above and below.
+ * Boot-arg fbfit=1: keep the reference phone's proportions on a taller panel, black bands above and below.
  * fbfit=2: keep them by filling the panel's height instead, and cutting the sides: no bands, and
- * 18 pixels lost at each edge of the X6826B's 720.
+ * 18 pixels lost at each edge of the first phone's 720.
  */
 static TUNABLE(uint32_t, gFBFit, "fbfit", 0);
 
@@ -181,7 +181,7 @@ static TUNABLE(uint32_t, gFBFit, "fbfit", 0);
  * frames to be matched with what the window server's per-frame lines (glframes=1,
  * userland/src/eagl.c) say. rec_step=N (2 to 8, default 3) keeps one pixel of every N instead of 3:
  * N = 4 holds 1.8 times as many frames, 6 four times. The memory is taken from the system's for the
- * whole run: 640 MB of it under a long session of applications had iOS killing processes for
+ * whole run: 640 MB of it under a long session of applications had the system killing processes for
  * memory, SpringBoard and the window server among them (two respring in one run); 256 did not.
  */
 static TUNABLE(uint32_t, gRecSeconds, "rec_secs", 0);
@@ -204,7 +204,7 @@ static TUNABLE(uint32_t, gDiff, "fb_diff", 0);
 static TUNABLE(uint32_t, gFlicker, "fb_flicker", 0);
 /*
  * Boot-arg fb_filter=0: the picture is scaled to the panel nearest neighbour, as it once was. The
- * iPhone's 1125 x 2436 on this panel's 1080 x 2400 is 45 columns and 36 rows fewer: nearest
+ * the reference phone's 1125 x 2436 on this panel's 1080 x 2400 is 45 columns and 36 rows fewer: nearest
  * neighbour leaves out every 25th column and every 67th row, and where one of them goes through a
  * letter or a slanting line, that is a step in it or a stroke a pixel thinner -- text and lines a
  * little crooked, here and there and never in the same places twice. By default every pixel of the
@@ -229,7 +229,7 @@ static TUNABLE(uint32_t, gThreads, "fb_threads", 3);
 static TUNABLE(uint32_t, gQueue, "fb_queue", 3);
 /*
  * Boot-arg fb_inuse=0: a swap's surfaces are not counted in use while they wait for the panel. By
- * default they are, as on an iPhone: CoreAnimation took a surface still waiting here for the next
+ * default they are, as on a reference phone: CoreAnimation took a surface still waiting here for the next
  * frame and drew it over, and the panel showed a frame from before or after its turn -- part of the
  * screen flickering in every page swipe (fb_flicker=1, 24 October).
  */
@@ -243,7 +243,7 @@ swapQueue(void)
  * Boot-arg touch_lat=1: a line for every swap handed over ("tl: s ID at US") and for every frame
  * put on the panel ("tl: v ID ready US shown US done US": the GPU done with it, its beat come, the
  * pixels in the panel's memory), in microseconds of mach_absolute_time, for measuring how long a
- * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/redwood_input.c).
+ * touch takes to show (tools/latency.py; the touch's own lines: bsd/dev/hakios_input.c).
  */
 static TUNABLE(uint32_t, gTouchLat, "touch_lat", 0);
 
@@ -522,7 +522,7 @@ IOMobileFramebuffer::flipStart(void)
 	fFlipPA[1] = (uint32_t) (scanned + picture);
 	fFront = 0;
 	fFlip = true;
-	redwood_keep("MiniIOMobileFramebuffer: fb_flip: two pictures, at %#x and %#x", fFlipPA[0], fFlipPA[1]);
+	hakios_keep("MiniIOMobileFramebuffer: fb_flip: two pictures, at %#x and %#x", fFlipPA[0], fFlipPA[1]);
 }
 
 bool
@@ -563,9 +563,9 @@ IOMobileFramebuffer::start(IOService * provider)
 	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
 	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
 	/*
-	 * A panel taller for its width than the iPhone's screen gets the picture at the iPhone's
+	 * A panel taller for its width than the reference phone's screen gets the picture at the reference phone's
 	 * proportions, centred, with black above and below -- scaled to the panel's whole height as
-	 * well it came out stretched (the X6826B's 720 x 1640 is 2.28 tall to the iPhone X's 2.17).
+	 * well it came out stretched (the first phone's 720 x 1640 is 2.28 tall to the reference phone's 2.17).
 	 * Its touch screen driver maps fingers into the same band. Only with boot-arg fbfit=1: the
 	 * other phone's touch driver knows nothing of the bands.
 	 */
@@ -611,11 +611,11 @@ IOMobileFramebuffer::start(IOService * provider)
 	}
 	/*
 	 * fbfit=3: the picture one pixel to a pixel of the panel, nothing scaled -- with fbscale=2 the
-	 * iPhone X's 750 x 1624 on the X6826B's 720 x 1640 is 15 columns cut at each side and 8 rows
+	 * the reference phone's 750 x 1624 on the first phone's 720 x 1640 is 15 columns cut at each side and 8 rows
 	 * of black above and below. A frame onto the panel is then a copy of its rows: scaling it
 	 * (bilinear) kept three of the four processors busy for 7 ms of every frame, the window
 	 * server and SpringBoard waiting for them (24 October). The touch screen driver
-	 * (bsd/dev/redwood_tcm.c) places fingers the same way.
+	 * (bsd/dev/mtk_tcm.c) places fingers the same way.
 	 */
 	if (gFBFit == 3 && fWidth != 0 && fHeight != 0 && fHeight <= fPanelHeight) {
 		fFillWidth = fWidth;
@@ -661,7 +661,7 @@ IOMobileFramebuffer::start(IOService * provider)
 
 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
 	/* for who draws with the GPU (userland/src/eagl.c): a frame need not be waited for before it is handed over */
-	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+	setProperty("HakiosWaitsForGPU", kOSBooleanTrue);
 	publishModes();
 	setName("disp0");
 	registerService();
@@ -1054,7 +1054,7 @@ IOMobileFramebuffer::reportFrameTimes(void)
 		if (++reports % 12 == 0) {
 			uint32_t all = run[0] + run[1] + run[2] + run[3] + run[4];
 
-			redwood_keep("MiniIOMobileFramebuffer: busy frames so far: %u, %u%% within 18 ms; %u under 26, %u under 35, %u longer",
+			hakios_keep("MiniIOMobileFramebuffer: busy frames so far: %u, %u%% within 18 ms; %u under 26, %u under 35, %u longer",
 			    all, all ? (run[0] + run[1]) * 100 / all : 0, run[2], run[3], run[4]);
 		}
 	}
@@ -1204,7 +1204,7 @@ IOMobileFramebuffer::shot(MiniIOSurface * s)
 }
 
 /*
- * The picture on the panel, whole, for bsd/dev/redwood_fbgrab.c (sysctl kern.redwood.fbgrab): what is in the front buffer now, B G R A in
+ * The picture on the panel, whole, for bsd/dev/hakios_fbgrab.c (sysctl kern.hakios.fbgrab): what is in the front buffer now, B G R A in
  * memory, a row of fRowBytes. fbshot's pictures go through the log and are 60 to 130 pixels wide; this one goes through a program that sends
  * it over the network (src/fbgrab.m).
  */
@@ -1231,7 +1231,7 @@ IOMobileFramebuffer::grab(uint8_t * out, uint32_t max, uint32_t * width, uint32_
 }
 
 extern "C" bool
-RedwoodFramebufferGrab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride)
+HakiosFramebufferGrab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride)
 {
 	return gLiveFB != NULL && gLiveFB->grab(out, max, width, height, stride);
 }
@@ -1251,7 +1251,7 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	nanoseconds_to_absolutetime(FRAME_PAUSE * NSEC_PER_MSEC, &pause);
 	clock_interval_to_deadline(SWAP_HELD_MS, kMillisecondScale, &deadline);
 	if (gTouchLat) {
-		redwood_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
+		hakios_tl("tl: s %u at %llu\n", swapWord(swap, SWAP_ID), micros(now));
 	}
 	IOLockLock(fSwapLock);
 	fStatSwapsLate += fSwapTime != 0 && now - fSwapTime > period && now - fSwapTime < pause;
@@ -1437,7 +1437,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	 * 27 October this was done before the copy: the window server, which draws in turn into just
 	 * two surfaces, began its next frame in the one being copied, and the panel showed part of one
 	 * frame and part of the next -- 768 frames begun in a surface the display still held in run
-	 * 228 (redwoodmetal.m counts them), the "breakcore" of every video of the Metal port.
+	 * 228 (hakiosmetal.m counts them), the "breakcore" of every video of the Metal port.
 	 */
 	IOLockLock(fSwapLock);
 	fSwapFirst = (fSwapFirst + 1) % SWAP_QUEUE;
@@ -1452,7 +1452,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	}
 	fSwapsShown++;
 	if (gTouchLat) {
-		redwood_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
+		hakios_tl("tl: v %u ready %llu shown %llu done %llu\n", swapWord(swap, SWAP_ID), micros(ready), micros(shown),
 		    micros(drawn));
 	}
 	if (layers != fLayersShown) {
@@ -1481,10 +1481,10 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 
 		if (measured < 8) {
 			int core;
-			uint32_t mhz = redwood_core_mhz(&core);
+			uint32_t mhz = hakios_core_mhz(&core);
 
 			measured++;
-			redwood_keep("MiniIOMobileFramebuffer: core %d runs at %u MHz", core, mhz);
+			hakios_keep("MiniIOMobileFramebuffer: core %d runs at %u MHz", core, mhz);
 		}
 		IOLog("MiniIOMobileFramebuffer: %u frames in %llu ms (%llu a second), %llu us each in the driver, after %llu us "
 		    "waiting for the GPU and, %u of them, %llu us for the next refresh; %u swaps waited for the frame before, "
@@ -1807,7 +1807,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 
 	case kFBMethodSwapWait:                         /* a swap is on the screen as soon as it is made */
 		if (gTouchLat) {
-			redwood_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
+			hakios_tl("tl: w %llu %#llx %#llx at %llu\n", args->scalarInputCount > 0 ? in[0] : 0,
 			    args->scalarInputCount > 1 ? in[1] : 0, args->scalarInputCount > 2 ? in[2] : 0, micros(mach_absolute_time()));
 		}
 		return kIOReturnSuccess;
@@ -1908,7 +1908,7 @@ publishDisplayNode(void)
 		data = OSData::withBytes("display-subsystem", sizeof("display-subsystem"));
 		props->setObject("device_type", data);
 		OSSafeReleaseNULL(data);
-		data = OSData::withBytes("redwood,framebuffer", sizeof("redwood,framebuffer"));
+		data = OSData::withBytes("hakios,framebuffer", sizeof("hakios,framebuffer"));
 		props->setObject("compatible", data);
 		OSSafeReleaseNULL(data);
 		data = OSData::withBytes("disp0", sizeof("disp0"));
@@ -1972,7 +1972,7 @@ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
  * registerService() time, the properties would exist before launchd, backboardd and SpringBoard
  * are born, so each of the three would take the Metal road on its first call, with nobody left
  * to read the log. Behind a boot-arg, a machine that has them is a machine booted on purpose to
- * have them, and the first such boot is meant to be RC=rc.ios, where launchd is never born.
+ * have them, and the first such boot is meant to be RC=rc.system, where launchd is never born.
  *
  * An empty string removes a property rather than setting it. That is the way out of the loop
  * above without a reboot: the properties live only in the registry, so processes started after

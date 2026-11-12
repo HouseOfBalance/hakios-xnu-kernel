@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "redwood_camera.h"
+#include "hakios_camera.h"
 
 struct isp_stats {
 	double          mean[3];        /* R, G, B above black, in 10-bit steps */
@@ -45,9 +45,9 @@ struct isp {
 
 void isp_init(struct isp *isp);
 /* the levels, from every 4th cell of every 4th pair of lines */
-void isp_measure(const struct redwood_camera_frame *f, const uint8_t *raw, struct isp_stats *s);
+void isp_measure(const struct hakios_camera_frame *f, const uint8_t *raw, struct isp_stats *s);
 /* the exposure for the frames to come: true, and the command filled in, when it should change */
-bool isp_ae(struct isp *isp, const struct redwood_camera_frame *f, const struct isp_stats *s, struct redwood_camera_command *c);
+bool isp_ae(struct isp *isp, const struct hakios_camera_frame *f, const struct isp_stats *s, struct hakios_camera_command *c);
 /* the white balance: grey world, a little of the way at a time */
 void isp_awb(struct isp *isp, const struct isp_stats *s);
 /*
@@ -55,22 +55,22 @@ void isp_awb(struct isp *isp, const struct isp_stats *s);
  * (rows from first_row to end_row only, for doing it in pieces). NV12: y and uv planes, full range (420f) or video
  * range (420v); BGRA: y only.
  */
-void isp_render_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+void isp_render_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row, bool video_range);
-void isp_render_bgra(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
+void isp_render_bgra(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *out, size_t stride,
     uint32_t width, uint32_t height, uint32_t first_row, uint32_t end_row);
 /*
  * Every pixel at the sensor's own size (f->width x f->height): the two colours a site does not have
  * from the same colour's sites around it (bilinear); rows from first_row to end_row (even), NV12.
  */
-void isp_render_full_nv12(const struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
+void isp_render_full_nv12(const struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, uint8_t *y, size_t y_stride,
     uint8_t *uv, size_t uv_stride, uint32_t first_row, uint32_t end_row, bool video_range);
 /*
  * Lens shading measured from a frame of a flat field (a white sheet held over the lens, evenly lit):
  * each colour's level at each grid point (a block's mean) over the brightest of its own; false if
  * the frame is too dark or clipped for it. min_ratio: the darkest point's level over the brightest's.
  */
-bool isp_lsc_from_flat(struct isp *isp, const struct redwood_camera_frame *f, const uint8_t *raw, float *min_ratio);
+bool isp_lsc_from_flat(struct isp *isp, const struct hakios_camera_frame *f, const uint8_t *raw, float *min_ratio);
 void isp_set_ccm(struct isp *isp, const float m[9]);
 
 #endif

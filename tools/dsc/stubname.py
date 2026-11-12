@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage: tools/dsc/stubname.py ADDR...  -- the symbol a stub (adrp x16; ldr x16,[x16,#off]; br x16) in the iOS 16.5 cache jumps to,
+"""usage: tools/dsc/stubname.py ADDR...  -- the symbol a stub (adrp x16; ldr x16,[x16,#off]; br x16) in the system image 20F66 cache jumps to,
 by the exports of every image (nearest export at or below the target)."""
 import bisect, struct, sys
 sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])

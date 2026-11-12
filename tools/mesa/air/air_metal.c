@@ -1,13 +1,13 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
 /*
- * libredwoodair: air_run's compute path, as a library a Metal driver calls.
+ * libhakiosair: air_run's compute path, as a library a Metal driver calls.
  *
  * The contract is air_metal.h and nothing else -- no NIR, no Gallium, no ir3 in the
- * caller's view -- because the Metal side (userland/src/redwoodmetal.m) must not grow a
+ * caller's view -- because the Metal side (userland/src/hakiosmetal.m) must not grow a
  * dependency on Mesa's headers and this side must stay free to change how it compiles.
  *
  * Almost everything here is lifted from air_run.c (tools/mesa/air/air_run.c), which has
@@ -527,8 +527,8 @@ rwa_device_open(char *why, size_t why_size)
       int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);
       if (fd < 0) {
          /* The ordinary case on this port, and not an error anybody should be
-          * surprised by: without gpu=1 the kernel starts no RedwoodGPU service, so
-          * there is no msm device for the shim to open (tools/mesa/redwood-drm).
+          * surprised by: without gpu=1 the kernel starts no HakiosGPU service, so
+          * there is no msm device for the shim to open (tools/mesa/hakios-drm).
           */
          say(why, why_size, "there is no GPU here: no msm device to open, which is what "
                             "a kernel booted without gpu=1 looks like");
@@ -569,8 +569,8 @@ rwa_device_open(char *why, size_t why_size)
       }
    }
 #elif defined(GALLIUM_PANFROST)
-   /* The Infinix's Mali (Bifrost v7): the kernel's RedwoodMali service behind the
-    * "panfrost" device of tools/mesa/redwood-drm, opened as osmesa_create_gpu_screen()
+   /* The first phone's Mali (Bifrost v7): the kernel's HakiosMali service behind the
+    * "panfrost" device of tools/mesa/hakios-drm, opened as osmesa_create_gpu_screen()
     * opens it in tools/mesa/panfrost-darwin.patch. Its option cache is static for the
     * reason freedreno's is above.
     */
@@ -707,7 +707,7 @@ rwa_device_name(struct rwa_device *device)
 {
    RWA_GUARD();
    /* Mesa's own name for the chip it opened ("Adreno 7c+ Gen 3"), which is where
-    * -[RedwoodMetalDevice name] gets the half it does not read out of the kernel.
+    * -[HakiosMetalDevice name] gets the half it does not read out of the kernel.
     */
    const char *name = device->screen->get_name(device->screen);
    return name ? name : "unknown GPU";
@@ -974,7 +974,7 @@ static const struct rwa_pixel_format rwa_pixel_formats[] = {
     * changes is which binding it can have and how its texels are read, and both of
     * those are decided from the format itself below, never from a second list.
     *
-    * The four are the ones iOS has and Gallium names the same bytes for. The depth
+    * The four are the ones the system has and Gallium names the same bytes for. The depth
     * aspect of each is the identity on memory -- 16-bit normalised, 32-bit float -- and
     * Z32_FLOAT_S8X24_UINT is Gallium's spelling of "32-bit depth, 8-bit stencil, the
     * rest padding", which is Metal's Depth32Float_Stencil8 exactly. What this library
@@ -1036,7 +1036,7 @@ format_is_depth_stencil(enum pipe_format f)
  * only the PURE EXCHANGE -- same field offsets, same widths -- leaves the rest of the
  * picture clean: moving the one-bit alpha as well misaligns the five-bit fields and
  * shows as visible striping across the icons, which the real screen does not have.
- * Re-rendered through the exchange, the whole page reads as iOS: a solid blue ground,
+ * Re-rendered through the exchange, the whole page reads as the system: a solid blue ground,
  * white labels, a blue-to-violet Weather icon with a white cloud (logs/packed.png).
  *
  * So Gallium's names and Metal's run in OPPOSITE directions over the colour channels,
@@ -1110,7 +1110,7 @@ pixel_format_refusal(unsigned f)
    if (f == 240 || f == 241)
       return "one of Metal's packed 4:2:2 video formats (GBGR422, BGRG422), where one block "
              "holds two texels and a region in texels is not a region in bytes";
-   /* The four depth and stencil formats iOS has are in the table above; these are the
+   /* The four depth and stencil formats the system has are in the table above; these are the
     * rest of Metal's enumeration between them, and each is declined for its own reason
     * rather than for being a depth format.
     */
@@ -1131,7 +1131,7 @@ pixel_format_refusal(unsigned f)
       return "one of Apple's extended-range XR formats, which has no Gallium equivalent at "
              "all";
    return "not a value of MTLPixelFormat this library knows: either a format newer than the "
-          "iOS 16.5 SDK's or none at all";
+          "the system image 20F66 SDK's or none at all";
 }
 
 /* Where an imported texture's memory comes from: an IOSurface by its ID, with the offset
@@ -1485,7 +1485,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
        * Linux puts a dmabuf file descriptor, and freedreno's import on Darwin already
        * means exactly that (freedreno_bo.c, fd_bo_from_dmabuf_drm: "what comes in here is
        * an IOSurface, and the file descriptor its ID", and the kernel answers it as
-       * kRedwoodSurface). PIPE_BIND_SHARED is deliberately NOT added to the template:
+       * kHakiosSurface). PIPE_BIND_SHARED is deliberately NOT added to the template:
        * fd_resource_from_handle sets is_shared on the resource itself, which is the flag
        * that matters, and a bind bit the is_format_supported query above was not made with
        * would be a question asked twice and answered once.
@@ -1542,7 +1542,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
       if (device->software || !device->screen->resource_from_handle) {
          say(why, why_size, "%s imports no memory: a texture over an IOSurface is the "
                             "GPU's own import path (fd_resource_from_handle over the "
-                            "kernel's kRedwoodSurface), and a rasterizer in plain C has "
+                            "kernel's kHakiosSurface), and a rasterizer in plain C has "
                             "nowhere to put somebody else's pages. Everything else about "
                             "this request was checked and is fine: a %ux%u %s of %s with "
                             "%u bytes a row", rwa_device_name(device), width, height,
@@ -4355,12 +4355,12 @@ rwa_dispatch_buffers(struct rwa_compute *compute, const struct rwa_bindings *bin
  * Mali's job queue), for rwa_wait_seq -- a command buffer of the window server's waits no longer,
  * its completion handlers do and the display does (MiniIOSurfaceDrawn).
  */
-extern uint64_t redwood_drm_last_seq(void) __attribute__((weak_import));
-extern int redwood_drm_wait_seq(uint64_t seq, int64_t relative_ns) __attribute__((weak_import));
+extern uint64_t hakios_drm_last_seq(void) __attribute__((weak_import));
+extern int hakios_drm_wait_seq(uint64_t seq, int64_t relative_ns) __attribute__((weak_import));
 
 /* panfrost's batch submissions since the last call: count and nanoseconds */
-extern uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles __attribute__((weak_import));
-extern uint64_t redwood_pan_variant_compiles, redwood_pan_variant_ns __attribute__((weak_import));
+extern uint64_t hakios_pan_submit_ns, hakios_pan_submits, hakios_pan_blend_compiles __attribute__((weak_import));
+extern uint64_t hakios_pan_variant_compiles, hakios_pan_variant_ns __attribute__((weak_import));
 
 void
 rwa_submit_profile(uint64_t out[5])
@@ -4372,23 +4372,23 @@ rwa_submit_profile(uint64_t out[5])
          snprintf(line, sizeof(line), "!rwm pipelines: %llu made, %llu ms translating, %llu ms compiling",
                   (unsigned long long)rwa_pipelines_made, (unsigned long long)(rwa_pipelines_translate_ns / 1000000),
                   (unsigned long long)(rwa_pipelines_compile_ns / 1000000));
-         sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+         sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
          rwa_pipelines_made = rwa_pipelines_translate_ns = rwa_pipelines_compile_ns = 0;
       }
    }
-   out[3] = &redwood_pan_variant_compiles ? redwood_pan_variant_compiles : 0;
-   out[4] = &redwood_pan_variant_ns ? redwood_pan_variant_ns : 0;
-   if (&redwood_pan_variant_compiles) {
-      redwood_pan_variant_compiles = 0;
-      redwood_pan_variant_ns = 0;
+   out[3] = &hakios_pan_variant_compiles ? hakios_pan_variant_compiles : 0;
+   out[4] = &hakios_pan_variant_ns ? hakios_pan_variant_ns : 0;
+   if (&hakios_pan_variant_compiles) {
+      hakios_pan_variant_compiles = 0;
+      hakios_pan_variant_ns = 0;
    }
-   out[0] = &redwood_pan_submits ? redwood_pan_submits : 0;
-   out[1] = &redwood_pan_submit_ns ? redwood_pan_submit_ns : 0;
-   out[2] = &redwood_pan_blend_compiles ? redwood_pan_blend_compiles : 0;
-   if (&redwood_pan_submits) {
-      redwood_pan_submits = 0;
-      redwood_pan_submit_ns = 0;
-      redwood_pan_blend_compiles = 0;
+   out[0] = &hakios_pan_submits ? hakios_pan_submits : 0;
+   out[1] = &hakios_pan_submit_ns ? hakios_pan_submit_ns : 0;
+   out[2] = &hakios_pan_blend_compiles ? hakios_pan_blend_compiles : 0;
+   if (&hakios_pan_submits) {
+      hakios_pan_submits = 0;
+      hakios_pan_submit_ns = 0;
+      hakios_pan_blend_compiles = 0;
    }
 }
 
@@ -4396,26 +4396,26 @@ uint64_t
 rwa_flush_seq(struct rwa_device *device)
 {
    RWA_GUARD();
-   if (!redwood_drm_last_seq)
+   if (!hakios_drm_last_seq)
       return 0;
    device->pipe->flush(device->pipe, NULL, 0);
-   return redwood_drm_last_seq();
+   return hakios_drm_last_seq();
 }
 
-extern int redwood_drm_surface_seq(uint32_t surface, uint64_t seq) __attribute__((weak_import));
+extern int hakios_drm_surface_seq(uint32_t surface, uint64_t seq) __attribute__((weak_import));
 
 /* a surface's last job for the display, or ~0 for "drawn on another thread, not yet sent" */
 int
 rwa_surface_seq(uint32_t surface, uint64_t seq)
 {
-   return redwood_drm_surface_seq ? redwood_drm_surface_seq(surface, seq) : 0;
+   return hakios_drm_surface_seq ? hakios_drm_surface_seq(surface, seq) : 0;
 }
 
 /* (no lock: it is a wait in the kernel, and nothing of the Gallium context is touched) */
 int
 rwa_wait_seq(uint64_t seq, int64_t timeout_ns)
 {
-   return redwood_drm_wait_seq ? redwood_drm_wait_seq(seq, timeout_ns) : 0;
+   return hakios_drm_wait_seq ? hakios_drm_wait_seq(seq, timeout_ns) : 0;
 }
 
 
@@ -5178,10 +5178,10 @@ rwa_depth_stencil_destroy(struct rwa_depth_stencil *state)
  *
  * The numbers are Apple's own and were read out of the SDK this driver is built against
  * -- iPhoneOS16.5.sdk's Metal.framework/Headers/MTLVertexDescriptor.h -- rather than
- * remembered, and userland/src/redwoodmetal.m carries a _Static_assert per row against
+ * remembered, and userland/src/hakiosmetal.m carries a _Static_assert per row against
  * those enumerators, so a disagreement between this table and Apple's header is a build
  * failure of the driver and not a wrong fetch on the phone. That SDK's enumeration ends
- * at Half (53): FloatRG11B10 and FloatRGB9E5 are iOS 17's, and nothing on this device
+ * at Half (53): FloatRG11B10 and FloatRGB9E5 are another system release's, and nothing on this device
  * can name them.
  *
  * The mapping is one rule, as docs/air.md 3.1 says: Char/Short/Int and their unsigned
@@ -5295,11 +5295,11 @@ vertex_format_refusal(unsigned f)
       return "MTLVertexFormatUInt1010102Normalized: the same packed word as 40, declined "
              "for the same unmeasured channel order";
    case 54:
-      return "MTLVertexFormatFloatRG11B10, which the iOS 16.5 SDK's MTLVertexFormat has "
+      return "MTLVertexFormatFloatRG11B10, which the system image 20F66 SDK's MTLVertexFormat has "
              "not got (it ends at Half, 53): three channels packed in one word, and "
              "declined for the channel order the same way";
    case 55:
-      return "MTLVertexFormatFloatRGB9E5, which the iOS 16.5 SDK's MTLVertexFormat has "
+      return "MTLVertexFormatFloatRGB9E5, which the system image 20F66 SDK's MTLVertexFormat has "
              "not got: PIPE_FORMAT_R9G9B9E5_FLOAT is texture-only in a6xx's format "
              "table, so fd6_vertex_format() answers FMT6_NONE and the hardware cannot "
              "fetch it at all";
@@ -5893,10 +5893,10 @@ vertex_reads_attributes(nir_shader *vs)
  * WHERE THESE NUMBERS COME FROM, and it is two sources that do not share a copy:
  *
  *   1. Apple's own MTLRenderPipeline.h for this release, which is on the build machine
- *      and not in this tree. userland/src/redwoodmetal.m compiles against it and
+ *      and not in this tree. userland/src/hakiosmetal.m compiles against it and
  *      _Static_asserts every value this table assumes, so a disagreement is a BUILD
  *      FAILURE of the driver rather than a wrong picture. (The same declarations are
- *      byte for byte identical in every iOS SDK from 10.3 to 16.5 and in macOS 13.3's,
+ *      byte for byte identical in every the system SDK from 10.3 to 16.5 and in macOS 13.3's,
  *      which is six copies agreeing.)
  *   2. Metal.framework's own code on the DEVICE, which carries the numbering as data:
  *      MTLBlendFactorString (0x181b08730) bounds its argument at 18 and indexes a table
@@ -5917,7 +5917,7 @@ vertex_reads_attributes(nir_shader *vs)
  * THE SHAPE OF THE TWO STRUCTS THE METAL DRIVER TYPES OUT BY HAND, stated here as
  * numbers so that an edit to one side alone fails to build on that side.
  *
- * The same four numbers are asserted in userland/src/redwoodmetal.m against ITS
+ * The same four numbers are asserted in userland/src/hakiosmetal.m against ITS
  * definitions. Neither file can see the other's structs, so this is not a comparison --
  * it is two independent statements of one agreement, which is the most a hand-copied
  * struct admits of. This port has paid twice for getting it wrong: a primitive type that
@@ -5936,12 +5936,12 @@ static_assert(sizeof(struct rwa_color_blend) == 32 &&
                  offsetof(struct rwa_render_shape, vertex_layout) == 420 &&
                  offsetof(struct rwa_render_shape, color_blend) == 792 &&
                  offsetof(struct rwa_render_shape, color_blend_count) == 1048,
-              "struct rwa_render_shape is not the shape redwoodmetal.m asserts: a field "
+              "struct rwa_render_shape is not the shape hakiosmetal.m asserts: a field "
               "was added in the middle, or only one of the two copies was rebuilt");
 static_assert(sizeof(struct rwa_render_info) == 116 &&
                  offsetof(struct rwa_render_info, vertex_argbuf_mask) == 100 &&
                  offsetof(struct rwa_render_info, blend_enabled_mask) == 108,
-              "struct rwa_render_info is not the shape redwoodmetal.m asserts, and this "
+              "struct rwa_render_info is not the shape hakiosmetal.m asserts, and this "
               "one the LIBRARY writes into: a driver with a shorter one is overrun");
 
 /* MTLBlendFactor, spelled out so a refusal names what the caller passed rather than
@@ -7729,7 +7729,7 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
    /* ...was. Waiting for every draw kept the GPU and the CPU taking turns, and a frame of
     * CoreAnimation is dozens of draws, so the window server ran at a few frames a second.
     * The draw is sent off and not waited for; the command buffer waits once, at its end
-    * (rwa_finish from redwoodCommitWork), before anything shows the picture. Not even
+    * (rwa_finish from hakiosCommitWork), before anything shows the picture. Not even
     * flushed: the next draw into the same attachments joins this one's pass. */
    rc = 0;
 

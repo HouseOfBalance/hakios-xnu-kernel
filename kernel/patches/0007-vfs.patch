@@ -78,8 +78,8 @@ diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
 -	/* check entitlement */
 -	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
 +	/*
-+	 * check entitlement -- redwood: or process 1, the port's own init, unsigned, which binds
-+	 * its choice of launchd jobs and the like onto the read-only iOS root volume before it
++	 * check entitlement -- or process 1, the port's own init, unsigned, which binds
++	 * its choice of launchd jobs and the like onto the read-only the system root volume before it
 +	 * hands over to launchd (userland/src/init.c, root_apfs=)
 +	 */
 +	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT) && proc_getpid(current_proc()) != 1) {

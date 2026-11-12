@@ -14,7 +14,7 @@
 # (toolchain/linux/iphone: the cctools linker) and sdks/iPhoneOS16.5.sdk.
 #
 # What ends up where (all under kernel/deps/, none of it committed):
-#   AvailabilityVersions libdispatch libpthread     Apple open source, at the releases of iOS 16.5
+#   AvailabilityVersions libdispatch libpthread     Apple open source, at the releases of the system image 20F66
 #   mm_bootstrap_cmds tcsh unifdef                  sources of mig, csh and unifdef
 #   MacOSX13.3.sdk                                  only Kernel.framework: the DriverKit headers
 #                                                   that Apple's closed "iig" would generate
@@ -144,7 +144,7 @@ stage1() {
 		cp tcsh/tcsh host/bin/tcsh
 	fi
 	link tcsh host/bin/csh
-	# what 7z leaves undone when it extracts files of the iOS images (see build/lzbitmap/unzbm.c)
+	# what 7z leaves undone when it extracts files of the system's images (see build/lzbitmap/unzbm.c)
 	if [ ! -x host/bin/unzbm ]; then
 		cc -O2 -w -o host/bin/unzbm build/lzbitmap/unzbm.c build/lzbitmap/libzbitmap.c
 	fi

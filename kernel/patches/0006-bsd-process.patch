@@ -78,13 +78,13 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  #include <net/if_ether.h>               /* for ether_family_init() */
  #include <net/if_gif.h>                 /* for gif_init() */
  #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
-+#include <sys/redwood_input.h>
-+#include <sys/redwood_audio.h>
-+#include <sys/redwood_emmc.h>
-+#include <sys/redwood_virtio_blk.h>
-+#include <sys/redwood_sparse.h>
++#include <sys/hakios_input.h>
++#include <sys/hakios_audio.h>
++#include <sys/mtk_emmc.h>
++#include <sys/hakios_virtio_blk.h>
++#include <sys/hakios_sparse.h>
 +#if APFS
-+#include <sys/redwood_apfs_check.h>
++#include <sys/hakios_apfs_check.h>
 +#endif
  #include <vm/vm_kern.h>                 /* for kmem_suballoc() */
  #include <sys/proc_uuid_policy.h>       /* proc_uuid_policy_init() */
@@ -102,14 +102,14 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  
  		bsd_init_kprintf("calling devfs_kernel_mount\n");
  		devfs_kernel_mount(mounthere);
-+		redwood_input_init();           /* /dev/redwood-touch */
-+		redwood_audio_init();           /* /dev/redwood-audio */
-+		redwood_emmc_devfs();           /* /dev/emmc0, the X6826B's system image (emmc_root=1) */
-+		redwood_virtio_blk_init();      /* /dev/rvblk0, a disk image of the host (QEMU) */
-+		redwood_sparse_init();          /* /dev/rsp0, part of an image too big to hold */
++		hakios_input_init();           /* /dev/hakios-touch */
++		hakios_audio_init();           /* /dev/hakios-audio */
++		mtk_emmc_devfs();           /* /dev/emmc0, the first phone's system image (emmc_root=1) */
++		hakios_virtio_blk_init();      /* /dev/rvblk0, a disk image of the host (QEMU) */
++		hakios_sparse_init();          /* /dev/rsp0, part of an image too big to hold */
 +#if APFS
 +		/* mounts and walks /dev/rvblk0 once userland has /private/var up */
-+		redwood_apfs_check_init();
++		hakios_apfs_check_init();
 +#endif
  	}
  #endif /* DEVFS */
@@ -146,7 +146,7 @@ diff --git a/bsd/kern/kern_cs.c b/bsd/kern/kern_cs.c
 -	}
 -
 +	/*
-+	 * redwood: never require library validation. This kernel does not enforce code signing at all
++	 * never require library validation. This kernel does not enforce code signing at all
 +	 * (see libkern/amfi/miniamfi.c): binaries are taken on their ad hoc signatures and our own tools
 +	 * are unsigned. Library validation is the one remaining check that would still bite -- a platform
 +	 * binary with CS_REQUIRE_LV (e.g. accountsd, akd, adid) refuses to load any library that is not
@@ -268,7 +268,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	}
 -
 +	/*
-+	 * redwood: two of the three checks below cannot be passed in this port, and both stand in
++	 * two of the three checks below cannot be passed in this port, and both stand in
 +	 * the way of something ordinary. The entitlement is one nobody carries here (nothing is
 +	 * signed, AMFI is a stub), and the persona is one nobody makes -- yet a package manager
 +	 * becomes root by asking for exactly this: Sileo spawns apt and dpkg into persona 99 with
@@ -309,8 +309,8 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  
 +	if (persona == NULL) {
 +		/*
-+		 * redwood: there are no personas in this port -- nothing makes them, and
-+		 * kpersona_find_by_type() answers "no such process" to everyone who asks. iOS's own
++		 * there are no personas in this port -- nothing makes them, and
++		 * kpersona_find_by_type() answers "no such process" to everyone who asks. The system's own
 +		 * programs get along without them, but a package manager becomes root by way of one:
 +		 * Sileo asks posix_spawn for persona 99 with OVERRIDE and uid 0 (its APTWrapper), and
 +		 * that is how it runs apt and dpkg. With the persona missing the lookup failed, the
@@ -469,7 +469,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 -	proc_setpidversion(p, OSIncrementAtomic(&nextpidversion));
 +	{
 +		/*
-+		 * (redwood) Except when xpcproxy becomes the service it was spawned for: then the process keeps
++		 * Except when xpcproxy becomes the service it was spawned for: then the process keeps
 +		 * xpcproxy's identity version, as if launchd had spawned the service itself, which is what launchd
 +		 * means by eliding xpcproxy ("service will attempt to elide xpcproxy"; here it spawns xpcproxy
 +		 * all the same). RunningBoard keeps the audit token of such a process from before the exec and
@@ -506,11 +506,11 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	}
  	return sysctl_handle_int(oidp, &initproc_spawned, 0, req);
  }
-+extern void redwood_keep(const char *format, ...) __printflike(1, 2);
++extern void hakios_keep(const char *format, ...) __printflike(1, 2);
 +
-+/* the processes whose end the kernel keeps for the end of the log (redwood_keep) */
++/* the processes whose end the kernel keeps for the end of the log (hakios_keep) */
 +static bool
-+redwood_keeps_exit(proc_t p)
++hakios_keeps_exit(proc_t p)
 +{
 +	return strnstr(p->p_comm, "Poster", sizeof(p->p_comm)) != NULL ||
 +	       strncmp(p->p_comm, "backboardd", sizeof(p->p_comm)) == 0 ||
@@ -524,7 +524,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	    proc_getpid(p), reason_namespace,
  	    reason_code, 0, 0);
  
-+	/* redwood: who leaves with a reason, and the reason's own words -- a process ended this way
++	/* who leaves with a reason, and the reason's own words -- a process ended this way
 +	 * raises no signal and leaves nothing in the console otherwise */
 +	{
 +		char said[160] = "";
@@ -535,8 +535,8 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 +		}
 +		printf("%s[%d] leaves with reason namespace %u code %#llx: %s\n", p->p_comm, proc_getpid(p),
 +		    reason_namespace, reason_code, said);
-+		if (redwood_keeps_exit(p)) {
-+			redwood_keep("%s[%d] leaves with reason namespace %u code %#llx: %s", p->p_comm, proc_getpid(p),
++		if (hakios_keeps_exit(p)) {
++			hakios_keep("%s[%d] leaves with reason namespace %u code %#llx: %s", p->p_comm, proc_getpid(p),
 +			    reason_namespace, reason_code, said);
 +		}
 +	}
@@ -557,13 +557,13 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  	uth = current_uthread();
  
 +	/*
-+	 * Darwin on redwood: the wallpaper's processes (PosterBoard, CollectionsPoster, ...)
++	 * Darwin on the wallpaper's processes (PosterBoard, CollectionsPoster, ...)
 +	 * come and go without a signal anybody hears, and the window server and SpringBoard
 +	 * end in a part of the log long overwritten by the end of a run; say how each one ends, in a line the
-+	 * kernel keeps for the end of the log (redwood_keep, bsd/dev/redwood_mali.c).
++	 * kernel keeps for the end of the log (hakios_keep, bsd/dev/mtk_mali.c).
 +	 */
-+	if (redwood_keeps_exit(p)) {
-+		redwood_keep("exit: %s[%d] status %#x%s, reason namespace %u code %#llx flags %#llx", p->p_comm,
++	if (hakios_keeps_exit(p)) {
++		hakios_keep("exit: %s[%d] status %#x%s, reason namespace %u code %#llx flags %#llx", p->p_comm,
 +		    proc_getpid(p), p->p_xstat, (p->p_xstat & 0x7f) ? " (a signal)" : "",
 +		    p->p_exit_reason ? p->p_exit_reason->osr_namespace : 0,
 +		    p->p_exit_reason ? (unsigned long long)p->p_exit_reason->osr_code : 0ULL,
@@ -581,7 +581,7 @@ diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
  /* General tunables */
  
 +/*
-+ * redwood: the memory there is to manage. max_mem is the whole of the kernel's memory window, and
++ * the memory there is to manage. max_mem is the whole of the kernel's memory window, and
 + * here more than half of that window is the system image -- a RAM disk the kernel boots from, which
 + * is nobody's to use or to give back. Thresholds that are per cent of max_mem had idle daemons
 + * killed with a quarter of the usable memory still available, and the window server not long after.
@@ -642,8 +642,8 @@ diff --git a/bsd/kern/kern_priv.c b/bsd/kern/kern_priv.c
  	int error;
  
 +	/*
-+	 * redwood: nothing is signed here and no process carries an entitlement (AMFI is a stub), so
-+	 * every privilege that an entitlement would answer for is refused -- and iOS leans on one of
++	 * nothing is signed here and no process carries an entitlement (AMFI is a stub), so
++	 * every privilege that an entitlement would answer for is refused -- and the system leans on one of
 +	 * them for ordinary work. A daemon that goes to the network on behalf of an application
 +	 * (trustd checking the certificate for whoever opened the connection, nsurlsessiond carrying
 +	 * out its downloads) describes the connection to NECP as delegated, and without this
@@ -679,7 +679,7 @@ diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
  		return ESRCH;
  	}
  
-+	/* redwood: which process ends which, and why (see abort_with_payload_internal) */
++	/* which process ends which, and why (see abort_with_payload_internal) */
 +	{
 +		char said[160] = "";
 +		size_t got = 0;

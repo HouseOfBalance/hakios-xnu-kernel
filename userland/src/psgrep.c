@@ -2,8 +2,8 @@
  * psgrep WORD...: the processes whose path has one of the words in it (case ignored), one line each
  * -- pid, parent, state and flags, and path -- and how many processes there are in all. For a job's output kept by
  * tolog: ps -A is longer than the kernel keeps (96 lines), and the job runner has no shell to grep.
- * psgrep -stack WORD...: and each one's threads, by the kernel (kern.redwood.ustack), with the shared cache's slide.
- * psgrep -sysctl NAME [TIMES]: a string sysctl, TIMES times a second apart (iOS has no sysctl command).
+ * psgrep -stack WORD...: and each one's threads, by the kernel (kern.hakios.ustack), with the shared cache's slide.
+ * psgrep -sysctl NAME [TIMES]: a string sysctl, TIMES times a second apart (the system has no sysctl command).
  * psgrep -cpu SECONDS: the ten processes that used the most CPU in the next SECONDS, as % of one core.
  */
 #include <stdio.h>
@@ -15,12 +15,12 @@
 #include <mach/mach_time.h>
 #include <unistd.h>
 
-/* libSystem's, without the header, which the iOS SDK leaves out */
+/* libSystem's, without the header, which the system's SDK leaves out */
 int proc_pidpath(int pid, void *buffer, uint32_t size);
 int proc_pid_rusage(int pid, int flavor, rusage_info_t *buffer);
 #define PROC_PIDPATHINFO_MAXSIZE 4096
 
-/* the shared cache's slide in this process, the same in every one: what to take off the addresses kern.redwood.ustack says */
+/* the shared cache's slide in this process, the same in every one: what to take off the addresses kern.hakios.ustack says */
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 
 static struct kinfo_proc *
@@ -104,7 +104,7 @@ main(int argc, char **argv)
 		return cpu_top(atoi(argv[2]) > 0 ? atoi(argv[2]) : 10);
 	}
 	if (argc > 2 && strcmp(argv[1], "-sysctl") == 0) {
-		/* -sysctl NAME [TIMES]: a string sysctl said TIMES times a second apart (iOS has no sysctl command) */
+		/* -sysctl NAME [TIMES]: a string sysctl said TIMES times a second apart (the system has no sysctl command) */
 		int times = argc > 3 ? atoi(argv[3]) : 1;
 
 		for (int i = 0; i < times; i++) {
@@ -163,8 +163,8 @@ main(int argc, char **argv)
 				shown++;
 				if (stacks) {
 					fflush(stdout);
-					if (sysctlbyname("kern.redwood.ustack", NULL, NULL, &pid, sizeof(pid)) != 0) {
-						perror("psgrep: kern.redwood.ustack");
+					if (sysctlbyname("kern.hakios.ustack", NULL, NULL, &pid, sizeof(pid)) != 0) {
+						perror("psgrep: kern.hakios.ustack");
 					}
 				}
 				break;

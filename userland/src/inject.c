@@ -1,5 +1,5 @@
 /*
- * libredwood.dylib: code of ours inside stock iOS programs.
+ * libhakios.dylib: code of ours inside stock the system programs.
  *
  * launchd starts the jobs named in INJECT (see build.sh / mkjobs.py) with
  * DYLD_INSERT_LIBRARIES pointing here; dyld honours that because the kernel's AMFI stand-in
@@ -11,7 +11,7 @@
  *                entries of their virtual tables.
  *                It is also where input enters the system: backboardd is the HID event server,
  *                and without Apple's multitouch driver it has no touch screen. We give it one:
- *                a "virtual" HID service that turns the samples of /dev/redwood-touch into the
+ *                a "virtual" HID service that turns the samples of /dev/hakios-touch into the
  *                events that driver would have sent.
  *
  *                And it does not wait five seconds for an ambient light sensor.
@@ -22,7 +22,7 @@
  *                everything that needs a container (the window server, for one) waits with
  *                them. Told that personas are not supported, they do not ask.
  *
- * Addresses of things inside the dyld shared cache are those of iOS 16.5 (20F66) for iPhone10,3;
+ * Addresses of things inside the dyld shared cache are those of the system image (20F66) for iPhone10,3;
  * every one is checked against what is expected to be there before it is touched.
  */
 #include <CoreFoundation/CoreFoundation.h>
@@ -54,13 +54,13 @@ static void *prof_main(void *unused);  /* bbd_prof=1 */
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#include "redwood_gl.h"
-#include "redwood_input.h"
+#include "hakios_gl.h"
+#include "hakios_input.h"
 
 extern const void *_dyld_get_shared_cache_range(size_t *length);
 
 #define CACHE_BASE 0x180000000UL                /* where the cache was built to be, before the slide */
-#define REDWOOD_GL "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL "/hakios/lib/libhakios-gl.dylib"
 
 static uintptr_t slide;
 
@@ -90,13 +90,13 @@ replace_virtual(const char *what, uintptr_t slot, uintptr_t expected, void *repl
 	void *original;
 
 	if (*entry != expected + slide) {
-		say("redwood: %s: found %#lx, expected %#lx; left alone\n", what, *entry - slide, expected);
+		say("hakios: %s: found %#lx, expected %#lx; left alone\n", what, *entry - slide, expected);
 		return NULL;
 	}
 	/* the tables are in read-only memory shared by every process: get a private writable copy of the page */
 	kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
 	if (kr != KERN_SUCCESS) {
-		say("redwood: %s: cannot make the table writable (%d)\n", what, kr);
+		say("hakios: %s: cannot make the table writable (%d)\n", what, kr);
 		return NULL;
 	}
 	original = (void *)*entry;
@@ -130,7 +130,7 @@ my_is_ready(void *display)
 	int ready = orig_is_ready(display);
 
 	if (ready != last_ready || calls_ready < 3) {
-		say("redwood: is_ready -> %d (call %u, flags %#llx, b233 %#x)\n", ready, calls_ready,
+		say("hakios: is_ready -> %d (call %u, flags %#llx, b233 %#x)\n", ready, calls_ready,
 		    (unsigned long long)DISPLAY_FLAGS(display), DISPLAY_B233(display));
 		last_ready = ready;
 	}
@@ -146,9 +146,9 @@ my_ignore_update_p(void *display, void *update)
 	if (ignore != last_ignore || calls_ignore < 3) {
 		uint64_t *q = (uint64_t *)((char *)display + 0x220);
 
-		say("redwood: ignore_update_p -> %d (call %u, flags %#llx, update flags %#x)\n", ignore, calls_ignore,
+		say("hakios: ignore_update_p -> %d (call %u, flags %#llx, update flags %#x)\n", ignore, calls_ignore,
 		    (unsigned long long)DISPLAY_FLAGS(display), *(uint32_t *)((char *)update + 0xf0));
-		say("redwood:   display +0x220: %#llx %#llx %#llx %#llx %#llx %#llx\n", (unsigned long long)q[0],
+		say("hakios:   display +0x220: %#llx %#llx %#llx %#llx %#llx %#llx\n", (unsigned long long)q[0],
 		    (unsigned long long)q[1], (unsigned long long)q[2], (unsigned long long)q[3], (unsigned long long)q[4],
 		    (unsigned long long)q[5]);
 		last_ignore = ignore;
@@ -163,7 +163,7 @@ my_begin_update(void *display, void *update)
 	uintptr_t r = orig_begin_update(display, update);
 
 	if (calls_begin++ < 6) {
-		say("redwood: begin_update -> %#lx (flags %#llx)\n", r, (unsigned long long)DISPLAY_FLAGS(display));
+		say("hakios: begin_update -> %#lx (flags %#llx)\n", r, (unsigned long long)DISPLAY_FLAGS(display));
 	}
 	return r;
 }
@@ -174,7 +174,7 @@ my_finish_update(void *display, void *update, unsigned flags)
 	uintptr_t r = orig_finish_update(display, update, flags);
 
 	if (calls_finish++ < 6) {
-		say("redwood: finish_update(%#x) -> %#lx\n", flags, r);
+		say("hakios: finish_update(%#x) -> %#lx\n", flags, r);
 	}
 	return r;
 }
@@ -196,10 +196,10 @@ my_renderer(void *server)
 	renderer = orig_renderer(server);
 	if (renderer == NULL) {
 		failed = 1;
-		say("redwood: no accelerated renderer; the software one will draw\n");
+		say("hakios: no accelerated renderer; the software one will draw\n");
 	} else if (!said) {
 		said = 1;
-		say("redwood: the server has an accelerated renderer (%p)\n", renderer);
+		say("hakios: the server has an accelerated renderer (%p)\n", renderer);
 	}
 	return renderer;
 }
@@ -210,7 +210,7 @@ my_render_update(void *server, void *update, unsigned *flags)
 	uintptr_t r = orig_render_update(server, update, flags);
 
 	if (calls_render++ < 6) {
-		say("redwood: render_update -> %#lx (flags %#x)\n", r, flags ? *flags : 0);
+		say("hakios: render_update -> %#lx (flags %#x)\n", r, flags ? *flags : 0);
 	}
 	return r;
 }
@@ -282,7 +282,7 @@ say_the_fault(int signal_number, siginfo_t *info, void *context_in)
 		used += (size_t)snprintf(frames + used, sizeof(frames) - used, " %#lx", ret - slide);
 		fp = next > fp ? next : 0;      /* the chain only ever goes up the stack */
 	}
-	say("redwood: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
+	say("hakios: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
 	    info != NULL ? info->si_addr : NULL, pc - slide, lr - slide, frames);
 	signal(signal_number, SIG_DFL);
 	raise(signal_number);
@@ -356,18 +356,18 @@ give_the_renderer_a_shader(unsigned function, const char *source)
 	vm_address_t page = (vm_address_t)entry & ~(vm_address_t)(vm_page_size - 1);
 
 	if (*entry != 0) {
-		say("redwood: CoreAnimation's function %u has a shader of its own; left alone\n", function);
+		say("hakios: CoreAnimation's function %u has a shader of its own; left alone\n", function);
 		return;
 	}
 	/* the table is read-only memory shared by every process: a private writable copy of the page */
 	if (vm_protect(mach_task_self(), page, vm_page_size, FALSE,
 	    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) != KERN_SUCCESS) {
-		say("redwood: CoreAnimation's function %u: cannot make the table of shaders writable\n", function);
+		say("hakios: CoreAnimation's function %u: cannot make the table of shaders writable\n", function);
 		return;
 	}
 	*entry = (uintptr_t)source;
 	vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ);
-	say("redwood: CoreAnimation's function %u (\"sb3\") is given a shader of ours\n", function);
+	say("hakios: CoreAnimation's function %u (\"sb3\") is given a shader of ours\n", function);
 }
 
 static uint8_t say_yes[90];
@@ -376,7 +376,7 @@ static int compile_shaders_said;                /* boot-arg glcompile=1: write d
 static void
 functions_said_yes(const char *arguments)
 {
-	static const char names[] = REDWOOD_CA_FUNCTIONS;
+	static const char names[] = HAKIOS_CA_FUNCTIONS;
 	const char *argument = strstr(arguments, "glno=");
 
 	/* glno=N[,N...]: and the other way about, for seeing what a function of ours stands in for */
@@ -385,7 +385,7 @@ functions_said_yes(const char *arguments)
 
 		if (function < 90) {
 			say_yes[function] = 0;
-			say("redwood: the renderer will not answer that it has CoreAnimation's function %u (\"%.3s\")\n",
+			say("hakios: the renderer will not answer that it has CoreAnimation's function %u (\"%.3s\")\n",
 			    function, names + 4 * function);
 		}
 		argument = *argument == ',' ? argument + 1 : NULL;
@@ -396,7 +396,7 @@ functions_said_yes(const char *arguments)
 
 		if (function < 90) {
 			say_yes[function] = 1;
-			say("redwood: the renderer will answer that it has CoreAnimation's function %u (\"%.3s\")\n",
+			say("hakios: the renderer will answer that it has CoreAnimation's function %u (\"%.3s\")\n",
 			    function, names + 4 * function);
 		}
 		argument = *argument == ',' ? argument + 1 : NULL;
@@ -423,14 +423,14 @@ my_compile_shader(void *context, const char *source)
 	/* that it is called at all is worth one line, because a renderer that compiles nothing here
 	   would mean the text is assembled and compiled somewhere this table does not reach */
 	if (seen++ == 0) {
-		say("redwood: CoreAnimation compiles its shaders through the table (the first of them, %zu characters)\n",
+		say("hakios: CoreAnimation compiles its shaders through the table (the first of them, %zu characters)\n",
 		    source != NULL ? strlen(source) : 0);
 	}
 	if (compile_shaders_said && told < 24) {
 		told++;
-		say("redwood: CoreAnimation compiles a shader, %zu characters:\n", source != NULL ? strlen(source) : 0);
+		say("hakios: CoreAnimation compiles a shader, %zu characters:\n", source != NULL ? strlen(source) : 0);
 		for (size_t at = 0, length = source != NULL ? strlen(source) : 0; at < length; at += 700) {
-			say("redwood:  %.700s\n", source + at);
+			say("hakios:  %.700s\n", source + at);
 		}
 	}
 	return orig_compile_shader(context, source);
@@ -439,7 +439,7 @@ my_compile_shader(void *context, const char *source)
 static int
 my_function_supported(void *context)
 {
-	static const char names[] = REDWOOD_CA_FUNCTIONS;
+	static const char names[] = HAKIOS_CA_FUNCTIONS;
 	static uint8_t said[256];
 	int supported = orig_function_supported(context);
 	uint8_t function = *(*(uint8_t **)((char *)context + 0x10) + 0x10);
@@ -447,7 +447,7 @@ my_function_supported(void *context)
 	if (!supported && function < 90 && say_yes[function] && gl_loaded) {
 		if (!said[function]) {
 			said[function] = 1;
-			say("redwood: CoreAnimation's function %u (\"%.3s\"): the renderer is made to say it has it\n",
+			say("hakios: CoreAnimation's function %u (\"%.3s\"): the renderer is made to say it has it\n",
 			    function, names + 4 * function);
 		}
 		return 1;
@@ -457,7 +457,7 @@ my_function_supported(void *context)
 	}
 	if (!supported && !said[function]) {
 		said[function] = 1;
-		say("redwood: CoreAnimation's OpenGL ES renderer has no function %u (\"%.3s\"): what needs it is not drawn\n",
+		say("hakios: CoreAnimation's OpenGL ES renderer has no function %u (\"%.3s\"): what needs it is not drawn\n",
 		    function, function < 90 ? names + 4 * function : "?");
 	}
 	return supported;
@@ -493,7 +493,7 @@ my_function_uniform(void *context, unsigned index, size_t components, size_t cou
 
 		if (function < 90 && !told[function]) {
 			told[function] = 1;
-			say("redwood: function %u takes its numbers from %#lx %#lx %#lx\n", function,
+			say("hakios: function %u takes its numbers from %#lx %#lx %#lx\n", function,
 			    (uintptr_t)__builtin_return_address(0) - slide,
 			    (uintptr_t)__builtin_return_address(1) - slide,
 			    (uintptr_t)__builtin_return_address(2) - slide);
@@ -560,28 +560,28 @@ keep_metal_from_core_animation(void)
 	unsigned long held;
 
 	if (create == NULL) {
-		say("redwood: metal: this process has no MTLCreateSystemDefaultDevice; nothing to keep\n");
+		say("hakios: metal: this process has no MTLCreateSystemDefaultDevice; nothing to keep\n");
 		return;
 	}
 	if ((device = create()) == NULL) {
-		say("redwood: metal: no device in this process; CoreAnimation keeps OpenGL ES by itself\n");
+		say("hakios: metal: no device in this process; CoreAnimation keeps OpenGL ES by itself\n");
 		return;
 	}
 	if ((array = *slot) == NULL) {
-		say("redwood: metal: a device, but nothing at %#lx; the device list is NOT emptied\n",
+		say("hakios: metal: a device, but nothing at %#lx; the device list is NOT emptied\n",
 		    MTL_DEVICE_ARRAY);
 		return;
 	}
 	if (!((BOOL (*)(id, SEL, Class))objc_msgSend)(array, sel_registerName("isKindOfClass:"),
 	    objc_getClass("NSMutableArray"))) {
-		say("redwood: metal: %#lx holds a %s, not Metal's device array; left alone\n", MTL_DEVICE_ARRAY,
+		say("hakios: metal: %#lx holds a %s, not Metal's device array; left alone\n", MTL_DEVICE_ARRAY,
 		    object_getClassName(array));
 		return;
 	}
 	held = ask(array, sel_registerName("count"));
 	objc_retain(device);
 	tell(array, sel_registerName("removeAllObjects"));
-	say("redwood: metal: %s taken out of the window server (%lu in the list, %lu now); "
+	say("hakios: metal: %s taken out of the window server (%lu in the list, %lu now); "
 	    "MTLCreateSystemDefaultDevice() = %s\n", object_getClassName(device), held,
 	    ask(array, sel_registerName("count")), create() != NULL ? "A DEVICE STILL" : "nil");
 }
@@ -606,14 +606,14 @@ my_detect_displays(id server, SEL selector)
 /*
  * camtl=1: CoreAnimation's Metal renderer, and the shaders it asks for. CA::OGL::new_metal_context
  * asserts that [QuartzCore's bundle URLForResource:@"default" withExtension:@"metallib"] is not nil
- * (ogl-metal.mm:3308), and this image has no such file: the iPhone X's firmware carries QuartzCore's
+ * (ogl-metal.mm:3308), and this image has no such file: the reference phone's firmware carries QuartzCore's
  * shaders only as default.pipelinelib, compiled for the A11. The same library in AIR -- which the
  * driver compiles for the Mali -- comes from the macOS QuartzCore (its first slice, cputype
- * 0x1000017), where the functions iOS 16.5 asks for (fixed_frag_lph_cph, std_vert0, narrow_blur_7_frag
+ * 0x1000017), where the functions the system image 20F66 asks for (fixed_frag_lph_cph, std_vert0, narrow_blur_7_frag
  * and so on) carry the same names; build.sh puts it at QC_METALLIB. That one question about that one
  * resource is answered here, and every other is left to NSBundle.
  */
-#define QC_METALLIB "/redwood/share/QuartzCore-default.metallib"
+#define QC_METALLIB "/hakios/share/QuartzCore-default.metallib"
 
 static id (*orig_url_for_resource)(id bundle, SEL selector, id name, id extension);
 
@@ -632,7 +632,7 @@ my_url_for_resource(id bundle, SEL selector, id name, id extension)
 
 		if (!told) {
 			told = 1;
-			say("redwood: QuartzCore's default.metallib is " QC_METALLIB "\n");
+			say("hakios: QuartzCore's default.metallib is " QC_METALLIB "\n");
 		}
 		return (id)CFAutorelease(CFURLCreateWithFileSystemPath(NULL, CFSTR(QC_METALLIB), kCFURLPOSIXPathStyle, false));
 	}
@@ -640,11 +640,11 @@ my_url_for_resource(id bundle, SEL selector, id name, id extension)
 }
 
 /*
- * The shaders are macOS 26's and the renderer is iOS 16.5's, and Apple's compiler service here
+ * The shaders are macOS 26's and the renderer is the system image 20F66's, and Apple's compiler service here
  * cannot specialize them: MTLCompilerService of 16.5 reads AIR 2.5 and dies on the library's 2.8
  * (45 crashes in one boot). So nothing is specialized by Apple at all. -newFunctionWithName:
  * constantValues: answers the plain function, and the values CoreAnimation set are kept on it
- * (associated, under the selector redwoodFunctionConstants, which src/redwoodmetal.m reads when
+ * (associated, under the selector hakiosFunctionConstants, which src/hakiosmetal.m reads when
  * it builds a pipeline and hands to the compiler library: rwa_render_constants). A uchar3 is
  * kept as four bytes, the fourth 0: fc_color_opcodes0 is a uchar4 in the newer shader.
  */
@@ -674,7 +674,7 @@ constant_size(unsigned long type)
 static void
 keep_constant(id values, id key, const void *value, unsigned long type)
 {
-	SEL slot = sel_registerName("redwoodConstantValues");
+	SEL slot = sel_registerName("hakiosConstantValues");
 	id kept = objc_getAssociatedObject(values, slot);
 	uint64_t bits = 0;
 	size_t size = constant_size(type);
@@ -744,7 +744,7 @@ static id
 plain_function(id library, id name, id values)
 {
 	id function = ((id (*)(id, SEL, id))objc_msgSend)(library, sel_registerName("newFunctionWithName:"), name);
-	id kept = values ? objc_getAssociatedObject(values, sel_registerName("redwoodConstantValues")) : nil;
+	id kept = values ? objc_getAssociatedObject(values, sel_registerName("hakiosConstantValues")) : nil;
 
 	if (function == nil || kept == nil) {
 		return function;
@@ -768,7 +768,7 @@ plain_function(id library, id name, id values)
 		}
 		((void (*)(id, SEL, id, id))objc_msgSend)(by_index, sel_registerName("setObject:forKey:"), value, key);
 	}
-	objc_setAssociatedObject(function, sel_registerName("redwoodFunctionConstants"), by_index, OBJC_ASSOCIATION_RETAIN);
+	objc_setAssociatedObject(function, sel_registerName("hakiosFunctionConstants"), by_index, OBJC_ASSOCIATION_RETAIN);
 	((void (*)(id, SEL))objc_msgSend)(by_index, sel_registerName("release"));
 	return function;
 }
@@ -849,7 +849,7 @@ hook_function_descriptors(void)
 				descriptor_originals[descriptor_original_count].cls = classes[i];
 				descriptor_originals[descriptor_original_count++].imp =
 				    method_setImplementation(methods[k], (IMP)my_new_function_descriptor);
-				say("redwood: camtl=1: -[%s newFunctionWithDescriptor:error:] specializes without Apple\n",
+				say("hakios: camtl=1: -[%s newFunctionWithDescriptor:error:] specializes without Apple\n",
 				    class_getName(classes[i]));
 				hooked++;
 			}
@@ -897,7 +897,7 @@ specialize_without_apple(void)
 		done++;
 	}
 	done += hook_function_descriptors();
-	say("redwood: camtl=1: functions are specialized by the compiler library, not by Apple (%d hooks)\n", done);
+	say("hakios: camtl=1: functions are specialized by the compiler library, not by Apple (%d hooks)\n", done);
 }
 
 /*
@@ -905,7 +905,7 @@ specialize_without_apple(void)
  * page leaves the faulting thread no stack to run one on. A Mach exception port for the task
  * is served on a thread of its own instead: it reads the faulting thread's registers, names
  * pc, lr and the frame-pointer chain with dladdr (image and nearest symbol), keeps the lines
- * in the kernel's log (kern.redwood.say, "!" first, which the kernel says again every minute)
+ * in the kernel's log (kern.hakios.say, "!" first, which the kernel says again every minute)
  * and answers KERN_FAILURE, so that the crash goes on exactly as before.
  */
 #include <mach/exception_types.h>
@@ -920,7 +920,7 @@ keep_line(const char *format, ...)
 	va_start(arguments, format);
 	vsnprintf(line + 1, sizeof(line) - 1, format, arguments);
 	va_end(arguments);
-	sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 	say("%s\n", line + 1);
 }
 
@@ -1046,11 +1046,11 @@ watch_for_exceptions(void)
 	    EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC | EXC_MASK_BREAKPOINT |
 	    EXC_MASK_GUARD | EXC_MASK_RESOURCE, port, (exception_behavior_t)(EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES),
 	    THREAD_STATE_NONE) != KERN_SUCCESS) {
-		say("redwood: camtl=1: no exception port\n");
+		say("hakios: camtl=1: no exception port\n");
 		return;
 	}
 	pthread_create(&thread, NULL, exception_thread, (void *)(uintptr_t)port);
-	say("redwood: camtl=1: exceptions are reported (kept lines \"bbd fault\")\n");
+	say("hakios: camtl=1: exceptions are reported (kept lines \"bbd fault\")\n");
 }
 
 static void
@@ -1059,13 +1059,13 @@ give_quartzcore_its_shaders(void)
 	Method method = class_getInstanceMethod(objc_getClass("NSBundle"), sel_registerName("URLForResource:withExtension:"));
 
 	if (method == NULL) {
-		say("redwood: camtl=1: no -[NSBundle URLForResource:withExtension:]; QuartzCore finds no shaders\n");
+		say("hakios: camtl=1: no -[NSBundle URLForResource:withExtension:]; QuartzCore finds no shaders\n");
 		return;
 	}
 	watch_for_faults();     /* where the Metal renderer dies, if it does */
 	watch_for_exceptions();
 	specialize_without_apple();
-	/* The iPhone X's OLED panel has CoreAnimation correct for its overdrive with a look-up table
+	/* the reference phone's OLED panel has CoreAnimation correct for its overdrive with a look-up table
 	   drawn by display_overdrive_lut_gen, a shader the macOS library has no copy of ("Metal failed
 	   to load fragment function: function=display_overdrive_lut_gen_lph"). The panel here is an
 	   LCD; CoreAnimation's own switch turns the correction off, read from the environment. */
@@ -1079,11 +1079,11 @@ give_quartzcore_its_shaders(void)
 
 		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "ca_dirty=0") != NULL) {
 			setenv("CA_DISABLE_DIRTY_REGIONS", "1", 1);
-			keep_line("redwood: camtl=1: CA_DISABLE_DIRTY_REGIONS, every frame drawn whole (ca_dirty=0)");
+			keep_line("hakios: camtl=1: CA_DISABLE_DIRTY_REGIONS, every frame drawn whole (ca_dirty=0)");
 		}
 	}
 	{
-		/* and what the driver says on its way (src/redwoodmetal.m, rw_print, writes to standard
+		/* and what the driver says on its way (src/hakiosmetal.m, rw_print, writes to standard
 		   output, which launchd gives this job nowhere to go) */
 		int console = open("/dev/console", O_WRONLY | O_NOCTTY);
 
@@ -1094,7 +1094,7 @@ give_quartzcore_its_shaders(void)
 	}
 	orig_url_for_resource = (id (*)(id, SEL, id, id))method_getImplementation(method);
 	method_setImplementation(method, (IMP)my_url_for_resource);
-	say("redwood: camtl=1: QuartzCore's shaders come from %s (%s)\n", QC_METALLIB,
+	say("hakios: camtl=1: QuartzCore's shaders come from %s (%s)\n", QC_METALLIB,
 	    access(QC_METALLIB, R_OK) == 0 ? "there" : "MISSING");
 }
 
@@ -1108,7 +1108,7 @@ window_server_keeps_opengl_es(void)
 	IMP original;
 
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "camtl=1") != NULL) {
-		say("redwood: camtl=1: CoreAnimation may have the Metal device\n");
+		say("hakios: camtl=1: CoreAnimation may have the Metal device\n");
 		give_quartzcore_its_shaders();
 		if (strstr(arguments, "bbd_prof=1") != NULL) {
 			pthread_t profiler;
@@ -1121,7 +1121,7 @@ window_server_keeps_opengl_es(void)
 	method = cls ? class_getInstanceMethod(cls, sel_registerName("_detectDisplays")) : NULL;
 	original = method ? method_getImplementation(method) : NULL;
 	if (original == NULL || (uintptr_t)original != CA_DETECT_DISPLAYS + slide) {
-		say("redwood: -[CAWindowServer _detectDisplays]: found %#lx, not what was expected; left alone, "
+		say("hakios: -[CAWindowServer _detectDisplays]: found %#lx, not what was expected; left alone, "
 		    "and CoreAnimation may take the Metal road\n", original ? (uintptr_t)original - slide : 0);
 		return;
 	}
@@ -1132,7 +1132,7 @@ window_server_keeps_opengl_es(void)
 /*
  * Boot-arg bbd_prof=1: a sampling profiler of the window server's own -- where its threads are, a
  * thousand times a second, for the parts of a frame no counter says (inside panfrost's draws). Every
- * ten seconds the most sampled addresses in libOSMesa and RedwoodMetal go to the log ("bbdprof:"),
+ * ten seconds the most sampled addresses in libOSMesa and HakiosMetal go to the log ("bbdprof:"),
  * as offsets into the image for atos on the host, with how many samples each image had.
  */
 #include <mach/thread_act.h>
@@ -1140,7 +1140,7 @@ window_server_keeps_opengl_es(void)
 #define PROF_SLOTS 4096
 static struct { uint64_t key; uint32_t count; } prof_slots[PROF_SLOTS];
 static uintptr_t prof_mesa_base, prof_metal_base;
-static uint64_t prof_images[4];        /* libOSMesa, RedwoodMetal, elsewhere, idle (in the kernel's traps) */
+static uint64_t prof_images[4];        /* libOSMesa, HakiosMetal, elsewhere, idle (in the kernel's traps) */
 static const char *prof_names[64];      /* the images of "elsewhere" */
 static unsigned prof_nnames;
 
@@ -1168,7 +1168,7 @@ prof_main(void *unused)
 	if (mesa != NULL && dladdr(mesa, &info)) {
 		prof_mesa_base = (uintptr_t)info.dli_fbase;
 	}
-	Class metal = objc_getClass("RedwoodMetalCommandBuffer");
+	Class metal = objc_getClass("HakiosMetalCommandBuffer");
 	IMP commit = metal ? class_getMethodImplementation(metal, sel_registerName("commit")) : NULL;
 	if (commit != NULL && dladdr((void *)commit, &info)) {
 		prof_metal_base = (uintptr_t)info.dli_fbase;
@@ -1178,7 +1178,7 @@ prof_main(void *unused)
 		mach_msg_type_number_t count;
 
 		usleep(1000);
-		if (prof_metal_base == 0 && (metal = objc_getClass("RedwoodMetalCommandBuffer")) != NULL &&
+		if (prof_metal_base == 0 && (metal = objc_getClass("HakiosMetalCommandBuffer")) != NULL &&
 		    (commit = class_getMethodImplementation(metal, sel_registerName("commit"))) != NULL &&
 		    dladdr((void *)commit, &info)) {
 			prof_metal_base = (uintptr_t)info.dli_fbase;       /* loaded after the profiler started */
@@ -1225,7 +1225,7 @@ prof_main(void *unused)
 		}
 		vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(thread_t));
 		if (++round % 10000 == 0) {
-			keep_line("bbdprof: libOSMesa %llu, RedwoodMetal %llu, elsewhere %llu, in the kernel %llu",
+			keep_line("bbdprof: libOSMesa %llu, HakiosMetal %llu, elsewhere %llu, in the kernel %llu",
 			    prof_images[0], prof_images[1], prof_images[2], prof_images[3]);
 			/* the whole run's so far, kept: the busy minute is gone from the log by the end of it */
 			static bool picked[PROF_SLOTS];
@@ -1270,10 +1270,10 @@ prof_main(void *unused)
 
 					snprintf(line, sizeof(line), "!bbdprof: %s %u", name ? name + 1 : "?", prof_slots[best].count);
 				} else {
-					snprintf(line, sizeof(line), "!bbdprof: %s+%#llx %u", key >> 60 == 0 ? "OSMesa" : "RedwoodMetal",
+					snprintf(line, sizeof(line), "!bbdprof: %s+%#llx %u", key >> 60 == 0 ? "OSMesa" : "HakiosMetal",
 					    (unsigned long long)(key & 0xfffffffffffffffull), prof_slots[best].count);
 				}
-				sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+				sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 				picked[best] = true;
 			}
 		}
@@ -1306,7 +1306,7 @@ window_server_fixes(void)
 		   two is not ours to rely on; the hook writes nothing unless glcompile=1 */
 		orig_compile_shader = (uintptr_t (*)(void *, const char *))replace_virtual("compile_shader",
 		    VSLOT(VT_GLES_CONTEXT, 0x060), 0x1883fc808UL, my_compile_shader);
-		say("redwood: the shader compiler of CoreAnimation is %s\n", orig_compile_shader ? "watched" : "NOT watched");
+		say("hakios: the shader compiler of CoreAnimation is %s\n", orig_compile_shader ? "watched" : "NOT watched");
 		watch_for_faults();
 		{
 			char arguments[1024] = "";
@@ -1318,7 +1318,7 @@ window_server_fixes(void)
 			}
 		}
 	}
-	say("redwood: window server hooks %s\n", orig_is_ready && orig_ignore_update_p && orig_begin_update &&
+	say("hakios: window server hooks %s\n", orig_is_ready && orig_ignore_update_p && orig_begin_update &&
 	    orig_finish_update && orig_renderer && orig_render_update ? "installed" : "INCOMPLETE");
 }
 
@@ -1341,7 +1341,7 @@ wait_for_als_arrival(__unused id self, __unused SEL selector)
 {
 	if (input_services_made != NULL &&
 	    dispatch_semaphore_wait(input_services_made, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
-		say("redwood: input: no touch screen service after five seconds; going on without\n");
+		say("hakios: input: no touch screen service after five seconds; going on without\n");
 	}
 }
 
@@ -1353,7 +1353,7 @@ brightness_fixes(void)
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != 0x1af043734UL + slide) {
-		say("redwood: -[BLControl waitForALSArrival]: found %#lx, not what was expected; left alone\n",
+		say("hakios: -[BLControl waitForALSArrival]: found %#lx, not what was expected; left alone\n",
 		    original ? (uintptr_t)original - slide : 0);
 		return;
 	}
@@ -1362,7 +1362,7 @@ brightness_fixes(void)
 
 /* ---- backboardd: the touch screen and the buttons ---------------------------------------------- */
 
-/* IOKit's HID event system, the part that has no public header on iOS (prototypes checked against 20F66) */
+/* IOKit's HID event system, the part that has no public header on the system (prototypes checked against 20F66) */
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 typedef struct __IOHIDServiceClient *IOHIDServiceClientRef;
@@ -1458,7 +1458,7 @@ service_copy_property(__unused void *target, void *refcon, __unused IOHIDService
 
 		CFSetAddValue(asked, key);
 		CFStringGetCString(key, name, sizeof(name), kCFStringEncodingUTF8);
-		say("redwood: input: the event server asks for property \"%s\", which we do not have\n", name);
+		say("hakios: input: the event server asks for property \"%s\", which we do not have\n", name);
 	}
 	return value ? CFRetain(value) : NULL;
 }
@@ -1493,7 +1493,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 
 		CFNumberGetValue(value, kCFNumberIntType, &mode);
 		if (mode != touch_mode) {
-			say("redwood: input: touch detection mode %#x\n", mode);
+			say("hakios: input: touch detection mode %#x\n", mode);
 		}
 		touch_mode = mode;
 	}
@@ -1508,7 +1508,7 @@ service_set_property(__unused void *target, void *refcon, __unused IOHIDServiceC
 			CFStringGetCString(description, text, sizeof(text), kCFStringEncodingUTF8);
 			CFRelease(description);
 		}
-		say("redwood: input: the event server sets \"%s\" = %s\n", name, text);
+		say("hakios: input: the event server sets \"%s\" = %s\n", name, text);
 	}
 	return true;
 }
@@ -1558,7 +1558,7 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 	CFDictionarySetValue(properties, CFSTR("DeviceUsagePairs"), pairs);
 	CFDictionarySetValue(properties, CFSTR("Built-In"), kCFBooleanTrue);
 	CFDictionarySetValue(properties, CFSTR("Transport"), CFSTR("SPI"));
-	CFDictionarySetValue(properties, CFSTR("Manufacturer"), CFSTR("redwood"));
+	CFDictionarySetValue(properties, CFSTR("Manufacturer"), CFSTR("hakios"));
 	CFDictionarySetValue(properties, CFSTR("Product"), name);
 	CFDictionarySetValue(properties, CFSTR("VendorID"), zero);
 	CFDictionarySetValue(properties, CFSTR("ProductID"), zero);
@@ -1579,7 +1579,7 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 		if (made->opened) {
 			break;
 		}
-		say("redwood: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
+		say("hakios: input: the event server has not opened \"%s\" (attempt %d): making it again\n", product, attempt);
 		IOHIDVirtualServiceClientRemove(service);
 		CFRelease(service);
 		service = NULL;
@@ -1589,20 +1589,20 @@ make_service(IOHIDEventSystemClientRef client, const char *product, int page, in
 
 /* One frame of the touch screen: the hand, and under it every finger that is down or has just lifted. */
 static void
-send_touch(IOHIDServiceClientRef screen, const struct redwood_touch *t)
+send_touch(IOHIDServiceClientRef screen, const struct hakios_touch *t)
 {
-	uint32_t change = t->type == REDWOOD_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
+	uint32_t change = t->type == HAKIOS_TOUCH_MOVE ? DIGITIZER_POSITION : DIGITIZER_RANGE | DIGITIZER_TOUCH;
 	IOHIDEventRef hand, finger;
 	bool any = false;
 	unsigned f = t->finger;
 
-	if (f >= MAX_FINGERS || (t->type != REDWOOD_TOUCH_DOWN && !fingers[f].touching)) {
+	if (f >= MAX_FINGERS || (t->type != HAKIOS_TOUCH_DOWN && !fingers[f].touching)) {
 		return;
 	}
-	fingers[f].touching = t->type != REDWOOD_TOUCH_UP;
+	fingers[f].touching = t->type != HAKIOS_TOUCH_UP;
 	fingers[f].x = t->x / 65535.0;
 	fingers[f].y = t->y / 65535.0;
-	if (t->type == REDWOOD_TOUCH_DOWN) {
+	if (t->type == HAKIOS_TOUCH_DOWN) {
 		fingers[f].edge = fingers[f].x < EDGE_SIDE || fingers[f].x > 1 - EDGE_SIDE || fingers[f].y < EDGE_TOP ||
 		    fingers[f].y > 1 - EDGE_BOTTOM;
 	}
@@ -1639,7 +1639,7 @@ publish_lock_button(bool down)
 {
 	static int token = NOTIFY_TOKEN_INVALID;
 
-	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.redwood.button.lock", &token) != NOTIFY_STATUS_OK) {
+	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.hakios.button.lock", &token) != NOTIFY_STATUS_OK) {
 		token = NOTIFY_TOKEN_INVALID;
 		return;
 	}
@@ -1647,20 +1647,20 @@ publish_lock_button(bool down)
 }
 
 static void
-send_button(IOHIDServiceClientRef buttons, const struct redwood_touch *t)
+send_button(IOHIDServiceClientRef buttons, const struct hakios_touch *t)
 {
-	uint32_t usage = t->finger == REDWOOD_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == REDWOOD_BUTTON_HOME ? HID_USAGE_MENU :
-	    t->finger == REDWOOD_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == REDWOOD_BUTTON_VOLUME_DOWN ?
+	uint32_t usage = t->finger == HAKIOS_BUTTON_LOCK ? HID_USAGE_POWER : t->finger == HAKIOS_BUTTON_HOME ? HID_USAGE_MENU :
+	    t->finger == HAKIOS_BUTTON_VOLUME_UP ? HID_USAGE_VOLUME_UP : t->finger == HAKIOS_BUTTON_VOLUME_DOWN ?
 	    HID_USAGE_VOLUME_DOWN : 0;
 	IOHIDEventRef event;
 
 	if (usage == 0) {
 		return;
 	}
-	if (t->finger == REDWOOD_BUTTON_LOCK) {
-		publish_lock_button(t->type == REDWOOD_BUTTON_DOWN);
+	if (t->finger == HAKIOS_BUTTON_LOCK) {
+		publish_lock_button(t->type == HAKIOS_BUTTON_DOWN);
 	}
-	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == REDWOOD_BUTTON_DOWN, 0);
+	event = IOHIDEventCreateKeyboardEvent(NULL, t->time, HID_PAGE_CONSUMER, usage, t->type == HAKIOS_BUTTON_DOWN, 0);
 	IOHIDEventSetIntegerValue(event, FIELD_IS_BUILT_IN, 1);
 	IOHIDVirtualServiceClientDispatchEvent(buttons, event);
 	CFRelease(event);
@@ -1686,11 +1686,11 @@ input_thread(__unused void *arg)
 	static const int types[] = { HID_CLIENT_SIMPLE, HID_CLIENT_RATE_CONTROLLED };
 	IOHIDEventSystemClientRef client = NULL;
 	IOHIDServiceClientRef screen = NULL, buttons = NULL;
-	struct redwood_touch t;
+	struct hakios_touch t;
 	unsigned count = 0, waking = 0;         /* waking: the fingers whose touch went into waking the display */
 	int device;
 
-	pthread_setname_np("redwood input");
+	pthread_setname_np("hakios input");
 	{
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
@@ -1700,9 +1700,9 @@ input_thread(__unused void *arg)
 		}
 		mach_timebase_info(&timebase);
 	}
-	device = open(REDWOOD_TOUCH_DEVICE, O_RDONLY);
+	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -1710,19 +1710,19 @@ input_thread(__unused void *arg)
 		/* this waits until the server (this very program) answers */
 		client = IOHIDEventSystemClientCreateWithType(NULL, types[i], NULL);
 		if (client == NULL) {
-			say("redwood: input: no HID client of type %d\n", types[i]);
+			say("hakios: input: no HID client of type %d\n", types[i]);
 			continue;
 		}
-		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("redwood.input", NULL));
-		screen = make_service(client, "Redwood touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
+		IOHIDEventSystemClientScheduleWithDispatchQueue(client, dispatch_queue_create("hakios.input", NULL));
+		screen = make_service(client, "Hakios touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
 		if (screen == NULL) {
-			say("redwood: input: a HID client of type %d may not create services\n", types[i]);
+			say("hakios: input: a HID client of type %d may not create services\n", types[i]);
 		}
 	}
 	if (screen != NULL) {
-		buttons = make_service(client, "Redwood buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
+		buttons = make_service(client, "Hakios buttons", HID_PAGE_CONSUMER, HID_USAGE_CONSUMER_CONTROL, false);
 	}
-	say("redwood: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
+	say("hakios: input: touch screen service %p, buttons %p\n", (void *)screen, (void *)buttons);
 	dispatch_semaphore_signal(input_services_made); /* see wait_for_als_arrival() */
 	if (screen == NULL) {
 		return NULL;
@@ -1732,25 +1732,25 @@ input_thread(__unused void *arg)
 		uint64_t read_at = mach_absolute_time();
 
 		if (count++ < 4) {
-			say("redwood: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
+			say("hakios: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
 		}
-		if (t.type > REDWOOD_TOUCH_UP) {
+		if (t.type > HAKIOS_TOUCH_UP) {
 			if (buttons != NULL) {
 				send_button(buttons, &t);
 			}
-		} else if (t.type == REDWOOD_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
+		} else if (t.type == HAKIOS_TOUCH_DOWN && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
 			/*
 			 * The display is off and a tap is to wake it. The lock button is what wakes it here:
 			 * press it for the finger, and keep the rest of this touch to ourselves.
 			 */
-			struct redwood_touch press = { .time = t.time, .type = REDWOOD_BUTTON_DOWN, .finger = REDWOOD_BUTTON_LOCK };
+			struct hakios_touch press = { .time = t.time, .type = HAKIOS_BUTTON_DOWN, .finger = HAKIOS_BUTTON_LOCK };
 
 			send_button(buttons, &press);
-			press.type = REDWOOD_BUTTON_UP;
+			press.type = HAKIOS_BUTTON_UP;
 			send_button(buttons, &press);
 			waking |= 1u << (t.finger & 31);
 		} else if (waking & (1u << (t.finger & 31))) {
-			if (t.type == REDWOOD_TOUCH_UP) {
+			if (t.type == HAKIOS_TOUCH_UP) {
 				waking &= ~(1u << (t.finger & 31));
 			}
 		} else {
@@ -1761,7 +1761,7 @@ input_thread(__unused void *arg)
 			}
 		}
 	}
-	say("redwood: input: %s: %s\n", REDWOOD_TOUCH_DEVICE, strerror(errno));
+	say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;
 }
 
@@ -1792,12 +1792,12 @@ container_manager_fixes(void)
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != 0x1c3ea6298UL + slide) {
-		say("redwood: +[MCMUserIdentityCache personasAreSupported]: found %#lx, not what was expected; left alone\n",
+		say("hakios: +[MCMUserIdentityCache personasAreSupported]: found %#lx, not what was expected; left alone\n",
 		    original ? (uintptr_t)original - slide : 0);
 		return;
 	}
 	method_setImplementation(method, (IMP)personas_are_supported);
-	say("redwood: container manager: no personas\n");
+	say("hakios: container manager: no personas\n");
 }
 
 /* ---------------------------------------------------------------------------------------------- */
@@ -1806,8 +1806,8 @@ container_manager_fixes(void)
  * An OpenGL ES implementation for CoreAnimation (src/eagl.c, Mesa behind it): loaded, it puts
  * itself behind EAGLContext, and the renderer the server then gets is the OpenGL ES one. That
  * is worth it where a GPU does the drawing, and only there: on the phone, when the kernel has
- * started the GPU and keeps it (boot-arg gpu=1; on the Infinix mali=1), which the service RedwoodGPU
- * (RedwoodMali) says (it is there
+ * started the GPU and keeps it (boot-arg gpu=1; on the first phone mali=1), which the service HakiosGPU
+ * (HakiosMali) says (it is there
  * before the first program runs, or not at all). Everywhere else -- QEMU, a run without the
  * boot-arg, a phone without the GPU's firmware in the image, a GPU that did not start --
  * nothing is loaded, and CoreAnimation draws with its own software renderer as in an image
@@ -1825,7 +1825,7 @@ opengl_es(void)
 	void *library;
 	int wanted = -1, told = 0;
 
-	if (access(REDWOOD_GL, R_OK) != 0) {
+	if (access(HAKIOS_GL, R_OK) != 0) {
 		return;                                 /* (an image built without it) */
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -1839,10 +1839,10 @@ opengl_es(void)
 		}
 	}
 	if (wanted < 0) {
-		gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+		gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 		if (gpu == 0) {
-			/* the Infinix's Mali, kept by the kernel with boot-arg mali=1 (iokit/Kernel/RedwoodMali.cpp) */
-			gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodMali"));
+			/* the first phone's Mali, kept by the kernel with boot-arg mali=1 (iokit/Kernel/HakiosMali.cpp) */
+			gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosMali"));
 		}
 		wanted = gpu != 0;
 		if (gpu != 0) {
@@ -1850,25 +1850,25 @@ opengl_es(void)
 		}
 	}
 	if (!wanted) {
-		say("redwood: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
+		say("hakios: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
 		return;
 	}
-	if ((library = dlopen(REDWOOD_GL, RTLD_NOW)) == NULL) {
-		say("redwood: %s: %s\n", REDWOOD_GL, dlerror());
+	if ((library = dlopen(HAKIOS_GL, RTLD_NOW)) == NULL) {
+		say("hakios: %s: %s\n", HAKIOS_GL, dlerror());
 		return;
 	}
 	gl_loaded = 1;
 	gl_function_values = (void (*)(void *, unsigned, unsigned, size_t, size_t, const float *))dlsym(library,
-	    "redwood_gl_function_values");
-	gl_function_refused = (void (*)(unsigned))dlsym(library, "redwood_gl_function_refused");
+	    "hakios_gl_function_values");
+	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
 }
 
 /* ---- backboardd: the device's orientation from the accelerometer --------------------------------------- */
 /*
  * backboardd learns which way up the phone is from CoreMotion (-[BKOrientationManager
  * _queue_updateDeviceOrientationFromCoreMotion:], "Updating device orientation from CoreMotion to:"),
- * which on an iPhone has it from the motion co-processor. Here the kernel has the accelerometer
- * (bsd/dev/redwood_scp.c, scp_step=7: kern.redwood.accel, "x y z count" in 1/1000 m/s^2), and this
+ * which on a reference phone has it from the motion co-processor. Here the kernel has the accelerometer
+ * (bsd/dev/mtk_scp.c, scp_step=7: kern.hakios.accel, "x y z count" in 1/1000 m/s^2), and this
  * reads it five times a second and hands the manager the orientation it makes: the axis gravity is
  * on, when it is clearly on one (more than 6.5 m/s^2 of 9.8), the same two readings running --
  * CMDeviceOrientation: 1 portrait, 2 upside down, 3 landscape left (the top to the left), 4
@@ -1958,7 +1958,7 @@ orientation_stand_in(void)
 	static id made;
 
 	if (made == nil) {
-		Class cls = objc_allocateClassPair(objc_getClass("NSObject"), "RedwoodDeviceOrientationSource", 0);
+		Class cls = objc_allocateClassPair(objc_getClass("NSObject"), "HakiosDeviceOrientationSource", 0);
 
 		class_addMethod(cls, sel_registerName("deviceOrientation"), (IMP)stand_in_orientation, "q16@0:8");
 		/* what backboardd asks for (run 302): a CMDeviceOrientation's own property */
@@ -1969,13 +1969,13 @@ orientation_stand_in(void)
 		    sel_registerName("init"));
 	}
 	return made;
-}           /* kern.redwood.orientation_state (bsd/dev/redwood_scp.c) */
+}           /* kern.hakios.orientation_state (bsd/dev/mtk_scp.c) */
 
 static void
 orientation_say_state(int set, int clear)
 {
 	orientation_state = (orientation_state & ~clear) | set;
-	sysctlbyname("kern.redwood.orientation_state", NULL, NULL, &orientation_state, sizeof(orientation_state));
+	sysctlbyname("kern.hakios.orientation_state", NULL, NULL, &orientation_state, sizeof(orientation_state));
 }
 
 /* the class found and the three methods hooked, once backboardd is far enough for it to be there */
@@ -2060,11 +2060,11 @@ orientation_start(void)
 			orientation_hook();
 			return;
 		}
-		if (sysctlbyname("kern.redwood.accel", value, &length, NULL, 0) != 0 || sscanf(value, "%d %d %d", &x, &y, &z) != 3) {
+		if (sysctlbyname("kern.hakios.accel", value, &length, NULL, 0) != 0 || sscanf(value, "%d %d %d", &x, &y, &z) != 3) {
 			/* not yet: the kernel brings the sensor hub up in a thread of its own, ~20 s, often after
 			 * backboardd is here (run 300: the feed gave up on the first "none" and was gone) */
 			if (!told++) {
-				keep_line("orientation: kern.redwood.accel says \"%s\": waiting for it (scp_step=7?)", value);
+				keep_line("orientation: kern.hakios.accel says \"%s\": waiting for it (scp_step=7?)", value);
 			}
 			return;
 		}
@@ -2100,7 +2100,7 @@ orientation_start(void)
 	if (pthread_create(&thread, NULL, orientation_thread, NULL) == 0) {
 		pthread_detach(thread);
 	}
-	say("redwood: orientation: from kern.redwood.accel, five times a second (orientation=0 to leave out)\n");
+	say("hakios: orientation: from kern.hakios.accel, five times a second (orientation=0 to leave out)\n");
 }
 
 /*
@@ -2122,16 +2122,16 @@ bluetoothd_exits(void)
 	}
 	char line[400];
 
-	snprintf(line, sizeof(line), "redwood: bluetoothd[%d] exits (exit() or atexit), frames less the slide:%s", getpid(), text);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	snprintf(line, sizeof(line), "hakios: bluetoothd[%d] exits (exit() or atexit), frames less the slide:%s", getpid(), text);
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 }
 
 /*
  * ... and the raw _exit, which is how bluetoothd goes (0x90234 and 0x902a4 of its program: "Bluetooth error - restarting
  * { build=release, reason=%d, context=\"%s\" }", then _exit(1); atexit handlers do not run -- run 633). Interposed in every
- * program libredwood is in, said only in bluetoothd's; the frames are the caller's way to the reason.
+ * program libhakios is in, said only in bluetoothd's; the frames are the caller's way to the reason.
  */
-static bool in_bluetoothd, in_preferences;                    /* set at start: the os_log and _exit interposers below are in every program libredwood is in */
+static bool in_bluetoothd, in_preferences;                    /* set at start: the os_log and _exit interposers below are in every program libhakios is in */
 __attribute__((visibility("hidden"), used)) volatile int bluetoothd_stalled;     /* its restart message said reason 3602, a VSC that stalled: not a reason to go (see raw_exit_entry) */
 __attribute__((visibility("hidden"), used)) uintptr_t bluetoothd_exit_site1, bluetoothd_exit_site2;   /* where its two restart functions return to from _exit: bluetoothd+0x90238 and +0x902a8 (20F66) */
 
@@ -2156,8 +2156,8 @@ raw_exit_watched(int status)
 				used += (size_t)snprintf(text + used, sizeof(text) - used, " ?%lx", (unsigned long)frames[i]);
 			}
 		}
-		snprintf(line, sizeof(line), "redwood: bluetoothd[%d] _exit(%d), frames (image+offset):%s", getpid(), status, text);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: bluetoothd[%d] _exit(%d), frames (image+offset):%s", getpid(), status, text);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 	}
 	_exit(status);
 }
@@ -2174,8 +2174,8 @@ bluetoothd_unwinds(int site)
 {
 	char line[100];
 
-	snprintf(line, sizeof(line), "redwood: bluetoothd[%d] restart %d: _exit not done, returned from it", getpid(), site);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	snprintf(line, sizeof(line), "hakios: bluetoothd[%d] restart %d: _exit not done, returned from it", getpid(), site);
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 }
 
 __attribute__((naked, used)) static void
@@ -2224,7 +2224,7 @@ __attribute__((used)) static const struct {
 
 /*
  * Looking inside bluetoothd: the LE advertising reports reach it (run 676) but "advertisements delivered" stays 0. Entry points of
- * the functions on the way (addresses of bluetoothd of iOS 16.5, unslid) get a 16-byte jump to a stub that says its arguments to the host
+ * the functions on the way (addresses of bluetoothd of the system image 20F66, unslid) get a 16-byte jump to a stub that says its arguments to the host
  * buffer, runs the instructions the jump displaced, and goes on. The words found are compared with the stub's own copies first.
  */
 __attribute__((visibility("hidden"), used)) uintptr_t bt_hook_cont[32];
@@ -2263,7 +2263,7 @@ bt_scan_entries(uint64_t a0, unsigned n)
 		}
 		if (signature != last_signature && logged < 30) {
 			char m[480];
-			int ml = snprintf(m, sizeof(m), "redwood: bt-hook 9 (report #%u) scan entries: %llu:", n, *(const unsigned long long *)(a0 + 0x1d8));
+			int ml = snprintf(m, sizeof(m), "hakios: bt-hook 9 (report #%u) scan entries: %llu:", n, *(const unsigned long long *)(a0 + 0x1d8));
 
 			last_signature = signature;
 			logged++;
@@ -2287,13 +2287,13 @@ bt_scan_entries(uint64_t a0, unsigned n)
 					w = (const uint64_t *)w[2];
 				}
 			}
-			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, m, (size_t)ml);
+			(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, m, (size_t)ml);
 		}
 	}
 }
 
 /*
- * What a scan entry is made of (bluetoothd of iOS 16.5). CoreBluetooth gives an application scan results only if the entry made for its scan
+ * What a scan entry is made of (bluetoothd of the system image 20F66). CoreBluetooth gives an application scan results only if the entry made for its scan
  * passes bluetoothd+0x58f2a0, which for the entry type 1 (an application: session byte +0x79, not a system client) wants the session in the
  * foreground (byte +0x18 of the CBDaemon session, the third argument of the entry's constructor) and a list of services to scan for (config +8..+0x10).
  * An application is what has the foreground, learnt from BKSApplicationStateMonitor by bundle; bt_test and whatever else is started from a shell
@@ -2334,12 +2334,12 @@ bt_hook_log(unsigned id, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3)
 
 		if (a1 > 0x100000000ULL && a2 >= 2 && a2 < 600 && (d[0] == 0x3e ? le_logged++ < 60 : n <= 4)) {
 			char m[200];
-			int ml = snprintf(m, sizeof(m), "redwood: bt-rx #%u t=%.3f type %llu len %llu:", n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a2);
+			int ml = snprintf(m, sizeof(m), "hakios: bt-rx #%u t=%.3f type %llu len %llu:", n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a2);
 
 			for (unsigned k = 0; k < 10 && k < a2; k++) {
 				ml += snprintf(m + ml, sizeof(m) - (size_t)ml, " %02x", d[k]);
 			}
-			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, m, (size_t)ml);
+			(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, m, (size_t)ml);
 		}
 		return;
 	}
@@ -2352,7 +2352,7 @@ bt_hook_log(unsigned id, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3)
 	if (n > 12 && n % 40 != 0 && id != 16 && id != 23) {
 		return;
 	}
-	len = snprintf(line, sizeof(line), "redwood: bt-hook %u #%u t=%.3f: %llx %llx %llx %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a1, a2, a3);
+	len = snprintf(line, sizeof(line), "hakios: bt-hook %u #%u t=%.3f: %llx %llx %llx %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, a0, a1, a2, a3);
 	if (id <= 3 && a0 > 0x100000000ULL) {
 		const uint8_t *r = (const uint8_t *)a0;
 
@@ -2380,7 +2380,7 @@ bt_hook_log(unsigned id, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3)
 		len += snprintf(line + len, sizeof(line) - (size_t)len, " cbA78=%lx cbA80=%lx flagA90=%u",
 		    *(const unsigned long *)(bt_base + 0x855a78), *(const unsigned long *)(bt_base + 0x855a80), *(const uint8_t *)(bt_base + 0x855a90));
 	}
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, (size_t)len);
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, (size_t)len);
 }
 
 #define BT_HOOK_STUB(N, DISPLACED) \
@@ -2457,8 +2457,8 @@ bt_ret_log(unsigned id, uint64_t result)
 	int len;
 
 	if (n <= 24) {
-		len = snprintf(line, sizeof(line), "redwood: bt-ret %u #%u t=%.3f -> %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, result);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, (size_t)len);
+		len = snprintf(line, sizeof(line), "hakios: bt-ret %u #%u t=%.3f -> %llx", id, n, (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9, result);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, (size_t)len);
 	}
 }
 
@@ -2504,11 +2504,11 @@ bt_hook_install(unsigned n, uintptr_t unslid, const uint32_t *disp, void *stub)
 	char line[160];
 
 	if ((vm_address_t)at + 16 > page + vm_page_size) {
-		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx crosses a page; left alone", n, unslid);
+		snprintf(line, sizeof(line), "hakios: bt-hook %u: %lx crosses a page; left alone", n, unslid);
 	} else if (memcmp(at, disp, 16) != 0) {
-		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx holds %08x %08x %08x %08x, not what was read; left alone", n, unslid, at[0], at[1], at[2], at[3]);
+		snprintf(line, sizeof(line), "hakios: bt-hook %u: %lx holds %08x %08x %08x %08x, not what was read; left alone", n, unslid, at[0], at[1], at[2], at[3]);
 	} else if ((kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)) != KERN_SUCCESS) {
-		snprintf(line, sizeof(line), "redwood: bt-hook %u: cannot write the code (%d)", n, kr);
+		snprintf(line, sizeof(line), "hakios: bt-hook %u: cannot write the code (%d)", n, kr);
 	} else {
 		uint32_t jump[4] = { 0x58000050, 0xd61f0200, (uint32_t)(uintptr_t)stub, (uint32_t)((uintptr_t)stub >> 32) };
 
@@ -2516,9 +2516,9 @@ bt_hook_install(unsigned n, uintptr_t unslid, const uint32_t *disp, void *stub)
 		memcpy(at, jump, 16);
 		kr = vm_protect(mach_task_self(), page, vm_page_size, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
 		sys_icache_invalidate(at, 16);
-		snprintf(line, sizeof(line), "redwood: bt-hook %u: %lx is hooked (%d)", n, unslid, kr);
+		snprintf(line, sizeof(line), "hakios: bt-hook %u: %lx is hooked (%d)", n, unslid, kr);
 	}
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 }
 
 
@@ -2604,8 +2604,8 @@ bt_trace_dump(uint32_t low, uint32_t high)
 		}
 		times[index]++;
 	}
-	snprintf(line, sizeof(line), "redwood: bt-trace: %u entries, %u functions, %u threads", to - from, seen, tag_count);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	snprintf(line, sizeof(line), "hakios: bt-trace: %u entries, %u functions, %u threads", to - from, seen, tag_count);
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 	{
 		uint32_t order[16384];
 
@@ -2614,20 +2614,20 @@ bt_trace_dump(uint32_t low, uint32_t high)
 				order[first[i]] = i;
 			}
 		}
-		used = (size_t)snprintf(line, sizeof(line), "redwood: bt-trace:");
+		used = (size_t)snprintf(line, sizeof(line), "hakios: bt-trace:");
 		for (unsigned k = 0; k < seen; k++) {
 			unsigned i = order[k];
 			int len;
 
 			if (used + 22 > sizeof(line)) {
-				(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, used);
-				used = (size_t)snprintf(line, sizeof(line), "redwood: bt-trace:");
+				(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, used);
+				used = (size_t)snprintf(line, sizeof(line), "hakios: bt-trace:");
 			}
 			len = snprintf(line + used, sizeof(line) - used, " %x.%x.%u", bt_fn_off[i], thread[i], times[i] > 99 ? 99 : times[i]);
 			used += (size_t)len;
 		}
 		if (used > 20) {
-			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, used);
+			(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, used);
 		}
 	}
 	bt_ring_dumped = to;
@@ -2693,8 +2693,8 @@ bt_trace_install(uintptr_t base, uintptr_t from, uintptr_t to, const uintptr_t *
 	}
 	arena = mmap(NULL, (size_t)count * tpl_bytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
 	if (arena == MAP_FAILED) {
-		snprintf(line, sizeof(line), "redwood: bt-trace: no memory for %u trampolines", count);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: bt-trace: no memory for %u trampolines", count);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 		return;
 	}
 	for (unsigned i = 0; i < count; i++) {
@@ -2713,8 +2713,8 @@ bt_trace_install(uintptr_t base, uintptr_t from, uintptr_t to, const uintptr_t *
 	bt_fn_count = count;
 	bt_trace_on = 1;
 	if (mprotect(arena, (size_t)count * tpl_bytes, PROT_READ | PROT_EXEC) != 0) {
-		snprintf(line, sizeof(line), "redwood: bt-trace: cannot make the trampolines run (%d)", errno);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: bt-trace: cannot make the trampolines run (%d)", errno);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 		return;
 	}
 	sys_icache_invalidate(arena, (size_t)count * tpl_bytes);
@@ -2740,8 +2740,8 @@ bt_trace_install(uintptr_t base, uintptr_t from, uintptr_t to, const uintptr_t *
 		sys_icache_invalidate((void *)page, vm_page_size);
 		i = j;
 	}
-	snprintf(line, sizeof(line), "redwood: bt-trace: %u of %u functions hooked, template %zu bytes", hooked, count, tpl_bytes);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	snprintf(line, sizeof(line), "hakios: bt-trace: %u of %u functions hooked, template %zu bytes", hooked, count, tpl_bytes);
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 }
 
 static void
@@ -2909,7 +2909,7 @@ os_log_watched(const char *how, const char *format, uint8_t *buf, uint32_t size)
 	}
 	bluetoothd_said++;
 	snprintf(line, sizeof(line), "bt[%d] %s%s", getpid(), format, text);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 }
 
 /* Settings' own log lines about Bluetooth and pairing (their formats and string arguments), for the Bluetooth pane's "Pairing Unsuccessful" (run 744) */
@@ -2930,8 +2930,8 @@ preferences_log_watched(const char *format, const uint8_t *buf, uint32_t size)
 			}
 		}
 		said++;
-		snprintf(line, sizeof(line), "redwood: Preferences log: %.220s%s", format, text);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: Preferences log: %.220s%s", format, text);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 	}
 }
 
@@ -2961,9 +2961,9 @@ __attribute__((used)) static const struct {
 };
 
 /*
- * BlueTool (the job's own program, /usr/sbin/BlueTool -R): iOS's BlueTool brings a Broadcom chip up before bluetoothd opens the
+ * BlueTool (the job's own program, /usr/sbin/BlueTool -R): The system's BlueTool brings a Broadcom chip up before bluetoothd opens the
  * serial port -- a boot script, a firmware patch from /usr/share/firmware/bluetooth, the UART's speed -- and this phone's chip is
- * MediaTek's, brought up by the kernel (bsd/dev/redwood_connsys.c, boot-arg connsys_bt=2: its controller is on and answers HCI
+ * MediaTek's, brought up by the kernel (bsd/dev/mtk_connsys.c, boot-arg connsys_bt=2: its controller is on and answers HCI
  * behind /dev/uart.bluetooth), with no Broadcom firmware in the image (run 609: "No WiFi - Iteration", "BlueTool timed out").
  * So in this process the service com.apple.BlueTool is ours: bluetoothd's request -- {"script": "boot" or "init", "btaddress"} --
  * is answered with success, "result" 0, and names the chip, "manufacturer" and "firmware" (bluetoothd makes "%lld/%s" of them).
@@ -2984,8 +2984,8 @@ watched_xpc_connection_create_mach_service(const char *name, dispatch_queue_t ta
 	if ((in_bluetoothd || in_preferences) && name != NULL) {
 		char line[200];
 
-		snprintf(line, sizeof(line), "redwood: %s[%d] xpc_connection_create_mach_service(%s, %#llx) -> %p", in_preferences ? "Preferences" : "bluetoothd", getpid(), name, (unsigned long long)flags, connection);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: %s[%d] xpc_connection_create_mach_service(%s, %#llx) -> %p", in_preferences ? "Preferences" : "bluetoothd", getpid(), name, (unsigned long long)flags, connection);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 	}
 	return connection;
 }
@@ -3001,8 +3001,8 @@ watched_xpc_connection_get_pid(xpc_connection_t connection)
 		char line[100];
 
 		if (said++ < 40) {
-			snprintf(line, sizeof(line), "redwood: bluetoothd xpc_connection_get_pid(%p) = %d", connection, pid);
-			(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+			snprintf(line, sizeof(line), "hakios: bluetoothd xpc_connection_get_pid(%p) = %d", connection, pid);
+			(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 		}
 	}
 	return pid;
@@ -3030,7 +3030,7 @@ bluetool_serves(void)
 {
 	xpc_connection_t listener = xpc_connection_create_mach_service("com.apple.BlueTool", NULL, 1 /* LISTENER */);
 
-	say("redwood: BlueTool: com.apple.BlueTool is ours (the kernel has the controller on behind /dev/uart.bluetooth)\n");
+	say("hakios: BlueTool: com.apple.BlueTool is ours (the kernel has the controller on behind /dev/uart.bluetooth)\n");
 	xpc_connection_set_event_handler(listener, ^(xpc_object_t peer) {
 		if (xpc_get_type(peer) != &_xpc_type_connection) {
 			return;
@@ -3041,7 +3041,7 @@ bluetool_serves(void)
 			}
 			char *text = xpc_copy_description(message);
 
-			say("redwood: BlueTool: asked %s\n", text != NULL ? text : "(?)");
+			say("hakios: BlueTool: asked %s\n", text != NULL ? text : "(?)");
 			free(text);
 			xpc_object_t reply = xpc_dictionary_create_reply(message);
 
@@ -3062,7 +3062,7 @@ bluetool_serves(void)
 
 __attribute__((constructor))
 static void
-redwood_init(void)
+hakios_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;
@@ -3080,12 +3080,12 @@ redwood_init(void)
 		 * Boot-arg ca_vbl=1: CoreAnimation's frame clock from the display driver's refresh
 		 * notifications. QuartzCore takes them (IOMobileFramebufferEnableVSyncNotifications) only on
 		 * the phones with an A7 to A10, or when CA_FORCE_TIMER is in the environment
-		 * (CADeviceUseVBL()); on the iPhone X it runs a timer of its own instead (CADisplayTimer),
+		 * (CADeviceUseVBL()); on the reference phone it runs a timer of its own instead (CADisplayTimer),
 		 * whose phase it would set from the frame timings of a display driver this one is not.
 		 */
 		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "ca_vbl=1") != NULL) {
 			setenv("CA_FORCE_TIMER", "1", 1);
-			say("redwood: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
+			say("hakios: ca_vbl=1: CoreAnimation is to take the display driver's refresh notifications\n");
 		}
 		/*
 		 * Boot-arg caenv=NAME=VALUE (as many as wanted): into the window server's environment, for
@@ -3104,7 +3104,7 @@ redwood_init(void)
 			if ((equals = strchr(setting, '=')) != NULL) {
 				*equals = 0;
 				setenv(setting, equals + 1, 1);
-				say("redwood: caenv: %s=%s for the window server\n", setting, equals + 1);
+				say("hakios: caenv: %s=%s for the window server\n", setting, equals + 1);
 			}
 		}
 		opengl_es();
@@ -3134,8 +3134,8 @@ redwood_init(void)
 				bt_hooks((uintptr_t)_dyld_get_image_header(image));
 			}
 		}
-		snprintf(line, sizeof(line), "redwood: bluetoothd[%d] is watched, exit sites %lx %lx", getpid(), (unsigned long)bluetoothd_exit_site1, (unsigned long)bluetoothd_exit_site2);
-		(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
+		snprintf(line, sizeof(line), "hakios: bluetoothd[%d] is watched, exit sites %lx %lx", getpid(), (unsigned long)bluetoothd_exit_site1, (unsigned long)bluetoothd_exit_site2);
+		(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strnlen(line, sizeof(line)));
 	} else if (strcmp(name, "Preferences") == 0) {
 		in_preferences = true;           /* Settings: its XPC to bluetoothd is said (Bluetooth pane, run 732) */
 	} else if (strcmp(name, "BlueTool") == 0) {
@@ -3161,7 +3161,7 @@ redwood_init(void)
 		size_t size = sizeof(arguments) - 1;
 
 		if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && strstr(arguments, "camtl=1") != NULL) {
-			say("redwood: camtl=1: %s gets QuartzCore's Metal shaders too\n", name);
+			say("hakios: camtl=1: %s gets QuartzCore's Metal shaders too\n", name);
 			give_quartzcore_its_shaders();
 		}
 	}

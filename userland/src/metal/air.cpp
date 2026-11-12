@@ -1,7 +1,7 @@
 /*
  * The compiler library, loaded with dlopen rather than linked, for a measured reason: the device
  * object must exist even when there is no GPU, and a device that refuses to be created at all takes
- * Metal's whole discovery down with it (the comment at the top of src/redwoodmetal.m).
+ * Metal's whole discovery down with it (the comment at the top of src/hakiosmetal.m).
  */
 #include "rwm.h"
 
@@ -10,7 +10,7 @@
 
 namespace {
 
-constexpr const char *library_path = "/redwood/lib/libredwoodair.dylib";
+constexpr const char *library_path = "/hakios/lib/libhakiosair.dylib";
 
 struct Call {
 	const char *name;

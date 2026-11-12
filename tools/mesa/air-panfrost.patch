@@ -1,4 +1,4 @@
-Build air_run against panfrost: a Metal shader drawn on the Infinix's Mali (Bifrost v7).
+Build air_run against panfrost: a Metal shader drawn on the first phone's Mali (Bifrost v7).
 
 tools/mesa/air-ir3.patch does the same for the Adreno; this target is darwin-only, where the
 driver list is softpipe,panfrost (tools/mk-mesa.sh, AIR=1).
@@ -11,7 +11,7 @@ driver list is softpipe,panfrost (tools/mk-mesa.sh, AIR=1).
  )
 +
 +# air_run: draw with a Metal shader and read the pixels back, on the Mali
-+# (Darwin on redwood: tools/mesa/air-panfrost.patch). As beside ir3_compiler
++# (Darwin on tools/mesa/air-panfrost.patch). As beside ir3_compiler
 +# for the Adreno (tools/mesa/air-ir3.patch): this is where libgallium exists;
 +# its source is with the rest of the frontend in src/compiler/air.
 +if host_machine.system() == 'darwin'

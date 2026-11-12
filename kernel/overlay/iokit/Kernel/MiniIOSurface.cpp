@@ -35,7 +35,7 @@ static_assert(sizeof(struct minisurf_result) == 0x68, "result layout");
 static_assert(offsetof(struct minisurf_shared, attachments) == 0x30, "shared layout");
 static_assert(sizeof(struct minisurf_result) + 20 * sizeof(struct minisurf_plane) == MINISURF_RESULT_MAX, "result size");
 
-/* IOConnectCallMethod selectors of IOSurfaceRootUserClient (iOS 16.5) */
+/* IOConnectCallMethod selectors of IOSurfaceRootUserClient (the system image 20F66) */
 enum {
 	kSurfaceMethodCreate            = 0,
 	kSurfaceMethodLookup            = 4,
@@ -461,7 +461,7 @@ surfaceCreate(OSDictionary * props, IOReturn * error)
 	format = dictNumber(props, "IOSurfacePixelFormat", 0);
 	/*
 	 * Ten bits a colour, packed into 32-bit pixels: what a device with a wide-gamut display
-	 * (the iPhone X is one) asks for when it wants a picture of the screen, a snapshot for a
+	 * (the reference phone is one) asks for when it wants a picture of the screen, a snapshot for a
 	 * transition for instance. CoreAnimation's software renderer does not draw into those
 	 * ("SW renderer invalid destination format w30r": the transition comes out black), and
 	 * there is no wide gamut on this panel anyway. The surface is made as ordinary BGRA of
@@ -1764,7 +1764,7 @@ IOSurfaceRootUserClient::trapDecrementUseCount(void * p1, void * p2, void * p3, 
  * Lock and unlock do not exclude anybody: the memory is shared and always mapped.
  * What matters is the seed, which tells readers that the pixels may have changed.
  *
- * And, since 26 October, that the GPU is done with the surface: as on an iPhone, a lock is where the
+ * And, since 26 October, that the GPU is done with the surface: as on a reference phone, a lock is where the
  * processor waits for the drawing it is about to read. The Metal driver no longer waits for its
  * command buffers, so a snapshot of an application or a widget that backboardd drew into a surface
  * was read by SpringBoard half drawn -- parts of other frames in the closing Settings and an empty

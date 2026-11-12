@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 rwm-recipes.py LOG... : the pipeline recipes processes said into a run's log ("rwr PROCESS N K/M text",
-src/redwoodmetal.m, rw_recipes_say, on notification com.redwood.rwm_recipes) put back together and
+src/hakiosmetal.m, rw_recipes_say, on notification com.hakios.rwm_recipes) put back together and
 merged into userland/share/rwm-recipes.txt -- a "[PROCESS]" section each, a recipe a line: the label and
 the shape, written as a table ("=K words" once, then "LABEL @K": most pipelines share a shape, and the
 boot partition has kilobytes, not tens of them, to spare). Recipes already in the file are kept.
@@ -64,7 +64,7 @@ if len(shapes) > 32:
     sys.exit(f'{len(shapes)} shapes: the driver reads 32 at most')
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, 'w') as f:
-    f.write('# CoreAnimation pipelines each process builds at start (tools/rwm-recipes.py, src/redwoodmetal.m)\n')
+    f.write('# CoreAnimation pipelines each process builds at start (tools/rwm-recipes.py, src/hakiosmetal.m)\n')
     for k, words in enumerate(shapes):
         f.write(f'={k} {words}\n')
     for proc, recipes in known.items():

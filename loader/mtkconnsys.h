@@ -1,6 +1,6 @@
 /*
  * What Android's device tree says about CONNSYS, the Wi-Fi/Bluetooth/GPS subsystem of the MT6768
- * (with the MT6631 radio): step 1 of docs/wifi-x6826b.md, reading only. MediaTek's driver
+ * (with the MT6631 radio): step 1 of the first phone's journal (wifi), reading only. MediaTek's driver
  * (common_main/platform/mt6768.c in MiCode/MTK_kernel_modules merlin-r-oss) takes the addresses of
  * every block it touches from its node's "reg" by index (the MCU config, TOP RGU, INFRACFG_AO, SPM,
  * the MCU's misc and HIF blocks ...), its interrupt from "interrupts", and the memory the firmware

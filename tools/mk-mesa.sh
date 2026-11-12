@@ -1,19 +1,19 @@
 #!/bin/bash
-# Build Mesa for the iOS userland: the OpenGL ES library behind userland/src/eagl.c (see there and
+# Build Mesa for the system's userland: the OpenGL ES library behind userland/src/eagl.c (see there and
 # userland/src/gl_osmesa.c). Mesa is fetched (a pinned release), patched with tools/mesa/*.patch and
 # built with the cross compiler of the kernel (kernel/deps/host/bin/xnu-clang, see kernel/deps/setup.sh)
-# against the iOS SDK that userland/build.sh uses; nothing of it is in the repository.
+# against the system's SDK that userland/build.sh uses; nothing of it is in the repository.
 #
-#   DRIVERS="softpipe,freedreno"     (the Infinix: DRIVERS="softpipe,panfrost", see tools/mesa/panfrost-darwin.patch)
+#   DRIVERS="softpipe,freedreno"     (the first phone: DRIVERS="softpipe,panfrost", see tools/mesa/panfrost-darwin.patch)
 #                        the gallium drivers to build. softpipe: a rasterizer in plain C; it needs no
 #                        LLVM and nothing of the machine but its processor. freedreno: the Adreno's;
-#                        it talks to the kernel's GPU driver (the service RedwoodGPU) through
-#                        tools/mesa/redwood-drm, which stands in for libdrm (tools/mesa/freedreno-darwin.patch
+#                        it talks to the kernel's GPU driver (the service HakiosGPU) through
+#                        tools/mesa/hakios-drm, which stands in for libdrm (tools/mesa/freedreno-darwin.patch
 #                        makes Mesa build it where there is no DRM). The library takes the GPU when the
 #                        kernel has one and the environment does not say OSMESA_SOFTWARE=1.
 #
 # What comes out, in kernel/deps/build/mesa/out:
-#   libOSMesa.8.dylib    everything in one library (install name /redwood/lib/libOSMesa.8.dylib): the
+#   libOSMesa.8.dylib    everything in one library (install name /hakios/lib/libOSMesa.8.dylib): the
 #                        OpenGL (ES) entry points gl*, the compiler of the shading language, the drivers,
 #                        and the off-screen interface that hands out contexts
 #   exported-gl.txt      the gl* functions it exports, and
@@ -35,17 +35,17 @@ cd "$B"
 # patched with the earlier ones is of no use (and builds without a word into a library that does not match
 # the rest): the sources are taken from the archive again and everything is built anew, about a minute.
 PATCHES=$(cat "$ROOT"/tools/mesa/*.patch | sha256sum | cut -d' ' -f1)
-if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.redwood-patches 2>/dev/null)" != "$PATCHES" ]; then
+if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.hakios-patches 2>/dev/null)" != "$PATCHES" ]; then
 	[ -f mesa-$VERSION.tar.xz ] || curl -sL --fail -o mesa-$VERSION.tar.xz https://archive.mesa3d.org/mesa-$VERSION.tar.xz
 	echo "$SHA256  mesa-$VERSION.tar.xz" | sha256sum -c --quiet
 	rm -rf mesa-$VERSION build-*
 	tar xJf mesa-$VERSION.tar.xz
 	for p in "$ROOT"/tools/mesa/*.patch; do patch -s --no-backup-if-mismatch -d mesa-$VERSION -p1 < "$p"; done
-	echo "$PATCHES" > mesa-$VERSION/.redwood-patches
+	echo "$PATCHES" > mesa-$VERSION/.hakios-patches
 fi
 # ours, kept in the repository: always the current ones
-rm -rf mesa-$VERSION/src/redwood-drm
-cp -r "$ROOT/tools/mesa/redwood-drm" mesa-$VERSION/src/redwood-drm
+rm -rf mesa-$VERSION/src/hakios-drm
+cp -r "$ROOT/tools/mesa/hakios-drm" mesa-$VERSION/src/hakios-drm
 # the AIR frontend (docs/air.md): the Metal runtime will call it in this
 # library's own process, and tools/mesa/air-frontend.patch is the meson that
 # reaches it. Copied rather than linked, because this tree is cross-built.
@@ -83,12 +83,12 @@ needs_exe_wrapper = true
 INI
 DRIVERS=${DRIVERS:-softpipe,freedreno}
 BUILD=build-${DRIVERS//,/-}
-# panfrost travels in the image that goes into the Infinix's 32 MB boot partition: built for size
+# panfrost travels in the image that goes into the first phone's 32 MB boot partition: built for size
 # (11 MB instead of 14.5), which costs the GPU nothing -- it is the GPU that draws
 OPT=
 case "$DRIVERS" in *panfrost*) OPT=-Doptimization=s ;; esac
 [ -f $BUILD/build.ninja ] || meson setup $BUILD mesa-$VERSION --cross-file cross.ini --wrap-mode=nofallback \
-	--prefix=/redwood --libdir=lib --buildtype=release $OPT -Db_ndebug=true \
+	--prefix=/hakios --libdir=lib --buildtype=release $OPT -Db_ndebug=true \
 	-Dplatforms= -Dgallium-drivers="$DRIVERS" -Dfreedreno-kmds=msm -Dvulkan-drivers= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
 	-Dosmesa=true -Dllvm=disabled -Dshared-glapi=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true \
 	-Dzstd=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
@@ -107,10 +107,10 @@ if [ "${AIR:-}" = 1 ]; then
 fi
 
 $STRIP -x -o out/libOSMesa.8.dylib $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
-install_name_tool -id /redwood/lib/libOSMesa.8.dylib out/libOSMesa.8.dylib
+install_name_tool -id /hakios/lib/libOSMesa.8.dylib out/libOSMesa.8.dylib
 nm -gU out/libOSMesa.8.dylib | awk '$3 ~ /^_gl/ { print substr($3, 2) }' > out/exported-gl.txt
 cp mesa-$VERSION/src/mapi/glapi/registry/gl.xml out/gl.xml
 # (userland/build.sh comes here again when this no longer matches)
-cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/redwood-drm/* | sha256sum > out/built-from
+cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/hakios-drm/* | sha256sum > out/built-from
 echo "mk-mesa.sh: Mesa $VERSION ($DRIVERS): $B/out/libOSMesa.8.dylib, $(wc -c < out/libOSMesa.8.dylib | tr -d " ") bytes," \
 	"$(wc -l < out/exported-gl.txt) gl* functions"

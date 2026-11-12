@@ -7,7 +7,7 @@ diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
  static uint32_t         gNoIdleFlag = 0;
 -static uint32_t         gSleepDisabledFlag = 0;
 +/*
-+ * redwood: the system does not sleep. There is nothing here to sleep into and nothing that would
++ * the system does not sleep. There is nothing here to sleep into and nothing that would
 + * wake it: with the screen locked, powerd asks for system sleep within seconds, and that request
 + * ended in IOCPUSleepKernel() -- with one processor it came straight back out, again and again
 + * (every time a round of sleep and wake notifications to all the system); with more than one it
@@ -178,7 +178,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  extern dev_t mdevlookup(int devid);
  extern void mdevremoveall(void);
  extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
-+extern int redwood_emmc_root(dev_t *root);
++extern int mtk_emmc_root(dev_t *root);
  extern void di_root_ramfile(IORegistryEntry * entry);
  extern int IODTGetDefault(const char *key, void *infoAddr, unsigned int infoSize);
  extern boolean_t cpuid_vmm_present(void);
@@ -219,14 +219,14 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  	}
  
 +//
-+//	The X6826B's system image on its eMMC, read as it is needed (bsd/dev/redwood_emmc.c): boot-arg
++//	The first phone's system image on its eMMC, read as it is needed (bsd/dev/mtk_emmc.c): boot-arg
 +//	emmc_root=1 beside rd=md0, which stays for user space to see -- libignition takes the "ramdisk" boot
 +//	from it, and any other rd= for a boot that wants a preboot volume (run 322)
 +//
 +	uint32_t emmcRoot = 0;
 +	if (PE_parse_boot_argn("emmc_root", &emmcRoot, sizeof(emmcRoot)) && emmcRoot) {
 +		OSSafeReleaseNULL(matching);
-+		if (redwood_emmc_root(root) != 0) {
++		if (mtk_emmc_root(root) != 0) {
 +			panic("IOFindBSDRoot: emmc_root=1, but the eMMC's xnusys partition could not be read");
 +		}
 +		strlcpy(rootName, "emmc0", rootNameSize);

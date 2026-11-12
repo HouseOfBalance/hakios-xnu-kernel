@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fbrecv.py [PORT] [DIR]: receives the pictures that the phone's /redwood/bin/fbgrab sends (POST /NAME.png) and keeps them in DIR
+"""fbrecv.py [PORT] [DIR]: receives the pictures that the phone's /hakios/bin/fbgrab sends (POST /NAME.png) and keeps them in DIR
 (default logs/shots). Run it on the Mac before the run; the phone must reach the Mac's address on the same network."""
 import http.server, os, sys
 

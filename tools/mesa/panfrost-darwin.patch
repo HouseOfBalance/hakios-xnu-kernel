@@ -7,7 +7,7 @@
 -if host_machine.system() == 'darwin' and with_gallium_freedreno
 +if host_machine.system() == 'darwin' and (with_gallium_freedreno or with_gallium_panfrost)
    # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
-   # for libdrm (src/redwood-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
+   # for libdrm (src/hakios-drm, put there by Darwin on hakios's tools/mk-mesa.sh; its one
    # source file is built with freedreno's drm layer, src/freedreno/drm).
 --- a/src/panfrost/lib/kmod/meson.build
 +++ b/src/panfrost/lib/kmod/meson.build
@@ -15,9 +15,9 @@
    'panfrost_kmod.c',
    'panthor_kmod.c',
  )
-+# Darwin: the stand-in for libdrm (src/redwood-drm), built here unless freedreno's drm layer has it already
++# Darwin: the stand-in for libdrm (src/hakios-drm), built here unless freedreno's drm layer has it already
 +if host_machine.system() == 'darwin' and not with_gallium_freedreno
-+  libpankmod_lib_files += files('../../../redwood-drm/redwood_drm.c')
++  libpankmod_lib_files += files('../../../hakios-drm/hakios_drm.c')
 +endif
  
  libpankmod_lib = static_library(
@@ -39,10 +39,10 @@
        return MAP_FAILED;
  
 +#ifdef __APPLE__
-+   /* no mmap() on a device here: the kernel's driver maps the buffer, all of it (src/redwood-drm) */
++   /* no mmap() on a device here: the kernel's driver maps the buffer, all of it (src/hakios-drm) */
 +   (void)prot;
 +   (void)flags;
-+   host_addr = redwood_drm_map(bo->dev->fd, bo->handle, bo->size);
++   host_addr = hakios_drm_map(bo->dev->fd, bo->handle, bo->size);
 +   if (host_addr != MAP_FAILED)
 +      host_addr = (char *)host_addr + bo_offset;
 +#else
@@ -60,8 +60,8 @@
     } else {
 +#ifdef __APPLE__
 +      /* (what comes in here is an IOSurface, and the "file descriptor" its ID) */
-+      struct redwood_drm_surface surface = { .surface = (uint32_t)fd };
-+      size_t size = redwood_drm_surface(dev->fd, &surface) ? 0 : surface.size;
++      struct hakios_drm_surface surface = { .surface = (uint32_t)fd };
++      size_t size = hakios_drm_surface(dev->fd, &surface) ? 0 : surface.size;
 +#else
        size_t size = lseek(fd, 0, SEEK_END);
 +#endif
@@ -75,7 +75,7 @@
        return;
  
 +#ifdef __APPLE__
-+   redwood_drm_unmap(bo->kmod_bo->dev->fd, bo->kmod_bo->handle, (void *)(uintptr_t)bo->ptr.cpu);
++   hakios_drm_unmap(bo->kmod_bo->dev->fd, bo->kmod_bo->handle, (void *)(uintptr_t)bo->ptr.cpu);
 +#else
     if (os_munmap((void *)(uintptr_t)bo->ptr.cpu, panfrost_bo_size(bo))) {
        mesa_loge("munmap failed: %s", strerror(errno));
@@ -94,7 +94,7 @@
 -#ifdef GALLIUM_FREEDRENO
 -#include "freedreno/drm/freedreno_drm_public.h"
 +#if defined(GALLIUM_FREEDRENO) || defined(GALLIUM_PANFROST)
-+#define REDWOOD_GPU 1
++#define HAKIOS_GPU 1
  #include "util/driconf.h"
  #include "util/xmlconfig.h"
  #include <xf86drm.h>
@@ -120,7 +120,7 @@
 +};
 +
 +/*
-+ * The Mali's driver, where the kernel has the Mali up for programs (the Infinix: RedwoodMali,
++ * The Mali's driver, where the kernel has the Mali up for programs (the first phone: HakiosMali,
 + * boot-arg mali=1); NULL: none, and the processor draws as before.
 + */
 +static struct pipe_screen *
@@ -152,8 +152,8 @@
  osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
  {
 -#ifdef GALLIUM_FREEDRENO
-+#ifdef REDWOOD_GPU
-    struct redwood_drm_surface s = { .surface = surface };
++#ifdef HAKIOS_GPU
+    struct hakios_drm_surface s = { .surface = surface };
     struct pipe_resource templ = {
        .target = PIPE_TEXTURE_2D,
 @@ -118,7 +154,7 @@
@@ -161,7 +161,7 @@
     struct pipe_screen *screen;
  
 -#ifdef GALLIUM_FREEDRENO
-+#ifdef REDWOOD_GPU
++#ifdef HAKIOS_GPU
     screen = osmesa_create_gpu_screen();
     if (screen)
        return screen;
@@ -183,7 +183,7 @@
  libpanfrost_per_arch = []
  
 -foreach ver : ['4', '5', '6', '7', '9', '10']
-+# Darwin: the Infinix's Mali-G52 is Bifrost v7, and the image the driver travels in is small
++# Darwin: the first phone's Mali-G52 is Bifrost v7, and the image the driver travels in is small
 +foreach ver : host_machine.system() == 'darwin' ? ['7'] : ['4', '5', '6', '7', '9', '10']
    libpanfrost_per_arch += static_library(
      'pan-arch-v' + ver,
@@ -195,7 +195,7 @@
  ]
  
 -panfrost_versions = ['4', '5', '6', '7', '9', '10']
-+# Darwin: Bifrost v7 only (the Infinix's Mali-G52), for the size of the image the driver travels in
++# Darwin: Bifrost v7 only (the first phone's Mali-G52), for the size of the image the driver travels in
 +panfrost_versions = host_machine.system() == 'darwin' ? ['7'] : ['4', '5', '6', '7', '9', '10']
  libpanfrost_versions = []
  
@@ -218,7 +218,7 @@
     }
  
 +#ifdef __APPLE__
-+   /* Darwin builds Bifrost v7 alone, the Infinix's Mali-G52 */
++   /* Darwin builds Bifrost v7 alone, the first phone's Mali-G52 */
 +   if (dev->arch == 7)
 +      panfrost_cmdstream_screen_init_v7(screen);
 +   else {
@@ -243,7 +243,7 @@
     }
  #endif
  
-+   /* Darwin on redwood: 256 bytes of slack after every allocation. The fragment preload
++   /* Darwin on 256 bytes of slack after every allocation. The fragment preload
 +    * (pan_fb_preload.c, jm_preload_fb_v7) was seen writing up to 0x110 bytes past the end of
 +    * one of its descriptor allocations -- past the end of a 64 KB pool buffer twice, a fault
 +    * in the window server (24 October) -- and what it overruns now is its own slack. */
@@ -280,9 +280,9 @@
  panfrost_batch_submit(struct panfrost_context *ctx,
                        struct panfrost_batch *batch)
  {
-+   /* Darwin on redwood: what submitting batches costs the processor (rwa_submit_profile) */
-+   extern uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;
-+   int64_t redwood_began = os_time_get_nano();
++   /* Darwin on what submitting batches costs the processor (rwa_submit_profile) */
++   extern uint64_t hakios_pan_submit_ns, hakios_pan_submits, hakios_pan_blend_compiles;
++   int64_t hakios_began = os_time_get_nano();
     struct pipe_screen *pscreen = ctx->base.screen;
     struct panfrost_screen *screen = pan_screen(pscreen);
     bool has_frag = panfrost_has_fragment_job(batch);
@@ -290,11 +290,11 @@
  
  out:
     panfrost_batch_cleanup(ctx, batch);
-+   redwood_pan_submit_ns += os_time_get_nano() - redwood_began;
-+   redwood_pan_submits++;
++   hakios_pan_submit_ns += os_time_get_nano() - hakios_began;
++   hakios_pan_submits++;
  }
  
-+uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;
++uint64_t hakios_pan_submit_ns, hakios_pan_submits, hakios_pan_blend_compiles;
 +
  /* Submit all batches */
  
@@ -307,9 +307,9 @@
     memcpy(variant->constants, state->constants, sizeof(variant->constants));
 +
 +   {
-+      /* Darwin on redwood: blend shaders compiled (rwa_submit_profile) */
-+      extern uint64_t redwood_pan_blend_compiles;
-+      redwood_pan_blend_compiles++;
++      /* Darwin on blend shaders compiled (rwa_submit_profile) */
++      extern uint64_t hakios_pan_blend_compiles;
++      hakios_pan_blend_compiles++;
 +   }
  
     nir_shader *nir =

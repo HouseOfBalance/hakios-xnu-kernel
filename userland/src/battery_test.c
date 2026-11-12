@@ -1,15 +1,15 @@
 /*
- * The battery as iOS sees it: the kernel's power source (the IOPMPowerSource that powerd reads,
- * iokit/Kernel/RedwoodBattery.cpp) and what powerd has made of it (the power sources list that
+ * The battery as the system sees it: the kernel's power source (the IOPMPowerSource that powerd reads,
+ * iokit/Kernel/HakiosBattery.cpp) and what powerd has made of it (the power sources list that
  * the status bar, the lock screen and Settings get through IOPS), side by side with the kernel's
- * own numbers (kern.redwood.battery_*).
+ * own numbers (kern.hakios.battery_*).
  *
  *   battery_test            once
  *   battery_test N S        N times, S seconds apart
  *   battery_test open URL   have SpringBoard open a URL, such as prefs:root=BATTERY_USAGE (Settings >
  *                           Battery): for screenshots of a page that is hard to reach by touches alone
  *                           (needs the entitlement in battery_test.entitlements, which build.sh signs in)
- *   battery_test powerlog   what iOS's power log (aggregated, CurrentPowerlog.PLSQL) has collected: every
+ *   battery_test powerlog   what the system's power log (aggregated, CurrentPowerlog.PLSQL) has collected: every
  *                           table with rows, how many and over what time; one row of each of the accounting
  *                           tables Settings > Battery reads (the energy per application comes from them)
  */
@@ -112,10 +112,10 @@ once(void)
 	int got = IOPSGetPercentRemaining(&percent, &charging, &full);
 
 	printf("battery_test: the kernel says %d%%, %d mV, %d mA, %d C, battery %d, charger %d, charging %d, from the DSP %d\n",
-	    kernel("kern.redwood.battery_soc"), kernel("kern.redwood.battery_voltage_mv"), kernel("kern.redwood.battery_current_ma"),
-	    kernel("kern.redwood.battery_temperature_c"), kernel("kern.redwood.battery_present"),
-	    kernel("kern.redwood.battery_charger_present"), kernel("kern.redwood.battery_charging"),
-	    kernel("kern.redwood.battery_from_dsp"));
+	    kernel("kern.hakios.battery_soc"), kernel("kern.hakios.battery_voltage_mv"), kernel("kern.hakios.battery_current_ma"),
+	    kernel("kern.hakios.battery_temperature_c"), kernel("kern.hakios.battery_present"),
+	    kernel("kern.hakios.battery_charger_present"), kernel("kern.hakios.battery_charging"),
+	    kernel("kern.hakios.battery_from_dsp"));
 	if (service != 0) {
 		CFMutableDictionaryRef properties = NULL;
 		io_name_t name = "";

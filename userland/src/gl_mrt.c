@@ -10,7 +10,7 @@
  *   float2   three RGBA32F targets, the shader writes target 2 only  (reads 0 in AIR)
  *   unorm2   three RGBA8 targets, the shader writes target 2 only
  *   uint0    one RGBA32UI target, the shader writes target 0         (reads 0 in AIR)
- * Every line also goes to the kernel as one to keep (kern.redwood.say), so the end of the log has it.
+ * Every line also goes to the kernel as one to keep (kern.hakios.say), so the end of the log has it.
  */
 #include <stdarg.h>
 #include <stdint.h>
@@ -98,7 +98,7 @@ say(const char *format, ...)
 	va_end(ap);
 	printf("%s\n", line);
 	snprintf(kept, sizeof(kept), "!%s", line);
-	sysctlbyname("kern.redwood.say", NULL, NULL, kept, strlen(kept));
+	sysctlbyname("kern.hakios.say", NULL, NULL, kept, strlen(kept));
 }
 
 static unsigned

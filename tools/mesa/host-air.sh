@@ -30,10 +30,10 @@ LIBS="$B/src/compiler/air/libair.a $B/src/gallium/drivers/softpipe/libsoftpipe.a
 	$B/src/compiler/nir/libnir.a $B/src/compiler/libcompiler.a $B/src/util/libmesa_util.a
 	$B/src/util/blake3/libblake3.a $B/src/c11/impl/libmesa_util_c11.a"
 [ -f $B/src/util/libmesa_util_sse41.a ] && LIBS="$LIBS $B/src/util/libmesa_util_sse41.a"
-# what panfrost and redwood-drm give the library on the phone, as nothing here (air_metal.c's weak
+# what panfrost and hakios-drm give the library on the phone, as nothing here (air_metal.c's weak
 # imports, of which the variables are only weak in the declaration that is not the first)
-printf '%s\n' '#include <stdint.h>' 'uint64_t redwood_pan_submit_ns, redwood_pan_submits, redwood_pan_blend_compiles;' \
-	'uint64_t redwood_pan_variant_compiles, redwood_pan_variant_ns;' > $OUT/stubs.c
+printf '%s\n' '#include <stdint.h>' 'uint64_t hakios_pan_submit_ns, hakios_pan_submits, hakios_pan_blend_compiles;' \
+	'uint64_t hakios_pan_variant_compiles, hakios_pan_variant_ns;' > $OUT/stubs.c
 cc -c $OUT/stubs.c -o $OUT/stubs.o
 c++ -o $OUT/air_metal_test $OUT/air_metal_test.o $OUT/air_metal.o $OUT/stubs.o $LIBS -lz -lpthread -lm -Wl,-undefined,dynamic_lookup
 echo "host-air.sh: $OUT/air_metal_test"

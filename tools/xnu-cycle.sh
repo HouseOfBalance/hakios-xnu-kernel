@@ -1,5 +1,5 @@
 #!/bin/bash
-# One XNU run on the X6826B: build mtkloader (extra args go to the compiler, e.g.
+# One XNU run on the first phone: build mtkloader (extra args go to the compiler, e.g.
 # -DXNU_CHECKPOINT=17), pack it with Android and the XNU payload, flash boot_a, let XNU run and
 # Android come back, then print what XNU left in pstore. Slot b is never touched.
 set -e
@@ -49,7 +49,7 @@ WAIT_ITERS=$(( (SECS + 300) / 3 ))
 for i in $(seq 1 $WAIT_ITERS); do [ "$(adb -s $S get-state 2>/dev/null)" = device ] && break; sleep 3; done
 sleep 3
 for i in $(seq 1 10); do adb -s $S shell 'su -c "cat /sys/fs/pstore/console-ramoops-0"' > "$OUT" 2>/dev/null && [ -s "$OUT" ] && break; sleep 2; done
-# what the kernel kept for the host (kern.redwood.host_keep: the pipeline recipes, whole however long the run was),
+# what the kernel kept for the host (kern.hakios.host_keep: the pipeline recipes, whole however long the run was),
 # which mtkloader put into the pmsg zone: appended to the log, when it is this run's and not Android's own
 adb -s $S shell 'su -c "cat /sys/fs/pstore/pmsg-ramoops-0"' > "$OUT.keep" 2>/dev/null || true
 if head -c 64 "$OUT.keep" | grep -q 'kept for the host by the kernel'; then

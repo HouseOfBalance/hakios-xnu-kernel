@@ -9,8 +9,8 @@ diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
 +	case 7:
 +	case 8:
 +		/*
-+		 * (redwood) Not in the open source: what os_workgroup_interval_start(), _update() and
-+		 * _finish() of iOS send, for the performance controller, which is not here either.
++		 * Not in the open source: what os_workgroup_interval_start(), _update() and
++		 * _finish() of the system send, for the performance controller, which is not here either.
 +		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
 +		 * lines a second from the audio server's real-time thread. For its threads, and only
 +		 * for them, there is nothing to do and nothing wrong. (The window server asks for its
@@ -33,20 +33,20 @@ diff --git a/osfmk/kern/bsd_kern.c b/osfmk/kern/bsd_kern.c
  }
 +
 +/*
-+ * redwood: every thread of a task, by its user registers and frame pointers -- for a daemon that answers
-+ * nobody and in which no thread of ours runs (mediaserverd on the Infinix, runs 248-265), seen from here
++ * every thread of a task, by its user registers and frame pointers -- for a daemon that answers
++ * nobody and in which no thread of ours runs (mediaserverd on the first phone, runs 248-265), seen from here
 + * without asking anything of it. The task's and each thread's suspend counts first (a task held by
 + * task_suspend runs no thread at all), then for each thread its state, user pc, lr and up to 9 return
 + * addresses, raw (the shared cache's slide is the same for every process: the caller knows it).
-+ * Said through `say`, a line each; at most 40 threads. bsd/dev/redwood_ustack.c is the sysctl.
++ * Said through `say`, a line each; at most 40 threads. bsd/dev/hakios_ustack.c is the sysctl.
 + */
 +#if defined(__arm64__)
 +#include <arm/thread.h>
 +
-+void redwood_task_ustacks(task_t task, void (*say)(const char *, ...));
++void hakios_task_ustacks(task_t task, void (*say)(const char *, ...));
 +
 +void
-+redwood_task_ustacks(task_t task, void (*say)(const char *, ...))
++hakios_task_ustacks(task_t task, void (*say)(const char *, ...))
 +{
 +	struct {
 +		uint64_t pc, lr, fp;
@@ -168,7 +168,7 @@ diff --git a/osfmk/kern/percpu.h b/osfmk/kern/percpu.h
   * @param name          the per-CPU variable name
   */
 +/*
-+ * (redwood) All of the arithmetic is on integers here. As Apple wrote it, the end was a pointer
++ * All of the arithmetic is on integers here. As Apple wrote it, the end was a pointer
 + * computed from the start, and a compiler may then take "start <= start + n" for "n >= 0":
 + * with one processor start is VM_MAX_KERNEL_ADDRESS and end is 0, n looks positive, and the
 + * loop that must not run at all runs once on memory that does not exist (clang 18+ does this;
@@ -377,7 +377,7 @@ diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
  }
  
 +/*
-+ * (redwood) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
++ * What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
 + * or WORK_INTERVAL_TYPE_LAST for a thread that has joined none.
 + */
 +uint32_t

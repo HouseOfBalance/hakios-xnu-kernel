@@ -4,14 +4,14 @@
 usage: mkapfs.py -o IMAGE [-z [--plain DIR]...] [--time SECONDS] [--slack BLOCKS] NAME=DIR[,manifest=FILE] [NAME=DIR ...]
 
 Each NAME=DIR becomes one volume of the container (volume 0 first), case-sensitive and
-normalization-insensitive like the iOS volumes, unencrypted, read-only content laid out once.
+normalization-insensitive like the system's volumes, unencrypted, read-only content laid out once.
 Permission bits and symbolic links are taken from DIR; everything is owned by root:wheel
 unless a manifest says otherwise (lines of: mode in octal with the type bits, uid, gid, path,
 [link target]; system/system.manifest is one; a directory or symbolic link that is only in the
 manifest is made). With -z a regular file is stored compressed when that makes it smaller,
-as Apple stores most of the iOS root volume: a small one whole in its decmpfs attribute (type
+as Apple stores most of the system's root volume: a small one whole in its decmpfs attribute (type
 3, no block of its own at all), a bigger one in 64 KB zlib pieces in its resource fork (type 4); but not what is under a --plain DIR (relative to the volume's root), which stays as
-it is and in one piece -- the firmware a driver uses where it lies in memory.  Times are all --time (default: 2023-05-12, the iOS 16.5 images'), so the same
+it is and in one piece -- the firmware a driver uses where it lies in memory.  Times are all --time (default: 2023-05-12, the system image 20F66 images'), so the same
 input gives the same image byte for byte.
 
 The image is what Apple's newfs_apfs and a single transaction would leave (one checkpoint,
@@ -732,7 +732,7 @@ class Container:
             struct.pack_into('<QQ', sb, 0xe0, alloc, 0)
             sb[0xf0:0x100] = self.uuid('volume %d' % v.index)
             struct.pack_into('<QQ', sb, 0x100, v.when, 1)          # last modified; unencrypted
-            fmt = b'mkapfs.py (darwin-redwood)'
+            fmt = b'mkapfs.py (xnu-kernel-mtk-helio)'
             sb[0x110:0x110 + len(fmt)] = fmt
             struct.pack_into('<QQ', sb, 0x130, v.when, XID)
             nm = v.name.encode()[:255]

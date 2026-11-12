@@ -1,12 +1,12 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
 /*
  * The MTLB container of a .metallib: a header, a function list of tagged
  * fields, and one LLVM module per function. Worked out against the files of
- * iOS 16.5 (docs/metal.md, section 9.1; tools/metallib.py is the same in
+ * the system image 20F66 (docs/metal.md, section 9.1; tools/metallib.py is the same in
  * Python).
  */
 

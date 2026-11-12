@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy stock iOS launchd job definitions into the small image, adjusted for the bring-up.
+"""Copy stock the system launchd job definitions into the small image, adjusted for the bring-up.
 
 usage: mkjobs.py [--rest] IOS_ROOTFS DEST_DIR label...
 
@@ -11,7 +11,7 @@ everything the daemon has to say -- SpringBoard alone says a megabyte in half a 
 costs time and pushes everybody else out of the log that comes back from the phone.
 The program itself must be in the system image; a warning is printed if it was not extracted.
 
-With --rest, the other jobs of iOS follow (their standard error on the console as well, their os_log
+With --rest, the other jobs of the system follow (their standard error on the console as well, their os_log
 only when named in OSLOG), and with them the "launch angels" (System/Library/LaunchAngels: the
 applications without an icon that draw parts of the system's own interface in a process of their
 own -- the wallpaper, the keyboard, the now playing controls -- and are reached through a Mach
@@ -39,7 +39,7 @@ DENY = ('watchdog', 'CommCenter', 'wifi', 'WiFi', 'bluetooth', 'BTServer', 'loca
         'installcoordinationd', 'purplebuddy', 'restore', 'usb', 'accessoryd',
         'mobileassetd', 'apsd', 'itunesstored', 'appstored', 'cloudd', 'bird',
         # these start, crash and are asked for again, over and over. (aggregated, which was among them, is where
-        # iOS 16 keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
+        # this system release keeps its power log -- com.apple.powerlog.plxpclogger.xpc and the rest -- that Settings > Battery
         # waits for; it now runs through a session.)
         'homed', 'routined', 'duetexpertd', 'com.apple.dmd', 'syncdefaultsd', 'photoanalysisd', 'avconferenced')
 
@@ -80,7 +80,7 @@ for label in labels:
             job.pop(key, None)
     # TRIM="label:service,service;...": only those Mach services of the job, the rest left to fail at once as
     # if it were not there (mediaserverd for decoding HEIC alone: SpringBoard's synchronous request to its
-    # system controller, FigSystemControllerRemoteCreate, is never answered on the Infinix -- run 253)
+    # system controller, FigSystemControllerRemoteCreate, is never answered on the first phone -- run 253)
     for entry in filter(None, os.environ.get('TRIM', '').split(';')):
         trim_label, _, services = entry.partition(':')
         if trim_label == label and 'MachServices' in job:

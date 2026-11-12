@@ -15,13 +15,13 @@
  * With boot-arg aks_keys=1 there are keys: bags made, saved, loaded and set as the system's (selectors 0x02-0x06),
  * and kAKSWrapKey / kAKSUnwrapKey by AES key wrap (RFC 3394) with the key of the item's class -- see "Keys" below for
  * what that protects and what not. A key wrapped the old way is still read. Run 471: keybagd --init loads the system
- * bag that /redwood/bin/aks_restore made, and the keychain works with these keys.
+ * bag that /hakios/bin/aks_restore made, and the keychain works with these keys.
  * With aks_log=1 every call is said (process, selector, scalars, sizes, answer).
  * For the Apple ID / App Store path (ported from origin/AppleID): aks_flags/aks_lockstate report a
  * passcode device to securityd so the iCloud token persists; aks_probe answers an unimplemented
  * selector with zeroes to map mobileactivationd's UIK calls; aks_verbose says who reads the state.
  *
- * The protocol was worked out from the user-space side of iOS 16.5: selectors, and the
+ * The protocol was worked out from the user-space side of the system image 20F66: selectors, and the
  * DER-encoded answers ("SET of SEQUENCE { UTF8String key, INTEGER value }").
  */
 
@@ -95,7 +95,7 @@ static bool     gAKSVerbose;
 static uint32_t gAKSFlags = kAKSStateFlags;
 static uint32_t gAKSLockState = kAKSLockStateDisabled;
 
-extern "C" void redwood_host_keep_add(const char *format, ...) __printflike(1, 2);
+extern "C" void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
 
 /* Append SEQUENCE { UTF8String key, INTEGER value } for a value below 128; returns the new length. */
 static size_t
@@ -503,7 +503,7 @@ AppleKeyStoreUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
 	    scalars, structureIn, args->structureOutputDescriptor ? "desc " : "", args->structureOutputDescriptor ?
 	    (uint32_t)args->structureOutputDescriptor->getLength() : structureOut, scalarsOut, ret);
 	if (gAKSCalls[selector] == 1) {
-		redwood_host_keep_add("aks: first 0x%x by %s [%s] in %u -> 0x%x", selector, procname, scalars, structureIn, ret);
+		hakios_host_keep_add("aks: first 0x%x by %s [%s] in %u -> 0x%x", selector, procname, scalars, structureIn, ret);
 	}
 	return ret;
 }
@@ -653,7 +653,7 @@ AppleKeyStoreUserClient::keysMethod(uint32_t selector, IOExternalMethodArguments
 			if ((handle = bagSlot()) >= 0) {
 				gAKSBag[handle] = *bag;
 				gAKSSystem = handle;
-				redwood_host_keep_add("aks: the system bag set from handle %llu (now handle %d)", in[0], handle);
+				hakios_host_keep_add("aks: the system bag set from handle %llu (now handle %d)", in[0], handle);
 			} else {
 				ret = kIOReturnNoResources;
 			}
@@ -671,7 +671,7 @@ AppleKeyStoreUserClient::keysMethod(uint32_t selector, IOExternalMethodArguments
 		 * None yet is kIOReturnNotFound, which is what keybagd --init (launchd's boot task "keybag") takes to mean
 		 * "load /private/var/keybags/systembag.kb and set it" (load_devicebag, keybagd 0x100012c60); anything else
 		 * it takes for a key store that failed, writes auto-boot=false and reboots into recovery (run 468). The bag
-		 * in that file is made once, as a restore would, by /redwood/bin/aks_restore (userland/src/aks_restore.c).
+		 * in that file is made once, as a restore would, by /hakios/bin/aks_restore (userland/src/aks_restore.c).
 		 */
 		IOLockLock(gAKSLock);
 		handle = gAKSSystem;
@@ -811,7 +811,7 @@ AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * a
 		if (gAKSVerbose) {
 			char procname[32] = "?";
 			proc_selfname(procname, sizeof(procname));
-			redwood_host_keep_add("aks: %s[%d] getLockState -> flags %#x", procname, proc_selfpid(), gAKSFlags);
+			hakios_host_keep_add("aks: %s[%d] getLockState -> flags %#x", procname, proc_selfpid(), gAKSFlags);
 		}
 		return kIOReturnSuccess;
 
@@ -828,7 +828,7 @@ AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * a
 		if (gAKSVerbose) {
 			char procname[32] = "?";
 			proc_selfname(procname, sizeof(procname));
-			redwood_host_keep_add("aks: %s[%d] getDeviceState sel %#x -> ss %#x sls %u", procname,
+			hakios_host_keep_add("aks: %s[%d] getDeviceState sel %#x -> ss %#x sls %u", procname,
 			    proc_selfpid(), selector, gAKSFlags, gAKSLockState);
 		}
 		return answer(args, der, deviceState(der));
@@ -918,7 +918,7 @@ AppleKeyStoreUserClient::method(uint32_t selector, IOExternalMethodArguments * a
 			}
 		}
 		proc_selfname(procname, sizeof(procname));
-		redwood_host_keep_add("aks: aks_probe %s[%d] sel 0x%x scalars[%u]=%#llx,%#llx struct %u [%s] -> zeroed %u",
+		hakios_host_keep_add("aks: aks_probe %s[%d] sel 0x%x scalars[%u]=%#llx,%#llx struct %u [%s] -> zeroed %u",
 		    procname, proc_selfpid(), selector, args->scalarInputCount,
 		    args->scalarInputCount > 0 ? args->scalarInput[0] : 0ull,
 		    args->scalarInputCount > 1 ? args->scalarInput[1] : 0ull,
@@ -958,7 +958,7 @@ MiniAppleKeyStoreStart(void)
 	PE_parse_boot_argn("aks_flags", &gAKSFlags, sizeof(gAKSFlags));
 	PE_parse_boot_argn("aks_lockstate", &gAKSLockState, sizeof(gAKSLockState));
 	if (gAKSFlags != kAKSStateFlags || gAKSLockState != kAKSLockStateDisabled) {
-		redwood_host_keep_add("aks: reporting state flags %#x, lock state %u (from boot-args)", gAKSFlags, gAKSLockState);
+		hakios_host_keep_add("aks: reporting state flags %#x, lock state %u (from boot-args)", gAKSFlags, gAKSLockState);
 	}
 	gAKSLock = IOLockAlloc();
 	if (gAKSKeys) {

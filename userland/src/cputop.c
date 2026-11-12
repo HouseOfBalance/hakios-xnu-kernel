@@ -4,7 +4,7 @@
  * log says only that the cores were busy.
  *
  * usage: cputop SECONDS COUNT
- * Goes into the background at once (a job of com.redwood.demo runs its lines one after another),
+ * Goes into the background at once (a job of com.hakios.demo runs its lines one after another),
  * then every SECONDS for COUNT times: "cputop: NAME[PID] P% ..." for the six that used the most,
  * in percent of one core over the interval.
  */
@@ -16,7 +16,7 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
-/* libproc's, which the iOS SDK has no header for */
+/* libproc's, which the system's SDK has no header for */
 int proc_listpids(uint32_t type, uint32_t typeinfo, void *buffer, int buffersize);
 int proc_pidinfo(int pid, int flavor, uint64_t arg, void *buffer, int buffersize);
 int proc_name(int pid, void *buffer, uint32_t buffersize);
@@ -67,7 +67,7 @@ take(struct sample *out)
 static void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 int

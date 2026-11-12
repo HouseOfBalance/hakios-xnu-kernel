@@ -3,11 +3,11 @@
 qc-simlib.py SIM_QUARTZCORE.metallib OUT.metallib [EXTRA.metallib]
 
 QuartzCore's shaders for CoreAnimation's Metal renderer on the phone (camtl=1,
-userland/build.sh QC_METALLIB), from the iOS SIMULATOR's QuartzCore: Xcode 14.3's iOS 16.4
+userland/build.sh QC_METALLIB), from the system's SIMULATOR's QuartzCore: Xcode 14.3's this system release.4
 runtime has a default.metallib in AIR (air64-apple-ios16.4.0-simulator) with QuartzCore's
-functions in their iOS form -- edr_scale, p3_clamp, harmony, luma_boost and display_overdrive_*
+functions in their the system form -- edr_scale, p3_clamp, harmony, luma_boost and display_overdrive_*
 included, which tools/qc-metallib.py could only alias from macOS. The header's simulator
-platform becomes iOS 16.5, which is what Metal on the phone takes.
+platform becomes the system image 20F66, which is what Metal on the phone takes.
 
 16.5 asks for a few functions 16.4 has not got (path_blit_vert_lph and the rest of path_*);
 EXTRA (qc-metallib.py's output) supplies every function the simulator's library lacks whose
@@ -55,7 +55,7 @@ def name(e):
 src, dst = sys.argv[1:3]
 extra = sys.argv[3] if len(sys.argv) > 3 else None
 b, h, ents, ext, xt = parse(src)
-assert b[0xb] == 0x87, 'not an iOS simulator library (platform %#x)' % b[0xb]
+assert b[0xb] == 0x87, 'not a system simulator library (platform %#x)' % b[0xb]
 pub = bytearray(b[h[2]:h[2] + h[3]])
 priv = bytearray(b[h[4]:h[4] + h[5]])
 code = bytearray(b[h[6]:h[6] + h[7]])
@@ -113,7 +113,7 @@ rlo = co + len(code)
 ext = bytearray(ext)
 struct.pack_into('<QQ', ext, xt[b'RLST'][0] + 6, rlo, len(refl))
 out = bytearray(b[:fo]) + table + ext + pub + priv + code + refl
-out[0:16] = bytes.fromhex('4d544c42010002000700008210000500')   # iOS 16.5, as qc-metallib.py writes
+out[0:16] = bytes.fromhex('4d544c42010002000700008210000500')   # the system image 20F66, as qc-metallib.py writes
 struct.pack_into('<Q', out, 0x10, len(out))
 # the list's size leaves out its count, as Apple's own files have it
 struct.pack_into('<8Q', out, 0x18, fo, len(table) - 4, po, len(pub), pv, len(priv), co, len(code))

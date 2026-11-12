@@ -1,4 +1,4 @@
-"""Minimal reader for the iOS 16.5 split dyld shared cache: VM reads, images, exports, symbols."""
+"""Minimal reader for the system image 20F66 split dyld shared cache: VM reads, images, exports, symbols."""
 import mmap, os, struct
 
 DIR = __import__('os').path.join(__import__('os').path.dirname(__file__), '..', '..', 'system', '20F66__iPhone10,3_6')

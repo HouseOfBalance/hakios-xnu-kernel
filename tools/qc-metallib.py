@@ -3,14 +3,14 @@
 qc-metallib.py MACOS_AIR.metallib OUT.metallib QUARTZCORE_STRINGS.txt
 
 QuartzCore's shaders in AIR for CoreAnimation's Metal renderer on the phone (boot-arg camtl=1,
-userland/build.sh QC_METALLIB). The iPhone X firmware has none as a library (only
+userland/build.sh QC_METALLIB). the reference phone firmware has none as a library (only
 default.pipelinelib), so this takes the AIR slice of a macOS QuartzCore's default.metallib (the
-first slice of the fat file, cputype 0x1000017) and makes iOS 16.5's Metal take it:
+first slice of the fat file, cputype 0x1000017) and makes the system image 20F66's Metal take it:
 
-  - the header says iOS 16.5 and every function AIR 2.5 (Metal refuses a macOS library);
-  - the functions iOS 16.5 asks for and macOS has not got (p3_clamp, harmony, luma_boost,
+  - the header says the system image 20F66 and every function AIR 2.5 (Metal refuses a macOS library);
+  - the functions the system image 20F66 asks for and macOS has not got (p3_clamp, harmony, luma_boost,
     display_overdrive_*, path_stroke_*, alpha_linear_premultiply) are ALIASES: a second
-    function-list entry over another function's module (src/redwoodmetal.m passes no entry
+    function-list entry over another function's module (src/hakiosmetal.m passes no entry
     name, so the compiler takes the module's one entry point);
   - the modules of functions QuartzCore 16.5 never names are zeroed, which is what makes the
     file fit boot_a (QUARTZCORE_STRINGS: QuartzCore's __cstring, one string a line).
@@ -48,7 +48,7 @@ for want,donor in ALIAS.items():
         o,l=tags(d)[b'NAME']; nm=(want+suf).encode()+b'\0'
         e=bytearray(d[:o-2])+struct.pack('<H',len(nm))+nm+d[o+l:]
         struct.pack_into('<I',e,0,len(e)); new.append(e); print('alias',want+suf,'->',donor+suf)
-# iOS header and versions
+# The system header and versions
 for e in entries+new:
     t=tags(e)
     if b'VERS' in t: o,l=t[b'VERS']; e[o:o+8]=bytes.fromhex('0200050003000000')

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
@@ -62,7 +62,7 @@
 #include <mach-o/dyld.h>
 #include <signal.h>
 /* <sys/ucontext.h>, not <ucontext.h>: the latter refuses to be included
- * without _XOPEN_SOURCE on the iOS SDK, and userland/src/inject.c takes the
+ * without _XOPEN_SOURCE on the system's SDK, and userland/src/inject.c takes the
  * same route for the same reason.
  */
 #include <sys/ucontext.h>
@@ -111,7 +111,7 @@ texel_value(unsigned slot, unsigned x, unsigned y, unsigned z, float out[4])
  * print the fault before dying. These two functions are userland/src/inject.c's
  * say_the_fault()/watch_for_faults() (branch sileo2, 6683521), with the slide
  * taken from this program's own image rather than from the shared cache, since
- * the pc of interest is in air_run or in libOSMesa and not in iOS.
+ * the pc of interest is in air_run or in libOSMesa and not in the system.
  */
 static void
 say_the_fault(int signal_number, siginfo_t *info, void *context_in)
@@ -1361,7 +1361,7 @@ main(int argc, char **argv)
     */
    bool want_library = false;
    /* --buffer FILE is AIR_RUN_BUFFER as an argument, and it exists because the
-    * device has no shell to set one with. iOS 16.5's own root carries no sh at
+    * device has no shell to set one with. the system image 20F66's own root carries no sh at
     * all -- /bin holds df and ps -- and the job list that runs this is read by
     * our init, which splits a line on blanks and has no notion of a variable
     * (userland/src/init.c, run_command). So a generated suite whose every
@@ -1500,9 +1500,9 @@ main(int argc, char **argv)
    }
 #endif
 #ifdef GALLIUM_PANFROST
-   /* The Infinix's Mali (Bifrost v7), opened as osmesa_create_gpu_screen()
-    * opens it in tools/mesa/panfrost-darwin.patch: the kernel's RedwoodMali
-    * service behind the "panfrost" device of tools/mesa/redwood-drm.
+   /* The first phone's Mali (Bifrost v7), opened as osmesa_create_gpu_screen()
+    * opens it in tools/mesa/panfrost-darwin.patch: the kernel's HakiosMali
+    * service behind the "panfrost" device of tools/mesa/hakios-drm.
     */
    if (!screen && !debug_get_bool_option("AIR_RUN_SOFTWARE", false)) {
       int fd = drmOpenWithType("panfrost", NULL, DRM_NODE_RENDER);
@@ -1520,7 +1520,7 @@ main(int argc, char **argv)
 
          screen = panfrost_drm_screen_create(fd, &config);
          if (screen)
-            how = "the Mali, through the kernel's RedwoodMali service";
+            how = "the Mali, through the kernel's HakiosMali service";
          else
             fprintf(stderr, "air_run: the panfrost device opened but gave no screen\n");
       }

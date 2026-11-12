@@ -1,5 +1,5 @@
 /*
- * aks_restore: what a restore of iOS leaves for the key store, done once. On a device the system keybag is made when
+ * aks_restore: what a restore of the system leaves for the key store, done once. On a device the system keybag is made when
  * the system is restored, and every boot after that launchd's boot task "keybag" (keybagd --init) only loads it from
  * /private/var/keybags/systembag.kb -- and, finding none, reboots into recovery ("FATAL KEYBAG ERROR: kb_load",
  * run 469). There is no restore here, so this makes it: a bag from the kernel's key store (iokit/Kernel/

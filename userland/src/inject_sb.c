@@ -1,5 +1,5 @@
 /*
- * libredwood-sb.dylib: code of ours inside SpringBoard (see inject.c for how it gets there).
+ * libhakios-sb.dylib: code of ours inside SpringBoard (see inject.c for how it gets there).
  *
  *   - The phone is "activated". SpringBoard asks mobileactivationd, which is not running (and
  *     could not talk to Apple anyway); without an answer it treats the device as bricked and
@@ -25,9 +25,9 @@
  *   - A long press on the lock screen's wallpaper does not open the poster switcher, which the
  *     window server here shows as a black screen: see poster_switcher_allowed().
  *   - Darwin notifications as a remote control, for scripts (rwtouch notify NAME):
- *       com.redwood.unlock      what the lock screen does after "swipe up to open"
- *       com.redwood.layers      write down the layers SpringBoard has on the screen: see layers()
- *       com.redwood.switcher    open the switcher of running applications: see switcher()
+ *       com.hakios.unlock      what the lock screen does after "swipe up to open"
+ *       com.hakios.layers      write down the layers SpringBoard has on the screen: see layers()
+ *       com.hakios.switcher    open the switcher of running applications: see switcher()
  *     In any other program given this library (INJECT in build.sh) only the last of them is
  *     answered, with that program's layers.
  */
@@ -55,7 +55,7 @@
 
 /* where what is said goes: the standard error, which is the console's for SpringBoard (an application's is nowhere) */
 static int say_fd = 2;
-static int say_kept;            /* the wallpaper's layers (com.redwood.wallpaper_layers): said as lines the kernel keeps */
+static int say_kept;            /* the wallpaper's layers (com.hakios.wallpaper_layers): said as lines the kernel keeps */
 
 static void
 say(const char *format, ...)
@@ -74,7 +74,7 @@ say(const char *format, ...)
 		while (keep > 1 && line[keep - 1] == '\n') {
 			keep--;
 		}
-		sysctlbyname("kern.redwood.say", NULL, NULL, line, keep);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, keep);
 		return;
 	}
 	memmove(line, line + 1, sizeof(line) - 1);
@@ -150,7 +150,7 @@ static uintptr_t slide;
 
 /*
  * Replace -[CLASS SELECTOR] (or +[CLASS SELECTOR]: `kind` is that first character), whose code must now
- * be at the unslid address `expected` (iOS 16.5, 20F66: what a replacement does depends on what the
+ * be at the unslid address `expected` (the system image 20F66, 20F66: what a replacement does depends on what the
  * original did). Returns the original.
  * (dyld interposing of the C functions underneath does not reach calls made from inside the
  * shared cache: there one library branches straight into the other.)
@@ -164,7 +164,7 @@ replace_method_of_kind(char kind, const char *class_name, const char *selector, 
 	IMP original = method ? method_getImplementation(method) : NULL;
 
 	if (original == NULL || (uintptr_t)original != expected + slide) {
-		say("redwood: %c[%s %s]: found %#lx, expected %#lx; left alone\n", kind, class_name, selector,
+		say("hakios: %c[%s %s]: found %#lx, expected %#lx; left alone\n", kind, class_name, selector,
 		    original ? (uintptr_t)original - slide : 0, expected);
 		return NULL;
 	}
@@ -198,7 +198,7 @@ static void
 set_setup_required_reason(id self, SEL selector, long reason)
 {
 	if (reason != 0) {
-		say("redwood: SpringBoard wants the setup assistant (reason %ld); not here\n", reason);
+		say("hakios: SpringBoard wants the setup assistant (reason %ld); not here\n", reason);
 	}
 	original_set_setup_required_reason(self, selector, 0);
 }
@@ -206,12 +206,12 @@ set_setup_required_reason(id self, SEL selector, long reason)
 /*
  * +[XBApplicationSnapshotManifestImpl _outputFormatForSnapshot:] chooses the file format of the picture
  * SpringBoard takes of an application that leaves the screen: 0 = PNG, 1 and 2 = ATX (an ASTC texture),
- * 3 = JPEG. A device with a wide colour display that can decode ASTC gets ATX, and iOS compresses it on
+ * 3 = JPEG. A device with a wide colour display that can decode ASTC gets ATX, and the system compresses it on
  * the processor: fast with the vector code of Apple's cores, but here it takes one core more than ten
  * seconds per picture (under QEMU; seconds on the phone) -- and all that time the application waits for
  * the answer, until the watchdog for scene updates (10 s, there is no setting to scale it) kills it:
  * no application survived going to the background. JPEG takes a fraction of a second; it has no
- * transparency, so a picture that needs it becomes a PNG (which is what iOS itself does on a device
+ * transparency, so a picture that needs it becomes a PNG (which is what the system itself does on a device
  * without ASTC).
  */
 #define SNAPSHOT_FORMAT_PNG             0
@@ -226,23 +226,23 @@ set_setup_required_reason(id self, SEL selector, long reason)
 static long
 snapshot_output_format(__unused id self, __unused SEL selector, __unused id snapshot)
 {
-	return getenv("REDWOOD_SNAPSHOT_JPEG") != NULL ? SNAPSHOT_FORMAT_JPEG : SNAPSHOT_FORMAT_PNG;
+	return getenv("HAKIOS_SNAPSHOT_JPEG") != NULL ? SNAPSHOT_FORMAT_JPEG : SNAPSHOT_FORMAT_PNG;
 }
 
-/* ---- battery state from redwood's Qualcomm charger stack ----------------------------------------- */
+/* ---- battery state from hakios's Qualcomm charger stack ----------------------------------------- */
 
 /*
- * iOS reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
+ * The system reads battery level through UIDevice.batteryLevel and UIDevice.batteryState; SpringBoard's
  * status bar reads it the same way via SBBatteryController. Where the battery has no power source
  * of its own in the kernel (battery=1, the loader's way through Qualcomm's UEFI charger protocols),
- * we hook the UIDevice accessors to return what XNU publishes as kern.redwood.battery_soc (0..100)
- * and kern.redwood.battery_charging.
+ * we hook the UIDevice accessors to return what XNU publishes as kern.hakios.battery_soc (0..100)
+ * and kern.hakios.battery_charging.
  * When the sysctl is missing (battery=1 not in boot-args, or the driver never started) we hand
- * back the value the real implementation computed; the status bar then shows whatever iOS last
+ * back the value the real implementation computed; the status bar then shows whatever the system last
  * knew, which is better than crashing.
- * With adsp=1 the battery is a power source (the service RedwoodBattery, an IOPMPowerSource:
- * iokit/Kernel/RedwoodBattery.cpp), which powerd reads like an iPhone's own, and from it iOS knows
- * everything by itself; once that service is there, the hooks hand everything to iOS's own code.
+ * With adsp=1 the battery is a power source (the service HakiosBattery, an IOPMPowerSource:
+ * iokit/Kernel/HakiosBattery.cpp), which powerd reads like a reference phone's own, and from it the system knows
+ * everything by itself; once that service is there, the hooks hand everything to the system's own code.
  */
 static float  (*original_battery_level)(id self, SEL sel);
 static long   (*original_battery_state)(id self, SEL sel);
@@ -263,14 +263,14 @@ sysctl_int(const char *name)
 	return value;
 }
 
-/* Is the battery a power source that iOS reads by itself (see above)? Once it is, it stays one. */
+/* Is the battery a power source that the system reads by itself (see above)? Once it is, it stays one. */
 static bool
 battery_power_source(void)
 {
 	static bool found;
 	io_service_t service;
 
-	if (!found && (service = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodBattery"))) != 0) {
+	if (!found && (service = IOServiceGetMatchingService(0, IOServiceMatching("HakiosBattery"))) != 0) {
 		IOObjectRelease(service);
 		found = true;
 	}
@@ -281,7 +281,7 @@ battery_power_source(void)
 static float
 battery_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_level ? original_battery_level(self, sel) : -1.0f;
@@ -293,10 +293,10 @@ battery_level(id self, SEL sel)
 static long
 battery_state(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (charging == -1 || present == -1 || plugged == -1 || soc < 0 || soc > 100 || battery_power_source()) {
 		return original_battery_state ? original_battery_state(self, sel) : 0;
@@ -308,13 +308,13 @@ battery_state(id self, SEL sel)
 
 /*
  * UIKitCore's status-bar view has its own presentation policy, separate from UIDevice. With the power
- * source it is iOS's own again: the switch Battery Percentage in Settings > Battery, which the image
+ * source it is the system's own again: the switch Battery Percentage in Settings > Battery, which the image
  * turns on (SBShowBatteryPercentage in userland/var/mobile/Library/Preferences/com.apple.springboard.plist).
  */
 static BOOL
 battery_view_shows_percentage(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return YES;
 	return original_battery_view_shows_percentage ? original_battery_view_shows_percentage(self, sel) : NO;
@@ -323,7 +323,7 @@ battery_view_shows_percentage(id self, SEL sel)
 static void
 battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_shows_percentage(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? YES : shows);
 }
@@ -331,9 +331,9 @@ battery_view_set_shows_percentage(id self, SEL sel, BOOL shows)
 static BOOL
 battery_view_should_show_bolt(id self, SEL sel)
 {
-	int charging = sysctl_int("kern.redwood.battery_charging");
-	int present = sysctl_int("kern.redwood.battery_present");
-	int plugged = sysctl_int("kern.redwood.battery_charger_present");
+	int charging = sysctl_int("kern.hakios.battery_charging");
+	int present = sysctl_int("kern.hakios.battery_present");
+	int plugged = sysctl_int("kern.hakios.battery_charger_present");
 
 	if (charging != -1 && present != -1 && plugged != -1 && !battery_power_source()) return charging && present && plugged;
 	return original_battery_view_should_show_bolt ? original_battery_view_should_show_bolt(self, sel) : NO;
@@ -341,7 +341,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 
 /*
  * The actual number the status bar draws. _UIBatteryView keeps the fill fraction (0.0..1.0) in
- * chargePercent; it is set through setChargePercent: and read back for layout. iOS feeds it from
+ * chargePercent; it is set through setChargePercent: and read back for layout. The system feeds it from
  * BatteryCenter / IOPowerSources, which is empty on this phone, so without us it sits near zero
  * (the "1%" the user saw). We override both sides: setChargePercent: so the stored value is ours
  * no matter who writes it, and the getter so any layout path that reads it agrees.
@@ -349,7 +349,7 @@ battery_view_should_show_bolt(id self, SEL sel)
 static double
 battery_view_charge_percent(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_battery_view_charge_percent ? original_battery_view_charge_percent(self, sel) : 0.0;
@@ -358,7 +358,7 @@ battery_view_charge_percent(id self, SEL sel)
 static void
 battery_view_set_charge_percent(id self, SEL sel, double p)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	original_battery_view_set_charge_percent(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? (double)soc / 100.0 : p);
 }
@@ -367,7 +367,7 @@ battery_view_set_charge_percent(id self, SEL sel, double p)
 static double
 ring_charging_level(id self, SEL sel)
 {
-	int soc = sysctl_int("kern.redwood.battery_soc");
+	int soc = sysctl_int("kern.hakios.battery_soc");
 
 	if (soc >= 0 && soc <= 100 && !battery_power_source()) return (double)soc / 100.0;
 	return original_ring_charging_level ? original_ring_charging_level(self, sel) : 0.0;
@@ -397,7 +397,7 @@ battery_post_notifications(void)
 
 /* ---- the lock screen's clock without a GPU ------------------------------------------------------- */
 
-#define REDWOOD_GL "/redwood/lib/libredwood-gl.dylib"
+#define HAKIOS_GL "/hakios/lib/libhakios-gl.dylib"
 
 /* Does the window server draw with OpenGL ES? The same question, asked the same way, as opengl_es() in inject.c. */
 static bool
@@ -408,7 +408,7 @@ gpu_draws(void)
 	const char *argument;
 	io_service_t gpu;
 
-	if (access(REDWOOD_GL, R_OK) != 0) {
+	if (access(HAKIOS_GL, R_OK) != 0) {
 		return false;
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -418,7 +418,7 @@ gpu_draws(void)
 			}
 		}
 	}
-	gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
 	if (gpu != 0) {
 		IOObjectRelease(gpu);
 	}
@@ -444,7 +444,7 @@ plain_vibrancy(void)
 		return;
 	}
 	CFPreferencesSetAppValue(CFSTR("BSUIVibrancyEffectViewDisabled"), kCFBooleanTrue, kCFPreferencesCurrentApplication);
-	say("redwood: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
+	say("hakios: SpringBoard: no GPU draws, vibrant views are plain (the lock screen's clock is white)\n");
 }
 
 /* ---- the side button's long press ---------------------------------------------------------------- */
@@ -454,7 +454,7 @@ plain_vibrancy(void)
  * (here, its "turn on Siri" sheet, nobody having turned it on). The recognizer is a timer of
  * SpringBoard's own: started when the main thread sees the press, stopped when it sees the release
  * -- and a release it has not got round to is no release. A press of the side button with the
- * display off wakes the display from inside the handling of that very press, which on an iPhone
+ * display off wakes the display from inside the handling of that very press, which on a reference phone
  * takes no time. Here it takes as long as the software renderer needs for the first picture of the
  * lock screen: a tenth of a second on the phone, a second under QEMU. That is longer than a long
  * press, so there every wake by the button (and by a tap, which is a press of that button made in
@@ -473,7 +473,7 @@ lock_button_held(void)
 	static int token = NOTIFY_TOKEN_INVALID;
 	uint64_t state = 0;
 
-	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.redwood.button.lock", &token) != NOTIFY_STATUS_OK) {
+	if (token == NOTIFY_TOKEN_INVALID && notify_register_check("com.hakios.button.lock", &token) != NOTIFY_STATUS_OK) {
 		token = NOTIFY_TOKEN_INVALID;
 		return true;
 	}
@@ -492,7 +492,7 @@ lock_long_press(id self, SEL selector, id recognizer)
 	if (state == GESTURE_BEGAN) {
 		dropping = !lock_button_held();
 		if (dropping) {
-			say("redwood: SpringBoard: a long press of the side button, which was released long ago: dropped\n");
+			say("hakios: SpringBoard: a long press of the side button, which was released long ago: dropped\n");
 		}
 	}
 	if (dropping) {
@@ -518,23 +518,23 @@ unlock(void)
 
 	if (cls == NULL || class_getClassMethod(cls, shared) == NULL || class_getInstanceMethod(cls, locked) == NULL ||
 	    class_getInstanceMethod(cls, unlock_ui) == NULL) {
-		say("redwood: unlock: SBLockScreenManager is not what it was\n");
+		say("hakios: unlock: SBLockScreenManager is not what it was\n");
 		return;
 	}
 	manager = ((id (*)(Class, SEL))objc_msgSend)(cls, shared);
 	if (manager == NULL) {
-		say("redwood: unlock: no lock screen manager yet\n");
+		say("hakios: unlock: no lock screen manager yet\n");
 	} else if (!((BOOL (*)(id, SEL))objc_msgSend)(manager, locked)) {
-		say("redwood: unlock: not locked\n");
+		say("hakios: unlock: not locked\n");
 	} else {
 		BOOL done = ((BOOL (*)(id, SEL, long, id))objc_msgSend)(manager, unlock_ui, UNLOCK_SOURCE_COVER_SHEET, NULL);
 
-		say("redwood: unlock: asked, answer %d\n", done);
+		say("hakios: unlock: asked, answer %d\n", done);
 	}
 }
 
 /*
- * The poster switcher: on iOS 16 a long press on the lock screen's wallpaper shrinks it into a
+ * The poster switcher: on this system release a long press on the lock screen's wallpaper shrinks it into a
  * row of posters to choose from or customize. The row is PosterBoard's, an application scene of
  * that process which the lock screen hosts (CSPosterSwitcherViewController, a CALayerHost of the
  * context of PosterBoard's window over an opaque black layer). PosterBoard does lay it out -- its
@@ -596,7 +596,7 @@ text_of(id object)
  * shadow one expects to see. Only the wash is left out, because a wash of a colour that is not the
  * wallpaper's is worse than no wash at all. When something here can give PaperBoardUI a real
  * picture of the wallpaper, this hook is what should go -- and until then switcher_wallpaper=1
- * among the boot-args puts it back as iOS asks for it, so that whoever works on the wallpaper can
+ * among the boot-args puts it back as the system asks for it, so that whoever works on the wallpaper can
  * see at once whether their picture arrives, without rebuilding an image to find out.
  */
 static void (*original_switcher_wallpaper_overlay)(id self, SEL selector);
@@ -616,8 +616,8 @@ switcher_wallpaper_overlay(id self, SEL selector)
 		    (at = strstr(args, "switcher_wallpaper=1")) != NULL && (at == args || at[-1] == ' ');
 	}
 	if (told++ == 0) {
-		say("redwood: the switcher's wash of wallpaper is %s\n", wanted ?
-		    "drawn as iOS asks (switcher_wallpaper=1)" : "left out: there is no picture of the wallpaper for it");
+		say("hakios: the switcher's wash of wallpaper is %s\n", wanted ?
+		    "drawn as the system asks (switcher_wallpaper=1)" : "left out: there is no picture of the wallpaper for it");
 	}
 	if (wanted) {
 		original_switcher_wallpaper_overlay(self, selector);
@@ -633,7 +633,7 @@ layer_filter(id filter, const char *what, int depth)
 	size_t n;
 
 	if (!class_respondsToSelector(object_getClass(filter), sel_registerName("type"))) {
-		say("redwood: layers%s: %*s  %s %s\n", layers_of, 2 * depth, "", what, text_of(filter));     /* a name alone */
+		say("hakios: layers%s: %*s  %s %s\n", layers_of, 2 * depth, "", what, text_of(filter));     /* a name alone */
 		return;
 	}
 	n = (size_t)snprintf(line, sizeof(line), "%s %s \"%s\"%s", what, text_of(SEND(id, filter, "type")),
@@ -655,7 +655,7 @@ layer_filter(id filter, const char *what, int depth)
 			n += (size_t)snprintf(line + n, sizeof(line) - n, " %s %s", inputs[i], text_of(value));
 		}
 	}
-	say("redwood: layers%s: %*s  %s\n", layers_of, 2 * depth, "", line);
+	say("hakios: layers%s: %*s  %s\n", layers_of, 2 * depth, "", line);
 }
 
 static void
@@ -771,7 +771,7 @@ layer_line(id layer, const char *role, int depth)
 			    text_of(SEND1(id, keys, "objectAtIndex:", long, i)));
 		}
 	}
-	say("redwood: layers%s: %*s%s%s %p \"%s\" %g,%g %gx%g opacity %g%s\n", layers_of, 2 * depth, "", role, class_name, (void *)layer,
+	say("hakios: layers%s: %*s%s%s %p \"%s\" %g,%g %gx%g opacity %g%s\n", layers_of, 2 * depth, "", role, class_name, (void *)layer,
 	    text_of(SEND(id, layer, "name")), frame.x, frame.y, frame.w, frame.h, (double)SEND(float, layer, "opacity"), more);
 	for (long i = 0; filters != NULL && i < SEND(long, filters, "count"); i++) {
 		layer_filter(SEND1(id, filters, "objectAtIndex:", long, i), "filter", depth);
@@ -809,7 +809,7 @@ web_views(id view, int depth)
 		SEL background = sel_registerName("_isBackground"), pid = sel_registerName("_webProcessIdentifier");
 		SEL responsive = sel_registerName("_webProcessIsResponsive");
 
-		say("redwood: layers%s: a WKWebView %p: in the background %s, web process %d, responsive %s, in a window %s, hidden %s\n",
+		say("hakios: layers%s: a WKWebView %p: in the background %s, web process %d, responsive %s, in a window %s, hidden %s\n",
 		    layers_of, (void *)view, class_respondsToSelector(object_getClass(view), background) ?
 		    (SEND(BOOL, view, "_isBackground") ? "YES" : "no") : "?", class_respondsToSelector(object_getClass(view), pid) ?
 		    SEND(int, view, "_webProcessIdentifier") : -1, class_respondsToSelector(object_getClass(view), responsive) ?
@@ -822,7 +822,7 @@ web_views(id view, int depth)
 	}
 }
 
-static int layers_wallpaper_only;      /* com.redwood.wallpaper_layers: the windows whose class says Wallpaper alone */
+static int layers_wallpaper_only;      /* com.hakios.wallpaper_layers: the windows whose class says Wallpaper alone */
 
 static void
 layers(void)
@@ -834,9 +834,9 @@ layers(void)
 	id authentication = application && class_respondsToSelector(object_getClass(application),
 	    sel_registerName("authenticationController")) ? SEND(id, application, "authenticationController") : NULL;
 
-	say("redwood: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
+	say("hakios: layers%s: %ld windows\n", layers_of, windows ? SEND(long, windows, "count") : 0L);
 	if (authentication != NULL) {
-		say("redwood: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
+		say("hakios: layers: the user is %sauthenticated, %s passcode, the display %sin secure mode\n",
 		    SEND(BOOL, authentication, "isAuthenticated") ? "" : "NOT ", SEND(BOOL, authentication, "hasPasscodeSet") ? "a" : "no",
 		    SEND(BOOL, authentication, "inSecureDisplayMode") ? "" : "not ");
 	}
@@ -848,28 +848,28 @@ layers(void)
 		id scene = class_respondsToSelector(object_getClass(w), sel_registerName("windowScene")) ? SEND(id, w, "windowScene") : NULL;
 		id context = class_respondsToSelector(object_getClass(w), sel_registerName("_boundContext")) ? SEND(id, w, "_boundContext") : NULL;
 
-		say("redwood: layers%s: window %s level %g, context %#x (%ssecure, %u commits), scene %s (activation state %ld)\n",
+		say("hakios: layers%s: window %s level %g, context %#x (%ssecure, %u commits), scene %s (activation state %ld)\n",
 		    layers_of, object_getClassName(w), SEND(double, w, "windowLevel"), context ? SEND(unsigned, context, "contextId") : 0,
 		    context && SEND(BOOL, context, "isSecure") ? "" : "not ", context ? (unsigned)SEND(unsigned long long, context, "commitId") : 0,
 		    scene ? text_of(SEND(id, scene, "_persistenceIdentifier")) : "none", scene ? SEND(long, scene, "activationState") : -1L);
 		layer_line(SEND(id, w, "layer"), "", 1);
 	}
 	if (application != NULL) {
-		say("redwood: layers%s: the application's state %ld (0 active, 1 inactive, 2 in the background)\n", layers_of,
+		say("hakios: layers%s: the application's state %ld (0 active, 1 inactive, 2 in the background)\n", layers_of,
 		    SEND(long, application, "applicationState"));
 	}
 	for (long i = 0; windows != NULL && i < SEND(long, windows, "count"); i++) {
 		web_views(SEND1(id, windows, "objectAtIndex:", long, i), 0);
 	}
-	say("redwood: layers%s: end\n", layers_of);
+	say("hakios: layers%s: end\n", layers_of);
 }
 
 /*
- * The status bar, at a scale the iPhone X never had. UIKit picks the status bar's visual provider by
+ * The status bar, at a scale the reference phone never had. UIKit picks the status bar's visual provider by
  * the screen's width in pixels (+visualProviderSubclassForScreen:visualProviderInfo:: Split1125 for
- * the iPhone X's 1125, Split828, Split1170 ...); the port's display at fbscale=2 is 750 pixels wide,
+ * the reference phone's 1125, Split828, Split1170 ...); the port's display at fbscale=2 is 750 pixels wide,
  * which none of them is, and the answer is _UIStatusBarVisualProvider_Fallback, the red bar that says
- * "rdar://45025538". Where that is the answer, the iPhone X's own provider is given instead: the
+ * "rdar://45025538". Where that is the answer, the reference phone's own provider is given instead: the
  * layout is the same, in points. Boot-arg sb_statusbar=0: left as UIKit has it.
  */
 static void keep_line(const char *format, ...) __printflike(1, 2);
@@ -885,7 +885,7 @@ provider_for_screen(id self, SEL selector, id screen, id info)
 
 	if ((answer == Nil || strstr(class_getName(answer), "Fallback") != NULL) && iphone_x != Nil) {
 		if (!said++) {
-			keep_line("redwood: status bar: %s for this screen; the iPhone X's provider instead",
+			keep_line("hakios: status bar: %s for this screen; the reference phone's provider instead",
 			    answer ? class_getName(answer) : "none");
 		}
 		return iphone_x;
@@ -907,24 +907,24 @@ status_bar_provider(void)
 		if (method != NULL) {
 			original_provider_for_screen = (Class (*)(id, SEL, id, id))method_setImplementation(method,
 			    (IMP)provider_for_screen);
-			keep_line("redwood: status bar: +[%s visualProviderSubclassForScreen:visualProviderInfo:] replaced", owners[i]);
+			keep_line("hakios: status bar: +[%s visualProviderSubclassForScreen:visualProviderInfo:] replaced", owners[i]);
 			return;
 		}
 	}
-	keep_line("redwood: status bar: no class answers visualProviderSubclassForScreen:visualProviderInfo:");
+	keep_line("hakios: status bar: no class answers visualProviderSubclassForScreen:visualProviderInfo:");
 }
 
 /*
- * The wallpaper, where PosterBoard cannot draw it. On iOS 16 the wallpaper is a poster that
+ * The wallpaper, where PosterBoard cannot draw it. On this system release the wallpaper is a poster that
  * PosterBoard's extensions draw live and SpringBoard hosts; on a phone without Metal for the window
- * server (the Infinix: CollectionsPoster runs, nothing of it reaches the screen) the space behind
- * the icons stays black. /redwood/share/wallpaper.jpg -- the iOS 16 wallpaper drawn on a Mac by
+ * server (the first phone: CollectionsPoster runs, nothing of it reaches the screen) the space behind
+ * the icons stays black. /hakios/share/wallpaper.jpg -- the this system release wallpaper drawn on a Mac by
  * tools/render-ca-wallpaper.m from the very .ca packages the phone has -- is put there instead:
  * into the layer of every window whose class says Wallpaper, or, where there is none, as the
- * bottom layer of the home screen's window. Said once (and kept, kern.redwood.say) which it was.
+ * bottom layer of the home screen's window. Said once (and kept, kern.hakios.say) which it was.
  * Boot-arg sb_wallpaper=0: not at all.
  */
-#define REDWOOD_WALLPAPER "/redwood/share/wallpaper.jpg"
+#define HAKIOS_WALLPAPER "/hakios/share/wallpaper.jpg"
 
 static void
 keep_line(const char *format, ...)
@@ -935,7 +935,7 @@ keep_line(const char *format, ...)
 	va_start(ap, format);
 	vsnprintf(line + 1, sizeof(line) - 1, format, ap);
 	va_end(ap);
-	sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 }
 
 static void
@@ -954,14 +954,14 @@ put_wallpaper(int attempt)
 		return;
 	}
 	if (image == NULL) {
-		id path = (id)CFStringCreateWithCString(NULL, REDWOOD_WALLPAPER, kCFStringEncodingUTF8);
+		id path = (id)CFStringCreateWithCString(NULL, HAKIOS_WALLPAPER, kCFStringEncodingUTF8);
 
 		image = SEND1(id, objc_getClass("UIImage"), "imageWithContentsOfFile:", id, path);
 		if (image != NULL) {
 			SEND(id, image, "retain");
 		}
 		if (image == NULL) {
-			keep_line("redwood: wallpaper: %s does not load", REDWOOD_WALLPAPER);
+			keep_line("hakios: wallpaper: %s does not load", HAKIOS_WALLPAPER);
 			done = 1;
 			return;
 		}
@@ -988,7 +988,7 @@ put_wallpaper(int attempt)
 			SEND1(void, layer, "setContents:", id, cg);
 			SEND1(void, layer, "setContentsGravity:", id, (id)CFSTR("resizeAspectFill"));
 			SEND1(void, root, "addSublayer:", id, layer);
-			keep_line("redwood: wallpaper: on top in window %s, level %g, %s, alpha %g, %ld layers under it, %gx%g", name,
+			keep_line("hakios: wallpaper: on top in window %s, level %g, %s, alpha %g, %ld layers under it, %gx%g", name,
 			    SEND(double, w, "windowLevel"), SEND(BOOL, w, "isHidden") ? "HIDDEN" : "shown", SEND(double, w, "alpha"),
 			    sublayers ? SEND(long, sublayers, "count") : 0L, bounds.w, bounds.h);
 			put++;
@@ -1008,14 +1008,14 @@ put_wallpaper(int attempt)
 			SEND1(void, layer, "setContentsGravity:", id, (id)CFSTR("resizeAspectFill"));
 			SEND1(void, layer, "setZPosition:", double, -1000.0);
 			((void (*)(id, SEL, id, unsigned))objc_msgSend)(root, sel_registerName("insertSublayer:atIndex:"), layer, 0);
-			keep_line("redwood: wallpaper: no wallpaper window; under window %s, %gx%g", name, bounds.w, bounds.h);
+			keep_line("hakios: wallpaper: no wallpaper window; under window %s, %gx%g", name, bounds.w, bounds.h);
 			put++;
 		}
 	}
 	if (put != 0 || attempt >= 6) {
 		if (put == 0) {
 			for (long i = 0; i < count; i++) {
-				keep_line("redwood: wallpaper: none put; window %s", object_getClassName(SEND1(id, windows, "objectAtIndex:", long, i)));
+				keep_line("hakios: wallpaper: none put; window %s", object_getClassName(SEND1(id, windows, "objectAtIndex:", long, i)));
 			}
 		}
 		done = 1;
@@ -1027,9 +1027,9 @@ put_wallpaper(int attempt)
 }
 
 /*
- * The switcher of running applications, on the notification com.redwood.switcher (rwtouch notify).
+ * The switcher of running applications, on the notification com.hakios.switcher (rwtouch notify).
  * A drag up from the bottom edge is the way to it on a phone, but the touches a script puts in do
- * not reach iOS's system gestures -- nothing comes of such a drag, not even going home -- and two
+ * not reach the system's system gestures -- nothing comes of such a drag, not even going home -- and two
  * presses of the home button only go home (there is no home button on a phone of this shape, and
  * what is sent as one goes home and no more). SpringBoard opens it itself for anything that is
  * not a gesture (a hardware keyboard, accessibility): SBMainSwitcherControllerCoordinator, which
@@ -1052,11 +1052,11 @@ switcher(void)
 	Method method = shared != NULL ? class_getInstanceMethod(object_getClass(shared), activate) : NULL;
 
 	if (method == NULL) {
-		say("redwood: the switcher: %s has no %s\n",
+		say("hakios: the switcher: %s has no %s\n",
 		    coordinator != NULL ? "SBMainSwitcherControllerCoordinator" : "nothing", sel_getName(activate));
 		return;
 	}
-	say("redwood: the switcher: opening it (%s, %s)\n", object_getClassName(shared),
+	say("hakios: the switcher: opening it (%s, %s)\n", object_getClassName(shared),
 	    method_getTypeEncoding(method) != NULL ? method_getTypeEncoding(method) : "?");
 	/*
 	 * It answers whether it took the request. The source is an analytics label and not every one
@@ -1069,7 +1069,7 @@ switcher(void)
 	for (long source = 0; source < 10; source++) {
 		BOOL taken = ((BOOL (*)(id, SEL, long, BOOL))objc_msgSend)(shared, activate, source, NO);
 
-		say("redwood: the switcher: from source %ld: %s\n", source, taken ? "taken" : "refused");
+		say("hakios: the switcher: from source %ld: %s\n", source, taken ? "taken" : "refused");
 		if (taken) {
 			return;
 		}
@@ -1082,10 +1082,10 @@ switcher(void)
  * layer's opacity is below 1, the window server's OpenGL ES renderer draws the vibrant glyphs in it
  * from a flattened copy that lacks the strokes composited against what is behind them, and draws them
  * whole only at full opacity: the strokes of the media controls, orientation lock, screen mirroring
- * and Focus came in only when the springs had settled, at the end of the presentation. (On an iPhone
+ * and Focus came in only when the springs had settled, at the end of the presentation. (On a reference phone
  * they are whole all along.) So in Control Center's window an opacity animation is replaced with an
  * eased-out fade of cc_fade=MS between the same values: the modules still fade in and out, and are at
- * full opacity, glyphs whole, after a few frames. Off by default (iOS's own animations stay as they
+ * full opacity, glyphs whole, after a few frames. Off by default (the system's own animations stay as they
  * are; the real fix belongs in the drawing, not in the animations): a workaround, for checks only.
  */
 #define CC_FADE_MS      0
@@ -1131,7 +1131,7 @@ add_animation_cc(id self, SEL selector, id animation, id key)
 		SEND1(void, fade, "setDuration:", double, cc_fade_s);
 		SEND1(void, fade, "setTimingFunction:", id, ease);
 		if (cc_fades++ < 3) {
-			say("redwood: Control Center: an opacity animation of %.3f s (%s) made a fade of %.3f s\n",
+			say("hakios: Control Center: an opacity animation of %.3f s (%s) made a fade of %.3f s\n",
 			    SEND(double, animation, "duration"), object_getClassName(animation), cc_fade_s);
 		}
 		animation = fade;
@@ -1159,31 +1159,31 @@ control_center_fades(const char *arguments)
  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
  */
-#define REDWOOD_TWEAK_LOADER    "/redwood/lib/libredwood-tweaks.dylib"
+#define HAKIOS_TWEAK_LOADER    "/hakios/lib/libhakios-tweaks.dylib"
 /* ... and its copy in the system image (userland/build.sh): the boot partition of a test build has no room for it */
-#define REDWOOD_TWEAK_LOADER_SYSTEM "/usr/lib/redwood/libredwood-tweaks.dylib"
+#define HAKIOS_TWEAK_LOADER_SYSTEM "/usr/lib/hakios/libhakios-tweaks.dylib"
 
 static void
 load_tweaks(void)
 {
 	struct stat st;
-	const char *loader = REDWOOD_TWEAK_LOADER;
+	const char *loader = HAKIOS_TWEAK_LOADER;
 
 	if (stat("/var/jb/usr/lib/TweakInject", &st) != 0) {
 		return;                 /* no package manager's prefix here, so no tweaks */
 	}
 	if (stat(loader, &st) != 0) {
-		loader = REDWOOD_TWEAK_LOADER_SYSTEM;
+		loader = HAKIOS_TWEAK_LOADER_SYSTEM;
 	}
 	char line[300];
 
 	if (dlopen(loader, RTLD_NOW | RTLD_GLOBAL) == NULL) {
-		snprintf(line, sizeof(line), "redwood: the tweak loader %s: %s", loader, dlerror());
+		snprintf(line, sizeof(line), "hakios: the tweak loader %s: %s", loader, dlerror());
 	} else {
-		snprintf(line, sizeof(line), "redwood: tweaks: %s opened", loader);
+		snprintf(line, sizeof(line), "hakios: tweaks: %s opened", loader);
 	}
 	say("%s\n", line);
-	(void)sysctlbyname("kern.redwood.host_keep", NULL, NULL, line, strlen(line));     /* (kept whole for the host) */
+	(void)sysctlbyname("kern.hakios.host_keep", NULL, NULL, line, strlen(line));     /* (kept whole for the host) */
 }
 
 /*
@@ -1216,7 +1216,7 @@ say_the_fault(int signal_number, siginfo_t *info, void *context_in)
 		used += (size_t)snprintf(frames + used, sizeof(frames) - used, " %#lx", ret - slide);
 		fp = next > fp ? next : 0;
 	}
-	say("redwood: SpringBoard: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
+	say("hakios: SpringBoard: signal %d at %p, pc %#lx, lr %#lx, called from%s (unslid)\n", signal_number,
 	    info != NULL ? info->si_addr : NULL, pc - slide, lr - slide, frames);
 	if (strcmp(getprogname(), "SpringBoard") != 0 && context != NULL && context->uc_mcontext != NULL) {
 		/* in another program (a poster's): by symbol, and kept to the end of the log */
@@ -1282,7 +1282,7 @@ hang_watch(__unused void *argument)
 	uint32_t seen = 0;
 	unsigned quiet = 0, told = 0;
 
-	pthread_setname_np("redwood hang watch");
+	pthread_setname_np("hakios hang watch");
 	while (told < 2) {
 		dispatch_async(dispatch_get_main_queue(), ^{
 			sb_heartbeat++;
@@ -1411,7 +1411,7 @@ prof_thread(void *argument)
 	uint64_t end;
 	mach_timebase_info_data_t base;
 
-	pthread_setname_np("redwood profiler");
+	pthread_setname_np("hakios profiler");
 	sleep(delay);
 	mach_timebase_info(&base);
 	end = mach_absolute_time() + 10ULL * NSEC_PER_SEC * base.denom / base.numer;
@@ -1526,7 +1526,7 @@ poster_log(void)
 }
 
 /*
- * The wallpaper for a screen of 375 x 812 points at scale 2. iOS 16's (7400, WWDC 2022) is there for
+ * The wallpaper for a screen of 375 x 812 points at scale 2. this system release's (7400, WWDC 2022) is there for
  * 375w-812h@3x, 393w-852h@3x and 430w-932h@3x only (the "logicalScreenClass" of each bundle's
  * Wallpaper.plist), and WallpaperKit takes no bundle whose class is not the screen's: "No compatible
  * wallpaper found on disk (wallpaperIdentifier: '7400' ...)" in CollectionsPoster and PosterBoard, and the
@@ -1564,7 +1564,7 @@ wallpaper_any_screen_class(void)
  * Camera.app has no icon on the home screen (run 577): SpringBoard's icon model shows an icon whose app has a tag (SBAppTags: "still-camera") only when
  * the tag is in its visible tags, which come from MobileGestalt's answers (venice, arkit, any-telephony, ...), and "still-camera" is not there: this
  * tree's device tree has no /product/camera. (An interposed MGGetBoolAnswer did not reach it: the call is inside the shared cache.) The phone has a
- * camera (/dev/redwood-camera, mtkcam=5): the tag is added to the visible ones, by the model's own call, a few seconds after start and again later.
+ * camera (/dev/hakios-camera, mtkcam=5): the tag is added to the visible ones, by the model's own call, a few seconds after start and again later.
  */
 static void
 show_camera_icon(unsigned seconds)
@@ -1608,7 +1608,7 @@ show_camera_icon(unsigned seconds)
 
 __attribute__((constructor))
 static void
-redwood_springboard_init(void)
+hakios_springboard_init(void)
 {
 	const char *name = getprogname();
 	size_t length = 0;
@@ -1639,12 +1639,12 @@ redwood_springboard_init(void)
 			}
 		}
 		wallpaper_any_screen_class();
-		say("redwood: in %s[%d]: its layers are said on the notification com.redwood.layers\n", name, getpid());
-		notify_register_dispatch("com.redwood.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+		say("hakios: in %s[%d]: its layers are said on the notification com.hakios.layers\n", name, getpid());
+		notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 			layers();
 		});
 		/* and all of them kept, with SpringBoard's wallpaper windows: in a poster's process (INJECT, 27 October) */
-		notify_register_dispatch("com.redwood.wallpaper_layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+		notify_register_dispatch("com.hakios.wallpaper_layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 			say_kept = 1;
 			layers();
 			say_kept = 0;
@@ -1681,7 +1681,7 @@ redwood_springboard_init(void)
 	/*
 	 * Battery hooks on UIDevice: these are the methods every app and SpringBoard itself calls, so
 	 * hooking them here in the SpringBoard process covers both the status bar and any app that
-	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for iOS 16.5 (20F66).
+	 * reads [UIDevice currentDevice].batteryLevel. The addresses are for the system image (20F66).
 	 */
 	original_battery_level = (float (*)(id, SEL))replace_method("UIDevice", "batteryLevel", 0x1897021b0UL, (IMP)battery_level);
 	original_battery_state = (long (*)(id, SEL))replace_method("UIDevice", "batteryState", 0x189209794UL, (IMP)battery_state);
@@ -1699,13 +1699,13 @@ redwood_springboard_init(void)
 	    0x1c48c2cf4UL, (IMP)ring_charging_level);
 	battery_lvl = (IMP)original_battery_level;
 	battery_st  = (IMP)original_battery_state;
-	say("redwood: SpringBoard: activation %s, setup assistant %s, application snapshots %s, the side button's long press %s, "
+	say("hakios: SpringBoard: activation %s, setup assistant %s, application snapshots %s, the side button's long press %s, "
 	    "battery level %s, battery state %s, poster switcher %s\n",
 	    activation ? "answered here" : "NOT replaced", original_set_setup_required_reason ? "refused" : "NOT replaced",
 	    snapshot_format ? "as JPEG" : "NOT changed", original_lock_long_press ? "checked" : "NOT checked",
 	    battery_lvl ? "from QG" : "NOT replaced", battery_st ? "from QG" : "NOT replaced",
 	    poster_switcher ? "not offered" : "NOT withheld");
-	say("redwood: battery UI: shows%% %s, set-shows%% %s, bolt %s, chargePercent %s, setChargePercent %s, lockscreen ring %s\n",
+	say("hakios: battery UI: shows%% %s, set-shows%% %s, bolt %s, chargePercent %s, setChargePercent %s, lockscreen ring %s\n",
 	    original_battery_view_shows_percentage ? "ok" : "NO",
 	    original_battery_view_set_shows_percentage ? "ok" : "NO",
 	    original_battery_view_should_show_bolt ? "ok" : "NO",
@@ -1738,7 +1738,7 @@ redwood_springboard_init(void)
 		}
 		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || (arg = strstr(args, "sb_wallpaper=0")) == NULL ||
 		    (arg != args && arg[-1] != ' ')) {
-			if (access(REDWOOD_WALLPAPER, R_OK) == 0) {
+			if (access(HAKIOS_WALLPAPER, R_OK) == 0) {
 				dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 					put_wallpaper(0);
 				});
@@ -1763,24 +1763,24 @@ redwood_springboard_init(void)
 				control_center_fades(arguments);
 			}
 		}
-		say("redwood: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
-		    sysctl_int("kern.redwood.battery_soc"), sysctl_int("kern.redwood.battery_present"),
-		    sysctl_int("kern.redwood.battery_charger_present"), sysctl_int("kern.redwood.battery_charging"));
+		say("hakios: battery: SOC=%d%% battery=%d charger=%d charging=%d\n",
+		    sysctl_int("kern.hakios.battery_soc"), sysctl_int("kern.hakios.battery_present"),
+		    sysctl_int("kern.hakios.battery_charger_present"), sysctl_int("kern.hakios.battery_charging"));
 		battery_post_notifications();
 	});
-	notify_register_dispatch("com.redwood.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		unlock();
 	});
-	notify_register_dispatch("com.redwood.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		layers();
 	});
 	/* the same of the wallpaper's windows alone, kept to the end of the log (the black behind the icons, 27 October) */
-	notify_register_dispatch("com.redwood.wallpaper_layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.wallpaper_layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		layers_wallpaper_only = say_kept = 1;
 		layers();
 		layers_wallpaper_only = say_kept = 0;
 	});
-	notify_register_dispatch("com.redwood.switcher", &token, dispatch_get_main_queue(), ^(__unused int t) {
+	notify_register_dispatch("com.hakios.switcher", &token, dispatch_get_main_queue(), ^(__unused int t) {
 		switcher();
 	});
 	/*
@@ -1789,10 +1789,10 @@ redwood_springboard_init(void)
 	 * failed, or the panel is a FocalTech and the firmware upload is still chewing through
 	 * ~114 KB of SPI (that takes a hot second during bring-up), the user ends up staring at a
 	 * dark lock screen with nothing to swipe. So we just forcibly dismiss it after 10 seconds
-	 * so iOS always lands on the home screen even in the worst case. Harmless if touch is
+	 * so the system always lands on the home screen even in the worst case. Harmless if touch is
 	 * already working: the user just doesn't need to swipe themselves.
 	 * With autounlock=0 among the kernel's arguments the lock screen stays until it is swiped away
-	 * (to show the phone starting the way an iPhone does).
+	 * (to show the phone starting the way a reference phone does).
 	 */
 	{
 		char args[1024] = "";
@@ -1801,7 +1801,7 @@ redwood_springboard_init(void)
 
 		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (arg = strstr(args, "autounlock=0")) != NULL &&
 		    (arg == args || arg[-1] == ' ')) {
-			say("redwood: the lock screen stays until it is swiped away (autounlock=0)\n");
+			say("hakios: the lock screen stays until it is swiped away (autounlock=0)\n");
 			return;
 		}
 	}

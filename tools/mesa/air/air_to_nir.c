@@ -1,5 +1,5 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
@@ -1641,7 +1641,7 @@ argbuf_members(struct air_ctx *c, const struct air_md *sti, const struct air_typ
  * bound at one buffer index, which is how a Vulkan descriptor set reaches
  * Metal through SPIRV-Cross and how an MSL `[[id(n)]]` struct reaches it from
  * Metal itself. 7 620 of Resident Evil 4's 7 879 modules have one and 0 of
- * iOS 16.5's 671 do, so this is the one interface word that is invisible from
+ * the system image 20F66's 671 do, so this is the one interface word that is invisible from
  * Apple's own libraries and is 97% of a game (docs/air.md section 8.2).
  *
  * The parameter does not become a buffer to read: it becomes a pointer of its

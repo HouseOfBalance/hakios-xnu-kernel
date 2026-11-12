@@ -2,7 +2,7 @@
  * What a Metal driver needs from Mesa, and nothing else.
  *
  * Subsystem (1) made an AIR front end inside Mesa; subsystem (2) is making the Metal object
- * graph in userland/src/redwoodmetal.m. They meet here. The measurement that decided the
+ * graph in userland/src/hakiosmetal.m. They meet here. The measurement that decided the
  * shape of this header is in docs/metal.md 10.12: Metal hands a driver one function's LLVM
  * module through -[_MTLFunction bitcodeData], and those bytes are -- checked over all eleven
  * functions of AV1SW.metallib -- exactly what this front end already reads. So the contract
@@ -153,8 +153,8 @@ void rwa_texture_destroy(struct rwa_texture *texture);
  * drawn (docs/metal.md 10.43).
  *
  * `surface_id` is the IOSurface's ID, and it goes where Linux puts a dmabuf file descriptor:
- * the DRM shim of this port takes the ID there already (tools/mesa/redwood-drm: the kernel's
- * kRedwoodSurface answers it), so nothing new is asked of the layers underneath. `offset`
+ * the DRM shim of this port takes the ID there already (tools/mesa/hakios-drm: the kernel's
+ * kHakiosSurface answers it), so nothing new is asked of the layers underneath. `offset`
  * and `row_bytes` are the kernel's own answer about that surface and are NOT asked again
  * here, because freedreno takes both from the caller.
  *
@@ -721,7 +721,7 @@ struct rwa_vertex_layout {
  * THE BLEND STATE: MTLRenderPipelineColorAttachmentDescriptor's other half, and the
  * second thing this contract did not have at all.
  *
- * What the absence looked like. iOS's own window server composites the home screen
+ * What the absence looked like. The system's own window server composites the home screen
  * through this library, and CoreAnimation composites its layers with PREMULTIPLIED
  * ALPHA: a layer's texel holds colour already multiplied by its own coverage, and the
  * pipeline is asked for source-over -- source times one, plus destination times one
@@ -849,7 +849,7 @@ struct rwa_render_shape {
 
 	/*
 	 * MTLRenderPipelineDescriptor.vertexDescriptor, appended for the reason the
-	 * indexed fields of rwa_draw were appended: userland/src/redwoodmetal.m holds a
+	 * indexed fields of rwa_draw were appended: userland/src/hakiosmetal.m holds a
 	 * copy of this struct typed out by hand, and appending leaves every field that
 	 * driver already fills at the offset it already reads. Both still have to be
 	 * rebuilt together.
@@ -868,7 +868,7 @@ struct rwa_render_shape {
 	 * attachment, and APPENDED -- 8 * 32 + 4 = 260 bytes at the END of this struct,
 	 * with every field above it left at the offset it already had.
 	 *
-	 * That is not tidiness. userland/src/redwoodmetal.m holds a copy of this struct
+	 * That is not tidiness. userland/src/hakiosmetal.m holds a copy of this struct
 	 * typed out by hand, and this port has paid twice for a field inserted in the
 	 * MIDDLE of a shared struct: once with a primitive type arriving as 1871292816
 	 * (rwa_draw, see there), and once when struct air_resource grew by eight bytes
@@ -1036,7 +1036,7 @@ void rwa_depth_stencil_destroy(struct rwa_depth_stencil *state);
  *     air_vertex_attribute.base_type is for, and why the frontend keeps INT and UINT
  *     apart although `int4` and `uint4` are the same <4 x i32>.
  *   - MTLVertexFormatInt1010102Normalized, UInt1010102Normalized, and the two formats
- *     the iOS 16.5 SDK has not got at all (FloatRG11B10 = 54 and FloatRGB9E5 = 55):
+ *     the system image 20F66 SDK has not got at all (FloatRG11B10 = 54 and FloatRGB9E5 = 55):
  *     every one of those is several channels packed into one word, and the pixel format
  *     table in air_metal.c declines packed formats for the reason spelled out there --
  *     Metal's channel order and Gallium's are two conventions and a mistake between them
@@ -1262,7 +1262,7 @@ struct rwa_draw {
 	unsigned vertex_start, vertex_count;
 
 	/* The indexed forms. Appended rather than placed beside `primitive` on purpose:
-	 * userland/src/redwoodmetal.m holds a copy of this struct typed out by hand, and
+	 * userland/src/hakiosmetal.m holds a copy of this struct typed out by hand, and
 	 * appending leaves every field that driver already fills at the offset it already
 	 * reads. Both still have to be rebuilt together -- a driver compiled against one
 	 * shape of this struct calling a library built with the other read a primitive

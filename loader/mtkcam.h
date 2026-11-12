@@ -1,7 +1,7 @@
 /*
  * Camera probe, stage 0 (tools/cam-probe.sh): read only. Nothing of the camera is switched on.
  *
- * What the camera needs on this phone was read off Android's own bring-up (docs/camera-x6826b.md):
+ * What the camera needs on this phone was read off Android's own bring-up (the first phone's journal (camera)):
  * the PMIC rails, the GPIO pins, the clock gates. What is not known yet, and what this prints so it
  * can be known without guessing: which pins carry the I2C buses (the GPIO mode registers say),
  * and the state of the I2C controller (its registers, with its clocks open). The only writes are
@@ -35,7 +35,7 @@
 #define CAM_I2C4_BASE           HAKIOS_SOC_I2C4   /* main camera's bus (Android: i2c-4) */
 #define CAM_I2C2_BASE           HAKIOS_SOC_I2C2   /* second camera's bus (Android: i2c-2) */
 
-/* what Android writes to open the I2C clocks (docs/camera-x6826b.md): a bit in a "clear" register */
+/* what Android writes to open the I2C clocks (the first phone's journal (camera)): a bit in a "clear" register */
 #define CAM_CFG6                0xa0            /* CLK_CFG_6: bit 7 is i2c_sel's power-down bit */
 #define CAM_CFG6_SET            0xa4
 #define CAM_CFG6_CLR            0xa8
@@ -102,7 +102,7 @@ static void cam_i2c_dump(const char *name, uint64_t base)
 
 #if CAM_POWER
 /*
- * Stage 1: switch the main camera on in the order Android does (docs/camera-x6826b.md), read the
+ * Stage 1: switch the main camera on in the order Android does (the first phone's journal (camera)), read the
  * sensor's ID over I2C, and switch it all off again. Every step is named before it is taken; whatever
  * a check does not like stops the sequence and the cleanup runs from there. VCAMD's voltage is the
  * one that matters: LK leaves its register at 0x0600, Android writes 0x0500 (1.1 V) before it enables
@@ -872,7 +872,7 @@ down:
 /*
  * Stage 2: the camera subsystem (CAM) on, its receiver registers read as the hardware leaves them, and off again.
  * The sequences are the kernel's own: spm_mtcmos_ctrl_cam_pwr and spm_mtcmos_ctrl_cam_bus_prot, read out of the
- * running Android kernel and disassembled (docs/camera-x6826b.md). The same code for the GPU gave the values this
+ * running Android kernel and disassembled (the first phone's journal (camera)). The same code for the GPU gave the values this
  * loader already uses for it. Every step is named before it is taken, every wait has a time limit.
  */
 #define CAM_SPM_BASE            HAKIOS_SOC_SPM

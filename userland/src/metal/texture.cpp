@@ -2,7 +2,7 @@
  * A texture: the compiler library's (struct rwa_texture), its shape, and the two roads between it and
  * an IOSurface the Mali cannot hand over as GPU memory -- copied IN from a surface another process
  * draws, copied BACK into a surface the window server shows. Which thread does the copying, and what
- * is said when it fails, is the plug-in's (RedwoodMetalTexture in src/redwoodmetal.m).
+ * is said when it fails, is the plug-in's (HakiosMetalTexture in src/hakiosmetal.m).
  */
 #include "rwm.h"
 
@@ -116,7 +116,7 @@ covers(IOSurfaceRef surface, const plane &p, size_t bytes, size_t rows)
 	return end <= alloc;
 }
 
-/* the bytes of a texel of the formats the plug-in copies a surface into (RedwoodMetalDevice's import:
+/* the bytes of a texel of the formats the plug-in copies a surface into (HakiosMetalDevice's import:
  * MTLPixelFormatBGRA8Unorm, its sRGB twin, RGBA8Unorm, RG8Unorm, R8Unorm), 0 for any other */
 size_t
 texel_bytes(unsigned format)
@@ -282,7 +282,7 @@ rwm_texture_copy_in(struct rwm_texture *texture, size_t *bytes, char *why, size_
 
 /*
  * The copy-BACK road, for a GPU whose kernel driver cannot hand an IOSurface over as GPU memory (the
- * Mali's: there is no RedwoodGPU service, which is what kRedwoodSurface lives on). The texture is then
+ * Mali's: there is no HakiosGPU service, which is what kHakiosSurface lives on). The texture is then
  * the library's own, and what was drawn into it goes into the surface's memory at the end of each
  * command buffer that drew into it -- the one copy the drawable path exists to save, paid so that the
  * window server's frames reach the display at all.

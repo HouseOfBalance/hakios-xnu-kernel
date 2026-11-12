@@ -11,7 +11,7 @@
 #include <dispatch/dispatch.h>
 #include <stdio.h>
 
-/* libxpc's, which the iOS SDK has no header for (it is in libSystem all the same) */
+/* libxpc's, which the system's SDK has no header for (it is in libSystem all the same) */
 typedef void *xpc_object_t;
 typedef xpc_object_t xpc_connection_t;
 typedef const struct _xpc_type_s *xpc_type_t;

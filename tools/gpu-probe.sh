@@ -18,7 +18,7 @@ fastboot -s $S reboot >/dev/null 2>&1
 echo "waiting for Android, to ask it for the probe..."
 for i in $(seq 1 100); do [ "$(adb -s $S get-state 2>/dev/null)" = device ] && break; sleep 3; done
 sleep 5
-adb -s $S shell 'su -c "printf DARWIN-REDWOOD:GPU-PROBE > /dev/pmsg0"'
+adb -s $S shell 'su -c "printf HAKIOS:GPU-PROBE > /dev/pmsg0"'
 adb -s $S reboot
 sleep 15
 for i in $(seq 1 100); do [ "$(adb -s $S get-state 2>/dev/null)" = device ] && break; sleep 3; done

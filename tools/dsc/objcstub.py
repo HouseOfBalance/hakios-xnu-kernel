@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """usage: tools/dsc/objcstub.py ADDR... -- the selector an objc_msgSend stub (adrp x1; ldr x1,[x1,#off]; adrp x16; ldr x16; br) of the
-iOS 16.5 cache sends."""
+the system image 20F66 cache sends."""
 import struct, sys
 sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
 import dsc

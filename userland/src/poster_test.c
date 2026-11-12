@@ -1,8 +1,8 @@
 /*
  * poster_test [SECONDS]: what there is of the wallpaper, for a run nobody watches -- after SECONDS
  * (default 150), so that it comes at the end of the log that is kept: the processes that draw it
- * (PosterBoard, PaperBoard, the poster extensions) and the directories of /var where iOS keeps it,
- * with what is in them a few levels down. On iOS 16 the wallpaper is drawn by PosterBoard and its
+ * (PosterBoard, PaperBoard, the poster extensions) and the directories of /var where the system keeps it,
+ * with what is in them a few levels down. On this system release the wallpaper is drawn by PosterBoard and its
  * extensions, and hosted into SpringBoard's layers; here the screen is black behind the icons.
  */
 #include <CoreFoundation/CoreFoundation.h>
@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 
-/* A line into the kernel's log (kern.redwood.say): a job's own output is kept nowhere. */
+/* A line into the kernel's log (kern.hakios.say): a job's own output is kept nowhere. */
 static void
 say(const char *format, ...)
 {
@@ -28,7 +28,7 @@ say(const char *format, ...)
 	n = vsnprintf(line, sizeof(line), format, ap);
 	va_end(ap);
 	if (n > 0) {
-		sysctlbyname("kern.redwood.say", NULL, NULL, line, strlen(line));
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 	}
 }
 

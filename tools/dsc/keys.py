@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """usage: tools/dsc/keys.py DISASM.s START END  -- the Objective-C selectors and the CFString constants (loaded through the image's GOT: adrp x8; ldr x8,[x8,#n];
-ldr x2,[x8]) a function of the iOS 16.5 cache sends and names, in order. For finding which property keys a piece of CMCapture asks for."""
+ldr x2,[x8]) a function of the system image 20F66 cache sends and names, in order. For finding which property keys a piece of CMCapture asks for."""
 import re, struct, sys
 sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
 import dsc

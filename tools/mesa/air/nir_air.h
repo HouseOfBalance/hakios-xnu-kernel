@@ -1,11 +1,11 @@
 /*
- * Copyright © 2026 Darwin on redwood contributors
+ * Copyright © 2026 Darwin on hakios contributors
  * SPDX-License-Identifier: MIT
  */
 
 /*
  * AIR -> NIR: Metal shaders (the LLVM bitcode inside a .metallib) into NIR.
- * See docs/air.md of Darwin on redwood for the design and the mapping
+ * See docs/air.md of Darwin on hakios for the design and the mapping
  * tables this follows.
  */
 

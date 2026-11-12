@@ -4,7 +4,7 @@
  *   two planes     YCbCr 4:2:0 read and never drawn into: copied into an RGBA8 texture of the library's;
  *   copy in        read and never drawn into, one plane of 80, 81, 70, 30 or 10: copied into one of its own;
  *   copy back      BGRA8 drawn into: the library's own texture, copied into the surface after each command
- *                  buffer that draws into it (the Mali's road: no RedwoodGPU service to lay one over).
+ *                  buffer that draws into it (the Mali's road: no HakiosGPU service to lay one over).
  * Each kind of surface asked for is said once in the kernel's kept lines, and whether it came: a widget is
  * another process's surface, and one that did not come is a layer drawn with nothing (24 October).
  */
@@ -20,7 +20,7 @@ namespace {
 void
 say(const char *line)
 {
-	sysctlbyname("kern.redwood.say", NULL, NULL, (void *)line, strlen(line));
+	sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
 }
 
 /* the first, second, fourth, eighth... time a site says it (as the plug-in's RW_AGAIN) */
@@ -74,7 +74,7 @@ tell_kind(IOSurfaceRef s, unsigned plane, const struct rwa_texture_shape &shape,
 } // namespace
 
 /*
- * The formats CoreAnimation's Metal renderer picks for a display it believes is extended-range (the iPhone
+ * The formats CoreAnimation's Metal renderer picks for a display it believes is extended-range (the reference phone
  * X's): Apple's private 5xx values beside BGRA10_XR (552), which no public SDK names and the compiler
  * library refuses as unknown. This panel is 8-bit BGRA, so they are made BGRA8Unorm (80), and said once.
  */

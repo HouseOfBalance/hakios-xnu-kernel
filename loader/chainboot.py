@@ -70,7 +70,7 @@ def main():
     hdr[576:608] = pad(sha.digest(), 32)
 
     img = bytes(hdr) + pad(new_kernel, page) + pad(ramdisk, page) + pad(second, page) + pad(rdo, page) + pad(dtb, page)
-    # boot_a on the X6826B is 32 MB: an image any larger is refused by fastboot, and a script that
+    # boot_a on the first phone is 32 MB: an image any larger is refused by fastboot, and a script that
     # sends fastboot's output nowhere would carry on as if it had been flashed
     if len(img) > BOOT_PARTITION:
         raise SystemExit(f'{out}: {len(img)} bytes, more than the {BOOT_PARTITION} of the boot partition '

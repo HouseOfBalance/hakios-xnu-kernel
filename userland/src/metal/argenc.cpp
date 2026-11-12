@@ -4,7 +4,7 @@
  * compiler library instead, and the draw binds every member the pipeline's shaders declare (docs/air.md 8.2).
  * The layout is the set's -- a shader's, or one the application described -- and the destination the buffer
  * -setArgumentBuffer:offset: named; which objects are the driver's own, and keeping the buffer alive, is the
- * plug-in's (RedwoodMetalArgumentEncoder).
+ * plug-in's (HakiosMetalArgumentEncoder).
  */
 #include "rwm.h"
 
