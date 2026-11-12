@@ -44,6 +44,11 @@ Things to know:
   under `overlay/`, changed topic patches. A changed file of Apple's that no line of `patches/series`
   claims stops the export: give it a topic there.
 
+`kernel/syntax-check.sh --tree ../xnu-8796-hakios` (or `make syntax-check`) puts every C file of
+the overlay through the machine's clang with `-fsyntax-only` and the format check, in about ten
+seconds instead of a kernel build; `kernel/syntax-check.skip` lists the few files that need the real
+build's generated headers.
+
 `kernel/verify.sh` checks that the release assembles and that exporting the result gives back exactly
 what is committed. `kernel/import-patch.sh` takes a patch written against a tree. `kernel/assemble.sh
 --update` never runs over work in the tree that was not exported.

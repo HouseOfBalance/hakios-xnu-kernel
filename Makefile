@@ -14,6 +14,7 @@ help:
 	@echo "make lint           syntax of every shell and Python script, shellcheck, nothing unpublishable"
 	@echo "make boards         validate the device packages and soc/, write what the code is built with (build/boards)"
 	@echo "make verify-kernel  Apple's release + overlay + patches assemble and export back unchanged (network)"
+	@echo "make syntax-check   every overlay file through clang -fsyntax-only, in seconds (TREE=../xnu-8796-hakios)"
 	@echo "make kernel         build the kernel (kernel/build.sh; docs/building.md says what it needs)"
 	@echo "make loader         build the loader for the phone whose package is here (loader/build.sh)"
 
@@ -32,6 +33,11 @@ lint:
 boards:
 	tools/boards.py check
 	tools/boards.py gen
+
+.PHONY: syntax-check
+TREE ?= ../xnu-8796-hakios
+syntax-check:
+	kernel/syntax-check.sh --tree $(TREE)
 
 .PHONY: boards-check
 boards-check:
