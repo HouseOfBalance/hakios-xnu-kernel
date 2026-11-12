@@ -11,6 +11,9 @@ adb -s $S shell 'su -c "ls -l /dev/block/by-name/xnusys"' || {
 	echo "xnusys not there: reboot once so the kernel rereads the partition table"; exit 1; }
 # Through a file on /data: piping into dd over "adb exec-in su -c" silently drops most of it.
 TMP=/data/local/tmp/system.apfs
+# the last 96 MiB of the partition are the payload's (tools/payload-flash.sh): an image that reaches them is refused
+BYTES=$(adb -s $S shell "su -c 'blockdev --getsize64 /dev/block/by-name/xnusys'" | tr -d '\r')
+[ "$(wc -c < "$IMG")" -le $((BYTES - 96 * 1024 * 1024)) ] || { echo "the image reaches the partition's last 96 MiB (the payload's)"; exit 1; }
 echo "sending $(du -h "$IMG" | cut -f1) to the phone..."
 adb -s $S push "$IMG" $TMP
 echo "writing it to xnusys..."

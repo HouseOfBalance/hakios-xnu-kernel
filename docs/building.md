@@ -79,6 +79,23 @@ The log keeps its last 256 KB, so a picture wider than the default 60 pixels, or
   them with macOS's `codesign`.
 - `lsd` fills the log with `denied attempt to escape CPU monitor`, twenty lines a second. It is harmless and it is why the log's beginning is lost.
 
+## The payload in the system partition instead of boot_a
+
+`boot_a` holds Android's own kernel and ramdisk besides ours; on the first phone it is 32 MB, and with
+the kernel and the small root in it 2 MB were left. With `HAKIOS_PAYLOAD=flash` the boot image carries
+only the loader in front of Android (23.9 MB on the first phone), and the payload goes into the last
+96 MiB of the system partition, written and read back by `tools/payload-flash.sh` (the run cycle calls
+it). The loader reads it from there (1.6 s for 19 MB), checks its sum and starts it; a missing or
+damaged one sends the phone to Android, as a boot image without a payload always did.
+
+```sh
+HAKIOS_PAYLOAD=flash XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh
+```
+
+`tools/system-flash.sh` refuses a system image that would reach those 96 MiB. A loader built before
+this change cannot read the tail: the first such run needs the new loader in `boot_a`, which every run
+of `xnu-cycle.sh` writes anyway.
+
 ## Wi-Fi, Bluetooth and Metal
 
 Each needs more in the images than the plain boot, and the phone's CONNSYS firmware in

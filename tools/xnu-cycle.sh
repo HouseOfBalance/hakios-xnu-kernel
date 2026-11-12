@@ -36,6 +36,11 @@ if [ -n "$WANT" ] && [ "$(adb -s $S get-state 2>/dev/null)" = device ]; then
 fi
 "$ROOT/loader/build.sh" "${TEST_FLAGS[@]}" "$@" >/dev/null
 python3 "$ROOT/loader/build_flashed.py" >/dev/null
+# HAKIOS_PAYLOAD=flash: the payload goes into the system partition's tail (Android is up now), not into boot_a
+if [ "${HAKIOS_PAYLOAD:-}" = flash ]; then
+	[ "$(adb -s $S get-state 2>/dev/null)" = device ] || { echo "xnu-cycle.sh: HAKIOS_PAYLOAD=flash needs Android up"; exit 1; }
+	"$ROOT/tools/payload-flash.sh"
+fi
 [ "$(adb -s $S get-state 2>/dev/null)" = device ] && adb -s $S reboot bootloader
 for i in $(seq 1 120); do fastboot devices | grep -q $S && break; sleep 1; done
 # (fastboot -s waits for ever for a phone that is not there: a run would hang for hours)

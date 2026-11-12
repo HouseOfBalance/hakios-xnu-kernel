@@ -29,6 +29,9 @@ boot ROM -> preloader -> LK (the phone's own, untouched)
 ramoops' pmsg zone, written from Android by `tools/boot-xnu.sh`, and takes it away: the boot after
 XNU is Android again. A kernel that hangs costs a power cycle.
 
+With `HAKIOS_PAYLOAD=flash` the payload is not in `boot_a` but in the last 96 MiB of the system
+partition, and the loader reads it from there ([building.md](building.md)).
+
 What this port does that a `fastboot boot` port does not, and what it costs: it **writes `boot_a`**
 (every run: the loader is built with the run's flags and packed into your own rooted boot image) and
 **a partition for the system image** (once per image). It needs root under Android for three things:

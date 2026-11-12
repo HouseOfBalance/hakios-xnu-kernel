@@ -463,9 +463,90 @@ static const struct payload_header *payload_find(void)
 	return ph;
 }
 
+/*
+ * The payload in the system partition's tail, for a boot image that has none of its own (boot_a holds
+ * Android's kernel and its ramdisk as well, and is 32 MB on the first phone): the last PAYLOAD_TAIL bytes
+ * of SYSTEM_PART, written by tools/payload-flash.sh. The first block is a header -- "HKPL", version 1,
+ * the payload's size, a Fletcher-64 of its 32-bit words -- and the payload follows it. It is read into
+ * the top of the kernel's own memory, which nothing uses until the kernel and the ramdisk are copied out
+ * of it, and checked before anything of it is believed.
+ */
+#define PAYLOAD_TAIL        (96ULL << 20)
+#define PAYLOAD_FLASH_MAGIC 0x4c504b48u /* "HKPL" */
+#define PAYLOAD_STAGE       (XNU_PHYS_BASE + XNU_MEM_SIZE - (256ULL << 20))
+_Static_assert(XNU_MEM_SIZE > (512ULL << 20), "room at the top of the kernel's memory for a payload");
+
+static uint8_t sector_buf[512] __attribute__((aligned(16)));
+static int gpt_find(const char *name, uint64_t *lba, uint64_t *blocks);
+
+static uint64_t fletcher64(const volatile uint32_t *w, uint64_t words)
+{
+	uint64_t a = 0, b = 0;
+
+	for (uint64_t i = 0; i < words; i++) {
+		a = (a + w[i]) % 0xffffffffu;
+		b = (b + a) % 0xffffffffu;
+	}
+	return (b << 32) | a;
+}
+
+static const struct payload_header *payload_from_flash(void)
+{
+	uint64_t lba, blocks;
+	volatile uint32_t *head = (volatile uint32_t *)sector_buf;
+
+	if (!gpt_find(SYSTEM_PART, &lba, &blocks) || blocks * 512 < 2 * PAYLOAD_TAIL) {
+		out("payload: no " SYSTEM_PART " partition large enough\n");
+		return NULL;
+	}
+	uint64_t at = lba + blocks - PAYLOAD_TAIL / 512;
+	if (!msdc_read(at, 1, sector_buf)) {
+		out("payload: cannot read its header: ");
+		out(msdc_last.what);
+		out("\n");
+		return NULL;
+	}
+	uint64_t size = head[2] | ((uint64_t)head[3] << 32), sum = head[4] | ((uint64_t)head[5] << 32);
+	if (head[0] != PAYLOAD_FLASH_MAGIC || head[1] != 1 || size < 16 || size > PAYLOAD_TAIL - 512 || (size & 3)) {
+		out("payload: none in the tail of " SYSTEM_PART " (tools/payload-flash.sh writes it)\n");
+		return NULL;
+	}
+	out("payload: ");
+	out_dec((uint32_t)(size >> 10));
+	out(" KB from the tail of " SYSTEM_PART " into ");
+	out_hex(PAYLOAD_STAGE);
+	out(": ");
+	uint64_t t0 = dbg_ticks();
+	for (uint64_t done = 0; done < size; ) {
+		uint64_t left = (size - done + 511) / 512;
+		uint32_t n = left > 4096 ? 4096 : (uint32_t)left;   /* 2 MB at a time */
+
+		if (!msdc_read(at + 1 + done / 512, n, (void *)(PAYLOAD_STAGE + done))) {
+			out("failed: ");
+			out(msdc_last.what);
+			out("\n");
+			return NULL;
+		}
+		done += (uint64_t)n * 512;
+	}
+	out_dec((uint32_t)((dbg_ticks() - t0) * 1000 / dbg_freq()));
+	out(" ms; ");
+	if (fletcher64((const volatile uint32_t *)PAYLOAD_STAGE, size / 4) != sum) {
+		out("ITS SUM IS NOT ITS HEADER'S: not used\n");
+		return NULL;
+	}
+	out("sum right\n");
+	const struct payload_header *ph = (const struct payload_header *)PAYLOAD_STAGE;
+	return ph->magic == PAYLOAD_MAGIC && ph->size + sizeof(*ph) <= size ? ph : NULL;
+}
+
 static int parse_payload(struct payload_info *pi)
 {
 	const struct payload_header *ph = payload_find();
+
+	if (!ph) {
+		ph = payload_from_flash();
+	}
 
 	memset(pi, 0, sizeof(*pi));
 	if (!ph) {

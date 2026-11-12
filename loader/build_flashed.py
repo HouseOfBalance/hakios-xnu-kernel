@@ -18,6 +18,8 @@ android = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'backup', 'bo
 if not os.path.isfile(android):
     sys.exit(f'build_flashed.py: no {android}: it is your phone\'s own rooted boot image '
              '(see docs/porting.md, "What the phone must allow"), never in the repository')
+# HAKIOS_PAYLOAD=flash: no payload in the boot image; the loader reads it from the system partition's tail
+# (tools/payload-flash.sh), and boot_a holds only the loader and Android
+payload = [] if os.environ.get('HAKIOS_PAYLOAD') == 'flash' else [os.path.join(ROOT, 'build', 'payload.bin')]
 subprocess.check_call([sys.executable, os.path.join(HERE, 'chainboot.py'), android,
-                       os.path.join(ROOT, 'build', 'loader', 'mtkloader.bin'), os.path.join(ROOT, 'build', 'boot_a.img'),
-                       os.path.join(ROOT, 'build', 'payload.bin')])
+                       os.path.join(ROOT, 'build', 'loader', 'mtkloader.bin'), os.path.join(ROOT, 'build', 'boot_a.img')] + payload)
