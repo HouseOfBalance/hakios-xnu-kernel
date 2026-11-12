@@ -1,13 +1,13 @@
 /*
  * render-ca-wallpaper: a system wallpaper of the layered kind (a .wallpaper directory of .ca packages,
- * as the this system release collections are) drawn into one picture on this Mac, with the Mac's own QuartzCore:
+ * as this system release's collections are) drawn into one picture on this Mac, with the Mac's own QuartzCore:
  * the packages' Background, Foreground and Floating layers, in that order, at the wallpaper's own
  * size. For a phone whose PosterBoard cannot draw them (the first phone, where they want Metal): the
  * picture goes into the image and SpringBoard is handed it (userland/src/inject_sb.c).
  *
  * usage: render-ca-wallpaper WALLPAPER_DIR OUT.jpg [WIDTH HEIGHT [QUALITY]]
  * QUALITY is JPEG's, 0 to 1 (0.82 when not given): the first phone's boot partition has room for some
- * 15 KB of wallpaper, which 375x812 at 0.4 is -- and the this system release ones, all soft gradients, lose
+ * 15 KB of wallpaper, which 375x812 at 0.4 is -- and this system release's ones, all soft gradients, lose
  * nothing to the eye at half the size, SpringBoard scaling them to the screen.
  * build: clang -fobjc-arc -framework Foundation -framework QuartzCore -framework ImageIO
  *        -framework CoreGraphics -o render-ca-wallpaper tools/render-ca-wallpaper.m
@@ -63,7 +63,7 @@ filter_name(id filter)
 
 /*
  * A sublayer whose compositingFilter is sourceAtop draws only where its parent already has alpha:
- * the this system release wallpapers cut the head out of its HEIC that way ("Head Mask.HEIC" holding a
+ * this system release's wallpapers cut the head out of its HEIC that way ("Head Mask.HEIC" holding a
  * "Subtransform" with sourceAtop over "Head.HEIC"). -renderInContext: ignores compositing filters
  * and drew the whole rectangle, so the parent is drawn without them, each of them drawn on its own
  * and laid over with the same blend mode, and the result made the parent's contents.
@@ -118,7 +118,7 @@ flatten_source_atop(CALayer *layer, CGFloat scale)
 }
 
 /*
- * -renderInContext: draws no masks (CALayer's documentation says so), and the this system release wallpapers
+ * -renderInContext: draws no masks (CALayer's documentation says so), and this system release's wallpapers
  * mask their shapes: drawn as they are, a masked shape shows as the rectangle it is cut from. So
  * every masked layer is flattened first, deepest first: the layer and the mask each drawn into a
  * bitmap, the one cut by the other's alpha, and the result put back as the layer's contents with

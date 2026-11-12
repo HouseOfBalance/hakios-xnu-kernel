@@ -918,7 +918,7 @@ status_bar_provider(void)
  * The wallpaper, where PosterBoard cannot draw it. On this system release the wallpaper is a poster that
  * PosterBoard's extensions draw live and SpringBoard hosts; on a phone without Metal for the window
  * server (the first phone: CollectionsPoster runs, nothing of it reaches the screen) the space behind
- * the icons stays black. /hakios/share/wallpaper.jpg -- the this system release wallpaper drawn on a Mac by
+ * the icons stays black. /hakios/share/wallpaper.jpg -- this system release's wallpaper drawn on a Mac by
  * tools/render-ca-wallpaper.m from the very .ca packages the phone has -- is put there instead:
  * into the layer of every window whose class says Wallpaper, or, where there is none, as the
  * bottom layer of the home screen's window. Said once (and kept, kern.hakios.say) which it was.

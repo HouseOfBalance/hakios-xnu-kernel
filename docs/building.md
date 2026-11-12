@@ -115,8 +115,9 @@ QC_METALLIB=<QuartzCore's shaders> tools/image.sh metal && tools/system-flash.sh
 What was seen on 12 November 2026 from this repository: Wi-Fi joined the network given (WPA2, its keys
 in) and Settings showed it ticked; the status bar had the battery's percentage; `bt_test` saw 19 BLE
 devices through CoreBluetooth; with Metal the plug-in `HakiosMetalDevice` was on `IOAcceleratorES` and
-CoreAnimation drew through the GPU, up to 17 frames a second (`35 checks, 4 failed`: the files of init's
-four tests that the Metal image leaves out for room). The pictures come from the job lists'
+CoreAnimation drew through the GPU, up to 17 frames a second with the payload in `boot_a` (`35 checks,
+4 failed`: the files of init's four tests that the cut image leaves out) and up to 40 with the payload in
+the system partition and nothing cut (`36 checks, 0 failed`). The pictures come from the job lists'
 `fbgrab -log NAME`: `python3 tools/fbjpg.py LOG OUT.jpg NAME`.
 
 ## If it does not come back

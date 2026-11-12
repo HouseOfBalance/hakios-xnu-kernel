@@ -323,7 +323,7 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 	mkdir -p root/dev root/private/var
 	mkdir -p root/lib
 	cp obj/libhakios.dylib obj/libhakios-sb.dylib root/lib/
-	# the this system release wallpaper as one picture, for SpringBoard where PosterBoard cannot draw it (src/inject_sb.c,
+	# the wallpaper of this system release as one picture, for SpringBoard where PosterBoard cannot draw it (src/inject_sb.c,
 	# put_wallpaper): drawn on this Mac from the .ca packages of the extracted system, with the Mac's own
 	# QuartzCore (../tools/render-ca-wallpaper.m), and not kept in the repository, being Apple's. Half the
 	# screen's size and JPEG quality 0.4: about 15 KB, what boot_a has room for (SpringBoard scales it up)

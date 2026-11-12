@@ -3132,7 +3132,7 @@ apfs_inflate_counted(struct apfs_nx *nx, const uint8_t *src, size_t src_len, uin
  */
 /*
  * One piece of a compressed file by the file's method: zlib (types 3 and 4) as above;
- * LZBITMAP (13 and 14) -- what the this system release cryptexes use -- by libzbitmap (apfs_zbitmap.c):
+ * LZBITMAP (13 and 14) -- what this system release's cryptexes use -- by libzbitmap (apfs_zbitmap.c):
  * a piece that starts with 'Z' is a stream of it, one whose first byte has its low four bits
  * set is stored after that byte.
  */

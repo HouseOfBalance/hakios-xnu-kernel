@@ -6,9 +6,10 @@
 #   tools/image.sh bluetooth   ... and the key store (bluetoothd keeps its identity in the keychain), bluetoothd and
 #                              BlueTool with our library, src/bt_test.m's scan. Boot args: also connsys_bt=2 aks_keys=1
 #   tools/image.sh metal       the GPU for CoreAnimation: Mesa's panfrost (tools/mk-mesa.sh, built when missing) and the
-#                              Metal device, with the cuts the 32 MB boot partition needs: libOSMesa lives in the system
+#                              Metal device; with the payload in boot_a, the cuts its 32 MB need: libOSMesa lives in the system
 #                              image and the small one has a link to it, the test programs and two unused libraries are
-#                              left out, our libraries are stripped. Boot args: metal=1 fb_queue=1 fb_flip=1.
+#                              left out, our libraries are stripped (init then says 4 checks failed). With HAKIOS_PAYLOAD=flash
+#                              (the payload in the system partition) nothing is cut. Boot args: metal=1 fb_queue=1 fb_flip=1.
 #                              QC_METALLIB=FILE: QuartzCore's shaders in AIR (tools/qc-simlib.py makes it from the
 #                              simulator's QuartzCore; never in the repository)
 #
@@ -38,6 +39,8 @@ bluetooth)
 metal)
 	[ -f ../kernel/deps/build/mesa/out/libOSMesa.8.dylib ] || DRIVERS=softpipe,panfrost ../tools/mk-mesa.sh
 	GL=1 METAL=1 SYSTEM=1 WIFID=1 RC=rc.launchd.metal RC_JOBS=${RC_JOBS:-rc.jobs.metalcheck} LDID=$LDID ./build.sh
+	# with the payload in the system partition (HAKIOS_PAYLOAD=flash) the image is used as it is: nothing is left out
+	if [ "${HAKIOS_PAYLOAD:-}" != flash ]; then
 	for b in hello_dyn cputop apfs_mmap_test battery_test camera_avtest camera_test cg_test child cow_test cpu_test font_test \
 		gl_test keychain_test metal_drv_test metal_test mg_test record_test shm_test snap_test sound_test surf_test svc_test \
 		torch_test vol_ls wifipw_test net_test bt_test; do rm -f root/bin/$b; done
@@ -49,7 +52,8 @@ metal)
 	for f in root/lib/HakiosMetal.bundle/HakiosMetal root/lib/libhakios-gl.dylib root/lib/libhakios.dylib \
 		root/lib/libhakios-sb.dylib root/lib/libhakios-media.dylib; do [ -f "$f" ] && strip -x "$f"; done
 	rm -f root.apfs
-	python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1 ;;
+	python3 ../tools/apfs/mkapfs.py -z --plain fw -o root.apfs hakios=root | tail -1
+	fi ;;
 *) echo "image.sh: wifi, bluetooth or metal" >&2; exit 1 ;;
 esac
 "$ROOT/tools/mkpayload.sh"

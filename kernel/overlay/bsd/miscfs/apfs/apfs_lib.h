@@ -303,7 +303,7 @@ struct apfs_vol {
 	 */
 	bool              hashed_names;
 	/*
-	 * A sealed volume (the this system release cryptexes) keeps its files' extents in a tree of their own,
+	 * A sealed volume (this system release's cryptexes) keeps its files' extents in a tree of their own,
 	 * keyed by stream and offset, rather than among the file-system tree's records.
 	 */
 	struct apfs_btree fext;
