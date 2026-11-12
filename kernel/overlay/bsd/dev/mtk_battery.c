@@ -68,12 +68,22 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 #define APART_HUNDREDTHS        3000
 
 static volatile uint32_t *pwrap;
+#ifdef HAKIOS_MMIO_TEST
+/* a host test of this driver puts a model of the registers behind these (tests/pwrap_model.h) */
+extern uint32_t hakios_test_rd(vm_offset_t address);
+extern void hakios_test_wr(vm_offset_t address, uint32_t value);
+#define pw_rd(at)               hakios_test_rd((vm_offset_t)pwrap + (at))
+#define pw_wr(at, value)        hakios_test_wr((vm_offset_t)pwrap + (at), (value))
+#else
+#define pw_rd(at)               (pwrap[(at) / 4])
+#define pw_wr(at, value)        (pwrap[(at) / 4] = (value))
+#endif
 
 static bool
 pwrap_wait(uint32_t state)
 {
 	for (uint32_t spin = 0; spin < 200000; spin++) {
-		if (PWRAP_FSM(pwrap[PWRAP_WACS2_RDATA / 4]) == state) {
+		if (PWRAP_FSM(pw_rd(PWRAP_WACS2_RDATA)) == state) {
 			return true;
 		}
 	}
@@ -87,10 +97,10 @@ pmic_read(uint32_t reg, uint16_t *value)
 
 	mtk_pwrap_lock();
 	if (pwrap_wait(0)) {
-		pwrap[PWRAP_WACS2_CMD / 4] = (reg >> 1) << 16;
+		pw_wr(PWRAP_WACS2_CMD, (reg >> 1) << 16);
 		if (pwrap_wait(6)) {
-			*value = (uint16_t)pwrap[PWRAP_WACS2_RDATA / 4];
-			pwrap[PWRAP_WACS2_VLDCLR / 4] = 1;
+			*value = (uint16_t)pw_rd(PWRAP_WACS2_RDATA);
+			pw_wr(PWRAP_WACS2_VLDCLR, 1);
 			ok = true;
 		}
 	}
@@ -105,7 +115,7 @@ pmic_write(uint32_t reg, uint16_t value)
 
 	mtk_pwrap_lock();
 	if (pwrap_wait(0)) {
-		pwrap[PWRAP_WACS2_CMD / 4] = (1u << 31) | ((reg >> 1) << 16) | value;
+		pw_wr(PWRAP_WACS2_CMD, (1u << 31) | ((reg >> 1) << 16) | value);
 		ok = pwrap_wait(0);
 	}
 	mtk_pwrap_unlock();

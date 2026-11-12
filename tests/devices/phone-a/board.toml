@@ -2,7 +2,7 @@
 name = "phone-a"
 description = "Stand-in A"
 soc = "mt0001"
-features = ["emmc-msdc", "battery-mt6358", "touch-td4160"]
+features = ["emmc-msdc", "battery-mt6358", "keys-mt6358", "touch-td4160"]
 
 [loader]
 kernel_load = 0x41080000

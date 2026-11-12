@@ -78,4 +78,9 @@ run on the phone showed what.
   channel count to the list's room; `hakios_apple80211.c` holds a network's name and information
   elements to their record; `hakios_sparse.c` checks the header's sizes without a sum that can wrap,
   and refuses a table entry past the image's blocks. Host tests only: not yet run on a phone.
+- `tests/pwrap_model.h`: the PMIC wrapper's WACS2 channel and the MT6358's registers as
+  `mtk_keys.c` and `mtk_battery.c` drive them, through a `HAKIOS_MMIO_TEST` seam in each (the
+  kernel's build is unchanged). `battery_driver_test` (Android's percentage carried by the counter,
+  the voltage alone, the two too far apart, charging, no conversion, a wrapper that never answers)
+  and `keys_driver_test` (volume and power keys, a bounce, a silent PMIC).
 - `kernel/syntax-check.sh` (`make syntax-check`): every overlay file through the host's clang.

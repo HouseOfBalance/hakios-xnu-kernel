@@ -45,7 +45,6 @@ had(int event, int status)
 	return found;
 }
 
-int hakios_wifi_tell(const char *format, ...) { (void)format; return 0; }
 
 /* ---- the radio's driver -------------------------------------------------------------------------------- */
 
@@ -111,6 +110,7 @@ static const struct hakios_sta_ops radio = {
 };
 
 #include "hakios_sta.c"
+int hakios_wifi_tell(const char *format, ...) { (void)format; return 0; }
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

@@ -91,7 +91,7 @@ class Boards(unittest.TestCase):
             again = boards('gen', '--out', out)
             self.assertIn('nothing new', again.stdout)
         self.assertIn('.name = "phone-a"', table)
-        self.assertIn('.features = HAKIOS_HAS_EMMC_MSDC | HAKIOS_HAS_BATTERY_MT6358 | HAKIOS_HAS_TOUCH_TD4160,', table)
+        self.assertIn('.features = HAKIOS_HAS_EMMC_MSDC | HAKIOS_HAS_BATTERY_MT6358 | HAKIOS_HAS_KEYS_MT6358 | HAKIOS_HAS_TOUCH_TD4160,', table)
         self.assertIn('.system_partition = "sysa",', table)
         self.assertIn('.msdc0 = 0x11330000ULL,', table)            # (the made-up chip's, not the MT6768's 0x11230000)
         self.assertIn('.design_uah = 4000000u,', table)

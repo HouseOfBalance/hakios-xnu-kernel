@@ -40,6 +40,13 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 
 static vm_offset_t kpd, pwrap;
 
+#ifdef HAKIOS_MMIO_TEST
+/* a host test of this driver puts a model of the registers behind these (tests/pwrap_model.h) */
+extern uint32_t hakios_test_rd(vm_offset_t address);
+extern void hakios_test_wr(vm_offset_t address, uint32_t value);
+#define rd(base, at)            hakios_test_rd((base) + (at))
+#define wr(base, at, value)     hakios_test_wr((base) + (at), (value))
+#else
 static inline uint32_t
 rd(vm_offset_t base, uint32_t at)
 {
@@ -51,6 +58,7 @@ wr(vm_offset_t base, uint32_t at, uint32_t value)
 {
 	*(volatile uint32_t *)(base + at) = value;
 }
+#endif
 
 static bool
 pwrap_wait(uint32_t state)
