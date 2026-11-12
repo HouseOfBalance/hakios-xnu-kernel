@@ -1,5 +1,5 @@
 /*
- * The touch screen of the first phone (the first phone): an OmniVision TD4160 on SPI2 of the MT6768,
+ * The touch screen of the first phone (an MT6768: devices/x6826b): an OmniVision TD4160 on SPI2 of the MT6768,
  * as a source of touches for /dev/hakios-touch (sys/hakios_input.h). Only with boot-arg
  * touchscreen=2: every address below belongs to this phone.
  *

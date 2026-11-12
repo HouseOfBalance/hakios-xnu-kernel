@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 python3 tests/tools_test.py
+python3 tests/bootargs_test.py   # (docs/boot-args.md is what tools/bootargs.py writes: `make docs`)
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 tools/boards.py --alone --devices tests/devices --soc-dir tests/soc gen --out "$out" > /dev/null

@@ -1,7 +1,7 @@
 /*
- * The GPU of the first phone (the first phone), a Mali-G52 MC2, brought up from the kernel. Only with
- * boot-arg mali=1: every address below belongs to this phone (the other phone's GPU is an Adreno,
- * bsd/dev/hakios_adreno.c).
+ * The GPU of the first phone (an MT6768: devices/x6826b), a Mali-G52 MC2, brought up from the kernel. Only with
+ * boot-arg mali=1: every address below belongs to this phone (the Qualcomm port's GPU is an Adreno,
+ * in xnu-kernel-qcom).
  *
  * A Bifrost Mali needs no firmware, so bringing it up is power and clocks and nothing else, in the
  * order MediaTek's own kernel uses -- the same sequence the loader's GPU probe proved on the phone

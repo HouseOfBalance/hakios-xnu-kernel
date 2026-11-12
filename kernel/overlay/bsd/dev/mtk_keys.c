@@ -1,7 +1,7 @@
 /*
- * The buttons of the first phone (the first phone), as a source of button presses for
+ * The buttons of the first phone (an MT6768: devices/x6826b), as a source of button presses for
  * /dev/hakios-touch (sys/hakios_input.h). Only with boot-arg buttons=2: every address below
- * belongs to this phone; buttons=1 is the other phone's, in hakios_buttons.c.
+ * belongs to this phone; buttons=1 is the Qualcomm port's (xnu-kernel-qcom).
  *
  * Android's own device tree says where they are (the kp@10010000 node):
  *   volume up    the SoC's keypad controller, key 0 of its map ("kpd-hw-init-map" 0x73)
@@ -121,7 +121,7 @@ pmic_write(uint32_t reg, uint32_t value)
 }
 
 /*
- * The processors' clock (boot-arg mtk_cpufreq=1: what it is, said; mtk_cpufreq=2: raised -- not cpufreq=, which is the Qualcomm phone's (hakios_cpufreq.c) and writes where this SoC has nothing of the kind). The boot loader
+ * The processors' clock (boot-arg mtk_cpufreq=1: what it is, said; mtk_cpufreq=2: raised -- not cpufreq=, which is the Qualcomm port's and writes where this SoC has nothing of the kind). The boot loader
  * leaves both clusters at 1175 MHz and 0.8 V, and nothing under this kernel changes that: The system ran
  * at some 60 in 100 of what the phone can do (MiniIOMobileFramebuffer's measurement, 24 October).
  * Android's driver for this SoC (drivers/misc/mediatek/base/power/cpufreq_v1, mach/mt6768) has the
