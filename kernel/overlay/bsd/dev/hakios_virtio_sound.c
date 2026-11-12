@@ -20,6 +20,7 @@
  * The protocol: Virtual I/O Device (VIRTIO) Version 1.2, section 5.14 "Sound Device".
  */
 #include <kern/clock.h>
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <kern/locks.h>
 #include <kern/thread_call.h>
 #include <libkern/libkern.h>

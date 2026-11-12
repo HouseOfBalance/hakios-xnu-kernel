@@ -58,6 +58,7 @@
 #define GICR_FRAME_SIZE         0x20000     /* RD_base + SGI_base per CPU */
 #define GICR_TYPER              0x0008
 #define GICR_TYPER_LAST         (1u << 4)
+#define GICR_TYPER_VLPIS        (1u << 1)   /* GICv4: two more 64 KB frames (VLPI_base, reserved) */
 #define GICR_WAKER              0x0014
 #define GICR_WAKER_PROCSLEEP    (1u << 1)
 #define GICR_WAKER_CHILDASLEEP  (1u << 2)
@@ -161,9 +162,10 @@ gic_mask(uint32_t intid)
 static void
 gic_send_sgi(uint32_t phys_id, uint32_t sgi)
 {
-	uint64_t aff0 = phys_id & 0xff, aff1 = (phys_id >> 8) & 0xff;
+	uint64_t aff0 = phys_id & 0xff, aff1 = (phys_id >> 8) & 0xff, aff2 = (phys_id >> 16) & 0xff;
 
-	__builtin_arm_wsr64("ICC_SGI1R_EL1", ((uint64_t)sgi << 24) | (aff1 << 16) | (1ULL << (aff0 & 15)));
+	/* (Aff2 in [39:32]: cluster affinity level 2) */
+	__builtin_arm_wsr64("ICC_SGI1R_EL1", ((uint64_t)sgi << 24) | (aff2 << 32) | (aff1 << 16) | (1ULL << (aff0 & 15)));
 	__builtin_arm_isb(ISB_SY);
 }
 
@@ -402,6 +404,9 @@ gic_v3_irq_cpu_shutdown(void)
 	__builtin_arm_isb(ISB_SY);
 }
 
+/* the distance between redistributors when the device tree gives one (redistributor-stride), else 0 */
+static uint64_t gicr_stride;
+
 static vm_offset_t
 gic_find_redistributor(void)
 {
@@ -409,7 +414,7 @@ gic_find_redistributor(void)
 	/* GICR_TYPER[63:32] packs Aff3.Aff2.Aff1.Aff0 */
 	uint32_t affinity = (uint32_t)(((mpidr >> 32) & 0xff) << 24 | (mpidr & 0xffffff));
 
-	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size; frame += GICR_FRAME_SIZE) {
+	for (vm_offset_t frame = gicr_base; frame + GICR_FRAME_SIZE <= gicr_base + gicr_size;) {
 		uint64_t typer = *(volatile uint64_t *)(frame + GICR_TYPER);
 
 		if ((uint32_t)(typer >> 32) == affinity) {
@@ -418,6 +423,7 @@ gic_find_redistributor(void)
 		if (typer & GICR_TYPER_LAST) {
 			break;
 		}
+		frame += gicr_stride ? gicr_stride : (typer & GICR_TYPER_VLPIS) ? 2 * GICR_FRAME_SIZE : GICR_FRAME_SIZE;
 	}
 	panic("gic: no redistributor for MPIDR 0x%llx", mpidr);
 }

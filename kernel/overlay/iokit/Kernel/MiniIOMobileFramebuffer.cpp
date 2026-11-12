@@ -423,52 +423,133 @@ setNumber(OSDictionary * dict, const char * key, uint64_t value)
 void
 IOMobileFramebuffer::publishModes(void)
 {
-	OSDictionary * timing = OSDictionary::withCapacity(8);
-	OSDictionary * horizontal = OSDictionary::withCapacity(4);
-	OSDictionary * vertical = OSDictionary::withCapacity(4);
-	OSDictionary * color = OSDictionary::withCapacity(8);
+	/*
+	 * the 26 release takes the modes the way a real phone's display driver lays them out (an M1's AppleCLCD2,
+	 * read with ioreg, is the model here): besides the attributes, each element carries its binary
+	 * description (ElementData), and the timing says it is the preferred one. With only the attributes
+	 * the 16.5 release was content; the 26 release found no preferred mode ("preferred mode (0 x 0)", current mode
+	 * 16383 x 16383) and never drew. The porches are made up, the pixel clock follows from them.
+	 */
+	const uint32_t hz = refreshHz();
+	const uint32_t hSync = 32, hBack = 42, hFront = 8, vSync = 8, vBack = 42, vFront = 32;
+	const uint32_t hTotal = fWidth + hSync + hBack + hFront, vTotal = fHeight + vSync + vBack + vFront;
+	const uint64_t pixelClock = (uint64_t) hTotal * vTotal * hz;
+	const uint32_t lineRate = (uint32_t) (((pixelClock << 16) / hTotal) / 1000);     /* kHz, 16.16 */
+	const uint32_t frameRate = hz << 16;                                            /* Hz, 16.16 */
+	uint32_t timingData[20] = {
+		0, hTotal, fWidth, hSync, hBack, hFront, lineRate, 1, 0,
+		vTotal, fHeight, vSync, vBack, vFront, frameRate, 1, 0,
+		(uint32_t) pixelClock, 13, 0,
+	};
+	uint8_t colorData[32] = { 8 };
+	OSDictionary * timing = OSDictionary::withCapacity(24);
+	OSDictionary * horizontal = OSDictionary::withCapacity(9);
+	OSDictionary * vertical = OSDictionary::withCapacity(9);
+	OSDictionary * color = OSDictionary::withCapacity(12);
+	OSDictionary * refresh = OSDictionary::withCapacity(6);
+	OSDictionary * attributes = OSDictionary::withCapacity(1);
+	OSDictionary * product = OSDictionary::withCapacity(1);
 	OSArray * timings = OSArray::withCapacity(1);
 	OSArray * colors = OSArray::withCapacity(1);
-	const uint32_t rate = refreshHz() << 16;                /* 16.16 fixed point */
+	OSArray * none = OSArray::withCapacity(1);
+	OSData * data;
+	uint64_t frameTicks;
 
-	if (timing == NULL || horizontal == NULL || vertical == NULL || color == NULL || timings == NULL || colors == NULL) {
+	if (timing == NULL || horizontal == NULL || vertical == NULL || color == NULL || refresh == NULL ||
+	    attributes == NULL || product == NULL || timings == NULL || colors == NULL || none == NULL) {
 		return;
 	}
+	colorData[12] = 16;                                     /* colorimetry */
 	setNumber(color, "ID", kFBColorID);
+	setNumber(color, "ElementType", 1);
+	setNumber(color, "StandardType", 0);
 	setNumber(color, "PixelEncoding", 0);                   /* RGB 4:4:4 */
 	setNumber(color, "Depth", 8);
-	setNumber(color, "Colorimetry", 1);
-	setNumber(color, "EOTF", 1);
+	setNumber(color, "Colorimetry", 16);
+	setNumber(color, "EOTF", 0);
 	setNumber(color, "DynamicRange", 0);
-	setNumber(color, "Score", 1);
+	setNumber(color, "SupportsDSC", 0);
+	setNumber(color, "Score", 240999);
 	color->setObject("IsVirtual", kOSBooleanFalse);
+	if ((data = OSData::withBytes(colorData, sizeof(colorData))) != NULL) {
+		color->setObject("ElementData", data);
+		data->release();
+	}
 	colors->setObject(color);
 
 	setNumber(horizontal, "Active", fWidth);
-	setNumber(horizontal, "Total", fWidth);
-	setNumber(horizontal, "SyncRate", rate);
-	setNumber(horizontal, "PreciseSyncRate", rate);
+	setNumber(horizontal, "Total", hTotal);
+	setNumber(horizontal, "SyncWidth", hSync);
+	setNumber(horizontal, "BackPorch", hBack);
+	setNumber(horizontal, "FrontPorch", hFront);
+	setNumber(horizontal, "SyncPolarity", 1);
+	setNumber(horizontal, "PixelRepetition", 0);
+	setNumber(horizontal, "SyncRate", lineRate);
+	setNumber(horizontal, "PreciseSyncRate", lineRate);
 	setNumber(vertical, "Active", fHeight);
-	setNumber(vertical, "Total", fHeight);
-	setNumber(vertical, "SyncRate", rate);
-	setNumber(vertical, "PreciseSyncRate", rate);
+	setNumber(vertical, "Total", vTotal);
+	setNumber(vertical, "SyncWidth", vSync);
+	setNumber(vertical, "BackPorch", vBack);
+	setNumber(vertical, "FrontPorch", vFront);
+	setNumber(vertical, "SyncPolarity", 1);
+	setNumber(vertical, "PixelRepetition", 0);
+	setNumber(vertical, "SyncRate", frameRate);
+	setNumber(vertical, "PreciseSyncRate", frameRate);
 	setNumber(timing, "ID", kFBTimingID);
-	setNumber(timing, "Score", 1);
+	setNumber(timing, "ElementType", 0);
+	setNumber(timing, "StandardType", 0);
+	setNumber(timing, "TimingType", 3);
+	setNumber(timing, "ScanInformation", 0);
+	setNumber(timing, "Score", 16346);
+	setNumber(timing, "AspectRatio", 13);
+	setNumber(timing, "PreciseAspectRatio", (uint64_t) fWidth * 65536 / fHeight);
+	setNumber(timing, "ValidPixelEncodings", 1);
+	setNumber(timing, "MinimumVariableRefreshRate", 0);
+	setNumber(timing, "MaximumVariableRefreshRate", 0);
+	timing->setObject("IsPreferred", kOSBooleanTrue);
 	timing->setObject("IsVirtual", kOSBooleanFalse);
 	timing->setObject("IsOverscanned", kOSBooleanFalse);
+	timing->setObject("IsInterlaced", kOSBooleanFalse);
+	timing->setObject("IsSplit", kOSBooleanFalse);
+	timing->setObject("IsPromoted", kOSBooleanFalse);
 	timing->setObject("HorizontalAttributes", horizontal);
 	timing->setObject("VerticalAttributes", vertical);
 	timing->setObject("ColorModes", colors);
+	timing->setObject("DiscreteMediaRefreshRates", none);
+	timing->setObject("UnsafeColorElementIDs", none);
+	timing->setObject("DSCRequiredColorElementIDs", none);
+	if ((data = OSData::withBytes(timingData, sizeof(timingData))) != NULL) {
+		timing->setObject("ElementData", data);
+		data->release();
+	}
 	timings->setObject(timing);
 
 	setProperty("TimingElements", timings);
 	setProperty("ColorElements", colors);
+	setProperty("DPTimingModeId", kFBTimingID, 32);
+	setProperty("DisplayWidth", fWidth, 32);
+	setProperty("DisplayHeight", fHeight, 32);
+	setProperty("PixelClock", pixelClock, 64);
+	attributes->setObject("ProductAttributes", product);
+	setProperty("DisplayAttributes", attributes);
+	nanoseconds_to_absolutetime(NSEC_PER_SEC / hz, &frameTicks);
+	setNumber(refresh, "displayMinRefreshInterval", (1ULL << 32) / hz);
+	setNumber(refresh, "displayMaxRefreshInterval", (1ULL << 32) / hz);
+	setNumber(refresh, "displayMinRefreshIntervalMachTime", frameTicks);
+	setNumber(refresh, "displayMaxRefreshIntervalMachTime", frameTicks);
+	setNumber(refresh, "displayRefreshStep", 0);
+	setNumber(refresh, "displayRefreshStepMachTime", 0);
+	setProperty("IOMFBDisplayRefresh", refresh);
 	OSSafeReleaseNULL(timings);
 	OSSafeReleaseNULL(colors);
+	OSSafeReleaseNULL(none);
 	OSSafeReleaseNULL(timing);
 	OSSafeReleaseNULL(horizontal);
 	OSSafeReleaseNULL(vertical);
 	OSSafeReleaseNULL(color);
+	OSSafeReleaseNULL(refresh);
+	OSSafeReleaseNULL(attributes);
+	OSSafeReleaseNULL(product);
 }
 
 /*
@@ -563,7 +644,7 @@ IOMobileFramebuffer::start(IOService * provider)
 	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
 	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
 	/*
-	 * A panel taller for its width than the reference phone's screen gets the picture at the reference phone's
+	 * A panel taller for its width tha reference phone's screen gets the picture at the reference phone's
 	 * proportions, centred, with black above and below -- scaled to the panel's whole height as
 	 * well it came out stretched (the first phone's 720 x 1640 is 2.28 tall to the reference phone's 2.17).
 	 * Its touch screen driver maps fingers into the same band. Only with boot-arg fbfit=1: the

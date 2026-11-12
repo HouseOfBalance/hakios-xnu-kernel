@@ -2,5 +2,5 @@
 # refuses anything else; to move to another release, change the three values, assemble, fix what
 # no longer applies in the tree and run kernel/export.sh.
 UPSTREAM_URL=https://github.com/apple-oss-distributions/xnu.git
-UPSTREAM_TAG=xnu-8796.121.2
-UPSTREAM_COMMIT=c54f35ca767986246321eb901baf8f5ff7923f6a
+UPSTREAM_TAG=xnu-12377.121.6
+UPSTREAM_COMMIT=ac9718fb1af618d5ce8678d0dc6e8a58f252216f

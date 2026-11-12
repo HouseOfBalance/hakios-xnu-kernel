@@ -117,7 +117,15 @@ public:
 	task_t                          clientTask;     /* whose memory it is (not held: only compared) */
 	mach_vm_address_t               clientAddress;  /* ... and where it is there */
 	uint8_t *                       kpixels;        /* where the pixel memory starts in the kernel, either way */
-	uint32_t                        drawn;          /* a GPU's last submission that names the pixels, where its driver counts them (0: none) */
+	/*
+	 * ... and for a surface made around its maker's memory, a copy of the pixels as they were when it was made (or
+	 * last written under a lock: snapshotSeed), which is what the GPU draws from (HakiosGPU.cpp). Its maker may draw
+	 * the next picture into the same memory as soon as the surface is handed over -- iconservicesagent does, and the
+	 * icons on the home screen showed the labels of other icons -- and what was handed over is what was there then.
+	 */
+	IOBufferMemoryDescriptor *      snapshot;
+	uint32_t                        snapshotSeed;
+	uint32_t                        drawn;          /* the GPU's last submission that names the pixels (0: none; HakiosGPU.cpp) */
 	struct minisurf_result          info;           /* addresses not filled in */
 	struct minisurf_plane           planes[MINISURF_MAX_PLANES];
 	OSDictionary *                  values;

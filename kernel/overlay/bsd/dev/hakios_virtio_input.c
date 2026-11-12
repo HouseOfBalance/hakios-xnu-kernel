@@ -15,6 +15,7 @@
  * is held, which is how the way out in hakios_input.c is tried ("qemu/touch.py key fivefingers 2000").
  */
 #include <kern/clock.h>
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <kern/thread_call.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>

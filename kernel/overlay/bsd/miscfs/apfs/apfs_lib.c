@@ -1646,7 +1646,7 @@ apfs_readdir(struct apfs_vol *vol, uint64_t dir_id, apfs_dir_cb cb, void *ctx)
 			return 0;
 		}
 		/*
-		 * The system uses the hashed key: a word holding the name's length and a hash of it,
+		 * the system uses the hashed key: a word holding the name's length and a hash of it,
 		 * then the name.  The plain key has a 16-bit length instead; both are handled
 		 * so that a volume made elsewhere still reads.
 		 */
@@ -1727,7 +1727,7 @@ lookup_cb(void *ctx, const char *name, size_t name_len, uint64_t file_id, uint8_
  * caseless form (case-folded NFD), Unicode 9.0 as APFS has it. For the decomposition and folding
  * the kernel's own (bsd/vfs/vfs_unicode.c, utf8_normalizeOptCaseFoldAndHash, which is APFS's);
  * a name of plain ASCII needs neither and is hashed directly. Checked against the hash stored
- * with every name of the system image 20F66 root volume, ASCII and not (tools/apfs/test_namehash.py,
+ * with every name of the 16.5 release root volume, ASCII and not (tools/apfs/test_namehash.py,
  * apfs-tool namehash).
  */
 static const uint32_t crc32c_nibble[16] = {
@@ -3126,13 +3126,13 @@ apfs_inflate_counted(struct apfs_nx *nx, const uint8_t *src, size_t src_len, uin
  * bytes after the header.
  *
  * Type 9 means they were stored as they are, with one marker byte in front.  All 23947
- * type-9 files in the system image 20F66 root file system have 0xcc there and exactly `want` bytes
+ * type-9 files in the 16.5 release root file system have 0xcc there and exactly `want` bytes
  * after it, which is how the marker's length was settled; a payload that is already
  * exactly the right length is taken whole.
  */
 /*
  * One piece of a compressed file by the file's method: zlib (types 3 and 4) as above;
- * LZBITMAP (13 and 14) -- what this system release's cryptexes use -- by libzbitmap (apfs_zbitmap.c):
+ * LZBITMAP (13 and 14) -- what the 16 release cryptexes use -- by libzbitmap (apfs_zbitmap.c):
  * a piece that starts with 'Z' is a stream of it, one whose first byte has its low four bits
  * set is stored after that byte.
  */

@@ -11,6 +11,7 @@
  * No interrupt is used; the interface's thread asks (virtio_poll()).
  */
 #include <kern/thread.h>
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <mach/vm_param.h>

@@ -28,6 +28,7 @@
 #include <libkern/libkern.h>
 #include <mach/vm_param.h>
 #include <sys/attr.h>
+#include <sys/content_protection.h>
 #include <sys/dirent.h>
 #include <sys/errno.h>
 #include <sys/fcntl.h>
@@ -46,6 +47,7 @@
 #include <uuid/uuid.h>
 #include <vfs/vfs_support.h>
 #include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
 
 #define RAMFS_MAX_NAME          255
 #define RAMFS_MAX_XATTR         (16u * 1024 * 1024)
@@ -78,6 +80,7 @@ struct ramfs_node {
 	uid_t               rn_uid;
 	gid_t               rn_gid;
 	uint32_t            rn_bsdflags;
+	uint32_t            rn_dpclass;         /* data protection class: a label only, nothing is encrypted */
 	uint32_t            rn_nlink;
 	uint32_t            rn_state;
 	vnode_t             rn_vp;
@@ -115,6 +118,7 @@ struct ramfs_mount {
 	uint64_t            rm_nodes;
 	uint64_t            rm_pages;           /* file pages in use */
 	uint64_t            rm_max_pages;
+	uint64_t            rm_alloc_failures;
 	struct ramfs_node **rm_hash;            /* every node by its number, for vfs_vget */
 };
 
@@ -122,6 +126,7 @@ struct ramfs_mount {
 
 /* file pages in use on all the mounts together (each mount has its own lock): for the kernel's memory report */
 _Atomic uint64_t ramfs_pages_in_use;
+extern unsigned int vm_page_free_count;      /* osfmk/vm/vm_resident.c, for a refusal's line */
 
 #define RAMFS_MP(mp)    ((struct ramfs_mount *)vfs_fsprivate(mp))
 #define RAMFS_NODE(vp)  ((struct ramfs_node *)vnode_fsnode(vp))
@@ -143,6 +148,13 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
 	node->rn_mount = rm;
 	node->rn_type = type;
 	node->rn_mode = type == VLNK ? 0755 : (type == VDIR ? 0755 : 0644);
+	/*
+	 * hakios: a protection class for every file, D (none) unless one is asked for. the 26 release checks the
+	 * class of what it stores (PosterBoard's data store must be NSFileProtectionNone throughout, and
+	 * migrates it there when it is not); without one the check fails, setting it fails, and the
+	 * wallpaper store is never made. The class is kept and told, nothing is encrypted.
+	 */
+	node->rn_dpclass = PROTECTION_CLASS_D;
 	node->rn_atime = node->rn_mtime = node->rn_ctime = node->rn_btime = now;
 	TAILQ_INIT(&node->rn_entries);
 	TAILQ_INIT(&node->rn_xattrs);
@@ -180,6 +192,10 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
 			node->rn_ctime = vap->va_change_time;
 			VATTR_SET_SUPPORTED(vap, va_change_time);
 		}
+		if (VATTR_IS_ACTIVE(vap, va_dataprotect_class)) {
+			node->rn_dpclass = vap->va_dataprotect_class;
+			VATTR_SET_SUPPORTED(vap, va_dataprotect_class);
+		}
 		VATTR_SET_SUPPORTED(vap, va_type);
 	}
 	return node;
@@ -194,14 +210,56 @@ ramfs_node_alloc(struct ramfs_mount *rm, enum vtype type, struct vnode_attr *vap
  * of kernel_map each, as the contents of a RAM disk are. wait=false: never wait for memory (the
  * page-out path, which may be the pageout daemon looking for some).
  */
+/* the kernel's address ranges, for the line said when one of them is full (osfmk/vm/vm_kern.c) */
+extern struct mach_vm_range *kmem_range(vm_map_range_id_t range_id);
+
+static void
+ramfs_say_ranges(void)
+{
+	static const char *const names[] = { "ptr0", "ptr1", "ptr2", "io", "data", "data-shared" };
+
+	for (unsigned id = KMEM_RANGE_ID_FIRST; id <= KMEM_RANGE_ID_MAX; id++) {
+		struct mach_vm_range *r = kmem_range((vm_map_range_id_t)id);
+
+		printf("ramfs: kernel range %s: %#llx-%#llx (%llu MB)\n", names[id - KMEM_RANGE_ID_FIRST],
+		    (unsigned long long)r->min_address, (unsigned long long)r->max_address,
+		    (unsigned long long)((r->max_address - r->min_address) >> 20));
+	}
+}
+
+/*
+ * A page of file data. It is mapped in the kernel's shared data range (KMA_DATA_SHARED), and in the
+ * private one (KMA_DATA) only once that has no room left. Kept in the private range alone, a session of the system
+ * with a 4 GB system image filled it (KERN_NO_SPACE with free pages to spare: the addresses, not the memory, ran
+ * out), and the code-signature blobs that also live there could no longer be allocated -- launchd then
+ * stops the system on "unexpected exec of non-platform binary". Both ranges are as large and hold bags
+ * of bytes; kmem_free() finds either by its address.
+ */
 static void *
 ramfs_page_alloc(bool wait)
 {
 	vm_offset_t addr = 0;
-	kma_flags_t flags = KMA_KOBJECT | KMA_DATA | KMA_ZERO | (wait ? KMA_NONE : KMA_NOPAGEWAIT);
+	kma_flags_t flags = KMA_KOBJECT | KMA_ZERO | (wait ? KMA_NONE : KMA_NOPAGEWAIT);
+	kern_return_t kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA_SHARED, VM_KERN_MEMORY_FILE);
+	static _Atomic uint32_t private, refusals;
 
-	return kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags, VM_KERN_MEMORY_FILE) == KERN_SUCCESS ?
-	       (void *)addr : NULL;
+	if (kr == KERN_NO_SPACE) {
+		if (os_atomic_inc(&private, relaxed) == 1) {
+			printf("ramfs: the kernel's shared data range is full: pages go to the private data range\n");
+			ramfs_say_ranges();
+		}
+		kr = kmem_alloc(kernel_map, &addr, PAGE_SIZE, flags | KMA_DATA, VM_KERN_MEMORY_FILE);
+	}
+	if (kr != KERN_SUCCESS) {
+		/* Which refusal it was: no page (the free list), or no room in the kernel's data ranges. */
+		uint32_t n = os_atomic_inc(&refusals, relaxed);
+		if ((n & (n - 1)) == 0) {
+			printf("ramfs: kmem_alloc refused a page (%u total): kern_return %d, waiting %d, free pages %u\n",
+			    n, kr, wait, vm_page_free_count);
+		}
+		return NULL;
+	}
+	return (void *)addr;
 }
 
 static void
@@ -467,10 +525,14 @@ ramfs_vget_locked(struct ramfs_mount *rm, struct ramfs_node *node, vnode_t dvp, 
 /* ------------------------------------------------------------------------ */
 /* File contents                                                            */
 
-/* Make sure the page array has a slot for page `index`. The mount lock is held. */
+/* Make sure the page array has a slot for page `index`. The mount lock is held
+ * on entry and return. A normal write/truncate may wait outside it: XNU's
+ * kalloc_large always rejects Z_NOWAIT, even when plenty of RAM is free.
+ * The pager cannot wait; truncate/write reserve its slots ahead of time. */
 static int
-ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
+ramfs_grow_slots(struct ramfs_node *node, uint64_t index, bool can_wait)
 {
+	struct ramfs_mount *rm = node->rn_mount;
 	uint64_t want = node->rn_nslots ? node->rn_nslots : 4;
 	void **slots;
 
@@ -478,11 +540,31 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
 		return 0;
 	}
 	while (want <= index) {
+		if (want > UINT64_MAX / 2) {
+			return EFBIG;
+		}
 		want *= 2;
 	}
-	slots = kalloc_type(void *, want, Z_NOWAIT | Z_ZERO);
+	if (want > SIZE_MAX / sizeof(void *)) {
+		return EFBIG;
+	}
+	if (can_wait) {
+		lck_mtx_unlock(&rm->rm_lock);
+	}
+	slots = kalloc_type(void *, want, (can_wait ? Z_WAITOK : Z_NOWAIT) | Z_ZERO);
+	if (can_wait) {
+		lck_mtx_lock(&rm->rm_lock);
+	}
 	if (slots == NULL) {
-		return ENOSPC;
+		printf("ramfs: slot allocation failed: inode %llu, index %llu, slots %llu, bytes %llu\n",
+		    node->rn_ino, index, want, want * sizeof(void *));
+		return can_wait ? ENOMEM : ENOSPC;
+	}
+	/* Another writer may have grown the table while the lock was dropped.
+	 * The vnode keeps the node alive; copy the current table, never a snapshot. */
+	if (index < node->rn_nslots) {
+		kfree_type(void *, want, slots);
+		return 0;
 	}
 	if (node->rn_pages != NULL) {
 		memcpy(slots, node->rn_pages, node->rn_nslots * sizeof(void *));
@@ -499,17 +581,23 @@ ramfs_grow_slots(struct ramfs_node *node, uint64_t index)
  * the lock; it is consumed if the slot was empty. The mount lock is held.
  */
 static int
-ramfs_store(struct ramfs_node *node, uint64_t off, const void *src, size_t len, void **spare)
+ramfs_store(struct ramfs_node *node, uint64_t off, const void *src, size_t len, void **spare, bool can_wait)
 {
 	struct ramfs_mount *rm = node->rn_mount;
 	uint64_t index = off / PAGE_SIZE;
-	int error = ramfs_grow_slots(node, index);
+	int error = ramfs_grow_slots(node, index, can_wait);
 
 	if (error) {
 		return error;
 	}
 	if (node->rn_pages[index] == NULL) {
 		if (*spare == NULL || rm->rm_pages >= rm->rm_max_pages) {
+			/* Count every failure without flooding the console under pressure. */
+			uint64_t failures = ++rm->rm_alloc_failures;
+			if ((failures & (failures - 1)) == 0) {
+				printf("ramfs: page allocation failed (%llu total): inode %llu, offset %llu, spare %p, pages %llu/%llu\n",
+				    failures, node->rn_ino, off, *spare, rm->rm_pages, rm->rm_max_pages);
+			}
 			return ENOSPC;
 		}
 		node->rn_pages[index] = *spare;
@@ -933,6 +1021,97 @@ out:
 	return error;
 }
 
+/*
+ * renamex_np(2): RENAME_SWAP exchanges two names, RENAME_EXCL refuses an existing target. the system writes
+ * files "atomically" by swapping a new copy in -- usermanagerd's user sessions and persona manifest in
+ * /private/var/keybags among them, and with ENOTSUP here it never saved them and aborted at every start.
+ */
+static int
+ramfs_renamex(struct vnop_renamex_args *ap)
+{
+	struct vnop_rename_args plain = {
+		.a_desc = &vnop_rename_desc, .a_fdvp = ap->a_fdvp, .a_fvp = ap->a_fvp, .a_fcnp = ap->a_fcnp,
+		.a_tdvp = ap->a_tdvp, .a_tvp = ap->a_tvp, .a_tcnp = ap->a_tcnp, .a_context = ap->a_context,
+	};
+	struct ramfs_node *fdir = RAMFS_NODE(ap->a_fdvp);
+	struct ramfs_node *tdir = RAMFS_NODE(ap->a_tdvp);
+	struct ramfs_node *fnode, *tnode;
+	struct ramfs_mount *rm;
+	struct componentname *fcnp = ap->a_fcnp, *tcnp = ap->a_tcnp;
+	struct ramfs_dirent *fde, *tde;
+	int error = 0;
+
+	if (ap->a_flags & ~(VFS_RENAME_SWAP | VFS_RENAME_EXCL)) {
+		return ENOTSUP;
+	}
+	if (ap->a_flags == VFS_RENAME_EXCL) {
+		if (ap->a_tvp != NULLVP) {
+			return EEXIST;
+		}
+		return ramfs_rename(&plain);
+	}
+	if (ap->a_flags != VFS_RENAME_SWAP) {
+		return EINVAL;
+	}
+	if (ap->a_tvp == NULLVP) {
+		return ENOENT;
+	}
+	fnode = RAMFS_NODE(ap->a_fvp);
+	tnode = RAMFS_NODE(ap->a_tvp);
+	rm = fnode->rn_mount;
+	if (fnode == tnode) {
+		return 0;
+	}
+
+	lck_mtx_lock(&rm->rm_lock);
+	fde = ramfs_dir_find(fdir, fcnp->cn_nameptr, (size_t)fcnp->cn_namelen);
+	tde = ramfs_dir_find(tdir, tcnp->cn_nameptr, (size_t)tcnp->cn_namelen);
+	if (fde == NULL || fde->rd_node != fnode || tde == NULL || tde->rd_node != tnode) {
+		error = ENOENT;
+		goto out;
+	}
+	/* neither may end up inside itself */
+	for (struct ramfs_node *up = tdir; fnode->rn_type == VDIR && up != NULL; up = (up == rm->rm_root) ? NULL : up->rn_parent) {
+		if (up == fnode) {
+			error = EINVAL;
+			goto out;
+		}
+	}
+	for (struct ramfs_node *up = fdir; tnode->rn_type == VDIR && up != NULL; up = (up == rm->rm_root) ? NULL : up->rn_parent) {
+		if (up == tnode) {
+			error = EINVAL;
+			goto out;
+		}
+	}
+	fde->rd_node = tnode;
+	tde->rd_node = fnode;
+	if (fdir != tdir) {
+		if (fnode->rn_type == VDIR) {
+			fdir->rn_nlink--;
+			tdir->rn_nlink++;
+			fnode->rn_parent = tdir;
+		}
+		if (tnode->rn_type == VDIR) {
+			tdir->rn_nlink--;
+			fdir->rn_nlink++;
+			tnode->rn_parent = fdir;
+		}
+	}
+	ramfs_touch(fdir, true);
+	ramfs_touch(tdir, true);
+	ramfs_touch(fnode, false);
+	ramfs_touch(tnode, false);
+out:
+	lck_mtx_unlock(&rm->rm_lock);
+	if (!error) {
+		vnode_update_identity(ap->a_fvp, ap->a_tdvp, tcnp->cn_nameptr, tcnp->cn_namelen, tcnp->cn_hash,
+		    VNODE_UPDATE_PARENT | VNODE_UPDATE_NAME);
+		vnode_update_identity(ap->a_tvp, ap->a_fdvp, fcnp->cn_nameptr, fcnp->cn_namelen, fcnp->cn_hash,
+		    VNODE_UPDATE_PARENT | VNODE_UPDATE_NAME);
+	}
+	return error;
+}
+
 static int
 ramfs_open(__unused struct vnop_open_args *ap)
 {
@@ -978,6 +1157,7 @@ ramfs_getattr(struct vnop_getattr_args *ap)
 	VATTR_RETURN(vap, va_fsid, vfs_statfs(vnode_mount(vp))->f_fsid.val[0]);
 	VATTR_RETURN(vap, va_filerev, 0);
 	VATTR_RETURN(vap, va_gen, 0);
+	VATTR_RETURN(vap, va_dataprotect_class, node->rn_dpclass);
 	if (node->rn_type == VDIR && node->rn_parent != NULL) {
 		VATTR_RETURN(vap, va_parentid, node->rn_parent->rn_ino);
 		/*
@@ -1024,6 +1204,15 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 	lck_mtx_lock(&rm->rm_lock);
 	if (VATTR_IS_ACTIVE(vap, va_data_size)) {
 		size = vap->va_data_size;
+		/* A shared mapping cannot extend EOF. Reserve its pointer table here,
+		 * while sleeping is possible, so pageout needs no large allocation. */
+		if (size > node->rn_size) {
+			int error = ramfs_grow_slots(node, (size - 1) / PAGE_SIZE, true);
+			if (error) {
+				lck_mtx_unlock(&rm->rm_lock);
+				return error;
+			}
+		}
 		ramfs_resize(node, size);
 		resized = true;
 		VATTR_SET_SUPPORTED(vap, va_data_size);
@@ -1043,6 +1232,10 @@ ramfs_setattr(struct vnop_setattr_args *ap)
 	if (VATTR_IS_ACTIVE(vap, va_flags)) {
 		node->rn_bsdflags = vap->va_flags;
 		VATTR_SET_SUPPORTED(vap, va_flags);
+	}
+	if (VATTR_IS_ACTIVE(vap, va_dataprotect_class)) {
+		node->rn_dpclass = vap->va_dataprotect_class;
+		VATTR_SET_SUPPORTED(vap, va_dataprotect_class);
 	}
 	if (VATTR_IS_ACTIVE(vap, va_create_time)) {
 		node->rn_btime = vap->va_create_time;
@@ -1148,12 +1341,17 @@ ramfs_write(struct vnop_write_args *ap)
 		if (error) {
 			break;
 		}
-		if (spare == NULL) {
-			spare = ramfs_page_alloc(true);
-		}
-		ramfs_reserve_slots(rm, node, off / PAGE_SIZE);
+		uint64_t index = off / PAGE_SIZE;
 		lck_mtx_lock(&rm->rm_lock);
-		error = ramfs_store(node, off, bounce, len, &spare);
+		if (index >= node->rn_nslots || node->rn_pages[index] == NULL) {
+			lck_mtx_unlock(&rm->rm_lock);
+			ramfs_reserve_slots(rm, node, index);
+			if (spare == NULL) {
+				spare = ramfs_page_alloc(true);
+			}
+			lck_mtx_lock(&rm->rm_lock);
+		}
+		error = ramfs_store(node, off, bounce, len, &spare, true);
 		lck_mtx_unlock(&rm->rm_lock);
 		if (error) {
 			/* nothing of this piece was stored: hand it back to the caller's count */
@@ -1183,7 +1381,7 @@ ramfs_write(struct vnop_write_args *ap)
 			ramfs_refresh_cache(vp, node, start, (uint64_t)uio_offset(uio));
 		}
 		/* a partial write is a success */
-		if (error == ENOSPC) {
+		if (error == ENOSPC || error == ENOMEM) {
 			error = 0;
 		}
 	}
@@ -1286,9 +1484,20 @@ ramfs_readlink(struct vnop_readlink_args *ap)
 	return uiomove(node->rn_target, (int)node->rn_size, ap->a_uio);
 }
 
+/*
+ * hakios: APFS's "mark purgeable" (APFSIOC_MARK_PURGEABLE, _IOWR('J', 68, uint64_t)), which the 26 release's
+ * PosterBoard asks of every directory and file of its wallpaper store and fails the store without
+ * (errno -1, no poster is ever made). Purgeable files are what APFS may delete when space runs short;
+ * this RAM disk deletes nothing on its own, so the mark is taken and nothing more is done.
+ */
+#define RAMFS_APFSIOC_MARK_PURGEABLE    _IOWR('J', 68, uint64_t)
+
 static int
-ramfs_ioctl(__unused struct vnop_ioctl_args *ap)
+ramfs_ioctl(struct vnop_ioctl_args *ap)
 {
+	if (ap->a_command == RAMFS_APFSIOC_MARK_PURGEABLE) {
+		return 0;
+	}
 	return ENOTTY;
 }
 
@@ -1447,7 +1656,7 @@ ramfs_pageout(struct vnop_pageout_args *ap)
 		/* this may be the pageout daemon looking for memory: never wait for more of it here */
 		void *spare = index < node->rn_nslots && node->rn_pages[index] != NULL ? NULL : ramfs_page_alloc(false);
 
-		error = ramfs_store(node, off + done, (const void *)(addr + done), len, &spare);
+		error = ramfs_store(node, off + done, (const void *)(addr + done), len, &spare, false);
 		if (spare != NULL) {
 			ramfs_page_free(spare);
 		}
@@ -1685,6 +1894,7 @@ const struct vnodeopv_entry_desc ramfs_vnodeop_entries[] = {
 	{ .opve_op = &vnop_remove_desc, .opve_impl = (VOPFUNC)ramfs_remove },
 	{ .opve_op = &vnop_link_desc, .opve_impl = (VOPFUNC)ramfs_link },
 	{ .opve_op = &vnop_rename_desc, .opve_impl = (VOPFUNC)ramfs_rename },
+	{ .opve_op = &vnop_renamex_desc, .opve_impl = (VOPFUNC)ramfs_renamex },
 	{ .opve_op = &vnop_mkdir_desc, .opve_impl = (VOPFUNC)ramfs_mkdir },
 	{ .opve_op = &vnop_rmdir_desc, .opve_impl = (VOPFUNC)ramfs_rmdir },
 	{ .opve_op = &vnop_symlink_desc, .opve_impl = (VOPFUNC)ramfs_symlink },
@@ -1879,7 +2089,9 @@ ramfs_vfs_getattr(mount_t mp, struct vfs_attr *fsap, __unused vfs_context_t ctx)
 		    VOL_CAP_INT_ADVLOCK |
 		    VOL_CAP_INT_FLOCK |
 		    VOL_CAP_INT_EXTENDED_SECURITY |
-		    VOL_CAP_INT_EXTENDED_ATTR;
+		    VOL_CAP_INT_EXTENDED_ATTR |
+		    VOL_CAP_INT_RENAME_SWAP |
+		    VOL_CAP_INT_RENAME_EXCL;
 		cap->valid[VOL_CAPABILITIES_FORMAT] =
 		    VOL_CAP_FMT_PERSISTENTOBJECTIDS |
 		    VOL_CAP_FMT_SYMBOLICLINKS |
@@ -1911,7 +2123,9 @@ ramfs_vfs_getattr(mount_t mp, struct vfs_attr *fsap, __unused vfs_context_t ctx)
 		    VOL_CAP_INT_USERACCESS |
 		    VOL_CAP_INT_MANLOCK |
 		    VOL_CAP_INT_EXTENDED_ATTR |
-		    VOL_CAP_INT_NAMEDSTREAMS;
+		    VOL_CAP_INT_NAMEDSTREAMS |
+		    VOL_CAP_INT_RENAME_SWAP |
+		    VOL_CAP_INT_RENAME_EXCL;
 		VFSATTR_SET_SUPPORTED(fsap, f_capabilities);
 	}
 	/*

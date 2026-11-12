@@ -34,11 +34,14 @@ struct hakios_touch {
 	uint32_t finger;                /* which finger, from 0 (or which button) */
 	uint32_t x, y;                  /* position on the display, 0 = left/top edge, 65535 = right/bottom edge */
 };
+/* (posted by the kernel, read by the system's side, built apart: its size changes in both or not at all) */
+_Static_assert(sizeof(struct hakios_touch) == 24, "a touch sample is 24 bytes");
 
 #ifdef KERNEL
 /* For drivers; not from interrupt context. */
 void hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y);
-void hakios_input_init(void);
+void hakios_drivers_init(void);         /* every driver started, in order: bsd_init() calls it (bsd/dev/hakios_drivers.c) */
+void hakios_input_init(void);          /* /dev/hakios-touch */
 void hakios_virtio_input_init(void);   /* boot-arg virtio_input=1: QEMU's virtio pointer and keyboard */
 void mtk_tcm_init(void);            /* boot-arg touchscreen=2: the first phone's OmniVision TD4160 */
 void mtk_mali_init(void);            /* boot-arg mali=1: the first phone's Mali-G52 brought up */

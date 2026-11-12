@@ -47,7 +47,7 @@ if [ -z "$tree" ]; then
 	fi
 fi
 if [ -n "$temporary" ]; then
-	"$KERNEL_DIR/assemble.sh" ${from[@]+"${from[@]}"} "$tree"
+	"$KERNEL_DIR/assemble.sh" "${from[@]}" "$tree"
 else
 	"$KERNEL_DIR/assemble.sh" --update "$tree"
 	# (an update that found unexported work leaves it and succeeds: not a state to apply patches on)

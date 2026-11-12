@@ -20,7 +20,7 @@
  * a network's name or its key may be in there.
  *
  * The request types and the layouts are Apple's. The old ones are as the headers of its open
- * IO80211 sources once described them (apple80211_ioctl.h, apple80211_var.h); where the system image 20F66
+ * IO80211 sources once described them (apple80211_ioctl.h, apple80211_var.h); where the 16.5 release
  * differs the layout was read out of IO80211.framework of 16.5, which fills and reads the same
  * structures on the other side (Apple80211GetWithIOCTL, _getScanData, _addScanResultToList,
  * _performAssociation, _dispatchAsyncAssocEvent, _dispatchLinkChangedEvent).
@@ -178,18 +178,18 @@ struct apple80211_link_changed {
 };
 
 _Static_assert(sizeof(struct apple80211_assoc) == 592 && offsetof(struct apple80211_assoc, key) == 0x48,
-    "the association request as the system image 20F66 has it");
+    "the association request as the 16.5 release has it");
 _Static_assert(sizeof(struct apple80211_link_changed) == 32 && offsetof(struct apple80211_link_changed, reason) == 0x14,
-    "the link event as the system image 20F66 reads it");
-_Static_assert(sizeof(struct apple80211_channels) == 4824, "the channel list as the system image 20F66 has it");
+    "the link event as the 16.5 release reads it");
+_Static_assert(sizeof(struct apple80211_channels) == 4824, "the channel list as the 16.5 release has it");
 _Static_assert(sizeof(struct apple80211_channels_info) == 10016 && offsetof(struct apple80211_channels_info, number) == 0x32e &&
-    offsetof(struct apple80211_channels_info, flags) == 0x12d0, "the channels' description as the system image 20F66 has it");
+    offsetof(struct apple80211_channels_info, flags) == 0x12d0, "the channels' description as the 16.5 release has it");
 _Static_assert(sizeof(struct apple80211_scan_request) == 5456 && offsetof(struct apple80211_scan_request, channels) == 0x48 &&
     offsetof(struct apple80211_scan_request, flags) == 0x1308 && offsetof(struct apple80211_scan_request, names) == 0x1318,
-    "the scan request as the system image 20F66 has it");
+    "the scan request as the 16.5 release has it");
 _Static_assert(sizeof(struct apple80211_scan_result) == 1164 && offsetof(struct apple80211_scan_result, ssid_length) == 0x60 &&
     offsetof(struct apple80211_scan_result, age_ms) == 0x84 && offsetof(struct apple80211_scan_result, elements) == 0x8c,
-    "a scan's result as the system image 20F66 has it");
+    "a scan's result as the 16.5 release has it");
 
 /* Apple80211's events (APPLE80211_M_...) */
 enum { EVENT_POWER_CHANGED = 1, EVENT_SSID_CHANGED = 2, EVENT_BSSID_CHANGED = 3, EVENT_LINK_CHANGED = 4, EVENT_ASSOC_DONE = 9,
@@ -232,15 +232,6 @@ channel_fill(struct apple80211_channel *channel, unsigned frequency, unsigned fl
 
 /* ---- what the caller is given back ------------------------------------------------------------------- */
 
-/* At most as many bytes as it has room for. */
-static int
-give(const struct apple80211req *request, const void *data, size_t length)
-{
-	return request->req_data == USER_ADDR_NULL ? 0 : copyout(data, request->req_data, length < request->req_len ? length :
-	       request->req_len);
-}
-
-/* An access point in the form a scan's result has; the caller has said how much room for elements there is. */
 /*
  * A network's name and information elements as long as the record says, but never past it: the record comes
  * from the radio's driver, which is built outside this tree, and what is taken from it goes out to the system.
@@ -257,6 +248,15 @@ bss_elements_length(const struct hakios_sta_bss *bss)
 	return bss->elements_length <= sizeof(bss->elements) ? bss->elements_length : sizeof(bss->elements);
 }
 
+/* At most as many bytes as it has room for. */
+static int
+give(const struct apple80211req *request, const void *data, size_t length)
+{
+	return request->req_data == USER_ADDR_NULL ? 0 : copyout(data, request->req_data, length < request->req_len ? length :
+	       request->req_len);
+}
+
+/* An access point in the form a scan's result has; the caller has said how much room for elements there is. */
 static int
 give_network(const struct apple80211req *request, const struct hakios_sta_bss *bss)
 {
@@ -476,9 +476,10 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	struct apple80211_scan_request *asked;
 	struct hakios_sta_scan *what;
 	unsigned unknown = 0;
-	int error;
+	int error = 0;
 
-	if (request->req_len != sizeof(*asked)) {
+	/* the 26 release's wifid sends 5528 bytes (72 more than the layout above, the 16 release's): the fields above are read from its start */
+	if (request->req_len < sizeof(*asked)) {
 		return EINVAL;
 	}
 	if (!hakios_sta_present()) {
@@ -508,7 +509,7 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
 	}
 	snprintf(said, said_size, " (a scan: type %u, %u channels of which %u are not the radio's, %u ms on each, a name of %u bytes, "
 	    "%u more names, flags %#llx)", asked->scan_type, asked->channel_count, unknown, asked->dwell_ms, asked->ssid_length,
-	    asked->name_count, asked->flags);
+	    asked->name_count, (unsigned long long)asked->flags);
 	if (asked->channel_count != 0 && asked->channel_count <= 64 && what->frequency_count == 0) {
 		error = EINVAL;                 /* (nothing of what is asked for is a channel of this radio's) */
 	} else {
@@ -532,7 +533,7 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
 {
 	struct apple80211_assoc *asked;
 	struct hakios_sta_join *what;
-	int error;
+	int error = 0;
 
 	if (request->req_len < offsetof(struct apple80211_assoc, rest)) {
 		return EINVAL;

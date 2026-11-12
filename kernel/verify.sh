@@ -14,7 +14,7 @@ from=()
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-"$KERNEL_DIR/assemble.sh" ${from[@]+"${from[@]}"} "$work/xnu"
+"$KERNEL_DIR/assemble.sh" "${from[@]}" "$work/xnu"
 "$KERNEL_DIR/export.sh" --to "$work/out" "$work/xnu" > /dev/null
 diff -r "$OVERLAY" "$work/out/overlay" ||
 	die "kernel/overlay is not what an export of the assembled tree gives (above)"

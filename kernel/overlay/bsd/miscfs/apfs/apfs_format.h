@@ -14,7 +14,7 @@
  *
  * Decompression of file contents (the com.apple.decmpfs attribute) is not part of APFS
  * and is not in the reference; it is at the end of this file, from bsd/sys/decmpfs.h and
- * from what the system image 20F66 root file system actually contains.
+ * from what the 16.5 release's root file system actually contains.
  */
 
 #ifndef _MISCFS_APFS_APFS_FORMAT_H_
@@ -722,7 +722,7 @@ struct apfs_x_field {
  * themselves are depends on the type.  The header is little-endian.
  *
  * XNU (bsd/sys/decmpfs.h) names only type 1; the rest live in Apple's closed
- * AppleFSCompression.  The types below are the ones the system image 20F66 root file system
+ * AppleFSCompression.  The types below are the ones the 16.5 release root file system
  * actually uses -- see tools/apfs/apfs.py, which counts them over the whole volume.
  *
  * In the attribute (types 3 and 4 the common pair): the bytes after the header are a

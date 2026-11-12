@@ -1781,7 +1781,7 @@ SYSCTL_PROC(_kern, OID_AUTO, hakios_switch_root, CTLTYPE_STRING | CTLFLAG_RW | C
 
 /*
  * apfs_volume=DEV: a volume for user space in an ordinary boot.  Mounted read only (and
- * nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/iOS, which the system image
+ * nosuid, nodev) on apfs_volume_at -- by default /System/Volumes/the system, which the system image
  * has for it (userland/build.sh) -- right here, after the root and devfs and before launchd,
  * so that all of user space sees it from the start.  apfs_volume=ufs_darwin is the system's root
  * container on the phone's flash (ufs=2 for the loader, bootcpu=7).
@@ -1789,7 +1789,7 @@ SYSCTL_PROC(_kern, OID_AUTO, hakios_switch_root, CTLTYPE_STRING | CTLFLAG_RW | C
 static void
 apfs_volume_mount(void)
 {
-	char dev[48], at[256] = "/System/Volumes/iOS", path[64];
+	char dev[48], at[256] = "/System/Volumes/the system", path[64];
 	vfs_context_t ctx = vfs_context_kernel();
 	uint64_t t0, ns = 0;
 	vnode_t vp = NULLVP;

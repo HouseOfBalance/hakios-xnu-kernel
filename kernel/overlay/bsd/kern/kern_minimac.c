@@ -36,7 +36,9 @@
 #include <kern/task.h>
 #include <mach/vm_param.h>
 #include <vm/vm_kern.h>
+#include <vm/vm_kern_xnu.h>
 #include <vm/vm_map.h>
+#include <vm/vm_map_xnu.h>  /* xnu-12377 internal VM API split */
 #include <security/mac_framework.h>
 #include <security/mac_policy.h>
 
@@ -68,7 +70,12 @@ miniamfi_vnode_check_signature(__unused struct vnode *vp, __unused struct label 
  * our own library be loaded into stock daemons (DYLD_INSERT_LIBRARIES).
  */
 #define AMFI_SYSCALL_CHECK_DYLD_POLICY  0x5a
-#define AMFI_DYLD_OUTPUT_ALLOW_ALL      0xffULL
+/*
+ * (Bit 8 since the 17 release or so: the development variables. libsystem_trace honours OS_ACTIVITY_DT_MODE,
+ * ACTIVITY_LOG_STDERR and the like -- os_log on standard error -- only when it is set:
+ * _os_trace_allow_development_env_vars.)
+ */
+#define AMFI_DYLD_OUTPUT_ALLOW_ALL      0x1ffULL
 
 /*
  * Request 0x60, "query boot-arg state" (amfi_interface_query_bootarg_state() in libamfi): the
@@ -84,10 +91,20 @@ miniamfi_vnode_check_signature(__unused struct vnode *vp, __unused struct label 
  * of them.)
  */
 #define AMFI_SYSCALL_QUERY_BOOTARG_STATE 0x60
+
+/*
+ * Request 0x66, "does this process meet this constraint" (amfi_launch_constraint_matches_process()
+ * in libamfi; libxpc asks it for every peer requirement, e.g. "has this entitlement"): the argument
+ * is { audit token (32 bytes), constraint, its size, result, the result's size } and the result a
+ * 32-bit code, 0 for a match, then text. Nothing is enforced here, so every constraint is met.
+ * Unanswered, libamfi said "no match" while the result it left behind said 0, and libxpc asserts
+ * that the two agree: backboardd died of it at its first peer requirement (LaunchServices').
+ */
+#define AMFI_SYSCALL_CONSTRAINT_MATCH   0x66
 #define AMFI_BOOTARG_STATE_NOT_ENFORCING 0x86ULL
 
 static int
-miniamfi_policy_syscall(__unused struct proc *p, int call, user_addr_t arg)
+miniamfi_policy_syscall(struct proc *p, int call, user_addr_t arg)
 {
 	struct {
 		uint64_t input_flags;
@@ -100,8 +117,38 @@ miniamfi_policy_syscall(__unused struct proc *p, int call, user_addr_t arg)
 	if (call == AMFI_SYSCALL_QUERY_BOOTARG_STATE) {
 		return copyout(&state, arg, sizeof(state));
 	}
+	if (call == AMFI_SYSCALL_CONSTRAINT_MATCH) {
+		struct {
+			uint8_t     token[32];
+			user_addr_t constraint;
+			uint32_t    constraint_size;
+			uint32_t    pad;
+			user_addr_t result;
+			uint32_t    result_size;
+		} match;
+		uint32_t matched = 0;
+
+		error = copyin(arg, &match, sizeof(match));
+		if (error == 0 && match.result != 0 && match.result_size >= sizeof(matched)) {
+			error = copyout(&matched, match.result, sizeof(matched));
+		}
+		return error;
+	}
 	if (call != AMFI_SYSCALL_CHECK_DYLD_POLICY) {
 		return ENOPOLICY;               /* what user space got before there was a handler */
+	}
+	/*
+	 * boot-arg inject_strict=1: backboardd may not go on without an inserted library (bit 0x20, "failed
+	 * insertions allowed", cleared): dyld halts with its reason instead of dropping the library silently
+	 * (and kern_exit.c logs the reason).
+	 */
+	{
+		uint32_t strict = 0;
+
+		if (PE_parse_boot_argn("inject_strict", &strict, sizeof(strict)) && strict && p != NULL &&
+		    strcmp(proc_best_name(p), "backboardd") == 0) {
+			flags &= ~0x20ULL;
+		}
 	}
 	error = copyin(arg, &args, sizeof(args));
 	if (error == 0) {
@@ -249,6 +296,13 @@ minisandbox_policy_syscall(struct proc *p, int call, user_addr_t arg)
  * com.apple.private.network.statistics, mediaserverd and mDNSResponder
  * com.apple.private.network.socket-delegate -- without which NECP said "does not hold the
  * necessary entitlement to delegate network traffic" -- and so on).
+ *
+ * That NECP line is worth knowing for what it is NOT: it costs nothing. The macro that prints it
+ * (bsd/net/necp.c, NECP_VERIFY_DELEGATION_ENTITLEMENT) only breaks out of the parameter it was
+ * reading, so the delegation is dropped and the policy is matched against the caller itself; no
+ * error is returned and no connection is refused. A session where trustd prints it four hundred
+ * times is a session where trustd's own connections all go through. A stock the reference phone prints it too.
+ * It is noise, not a wall -- do not go looking for a daemon's missing network behind it.
  *
  *   PRIV_WORK_INTERVAL    is granted to every process, entitlement or not: telling the scheduler
  *                         about the work of drawing a frame. UIKit does it as soon as anything

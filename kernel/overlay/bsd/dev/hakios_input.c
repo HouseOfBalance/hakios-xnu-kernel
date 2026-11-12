@@ -14,6 +14,11 @@
 #include <sys/systm.h>
 #include <sys/uio.h>
 #include <pexpert/pexpert.h>
+#include <sys/systm.h>
+#include <sys/uio.h>
+#include <pexpert/pexpert.h>
+
+#include "hakios_kernel.h"
 
 #define TOUCH_QUEUE     512             /* records; a power of two */
 
@@ -59,6 +64,11 @@ latency_lines(void)
 
 static LCK_GRP_DECLARE(touch_lck_grp, "hakios-touch");
 static LCK_MTX_DECLARE(touch_lock, &touch_lck_grp);
+
+/* the application processor's RPMh command slots (DRV2, TCS0): the touch driver's, the Wi-Fi's and the memory vote's, one at a time */
+static LCK_MTX_DECLARE(rpmh_slot_lock, &touch_lck_grp);
+void hakios_rpmh_lock(void) { lck_mtx_lock(&rpmh_slot_lock); }
+void hakios_rpmh_unlock(void) { lck_mtx_unlock(&rpmh_slot_lock); }
 static struct hakios_touch touch_queue[TOUCH_QUEUE];
 static uint32_t touch_head, touch_tail;        /* read from head, add at tail */
 
@@ -69,8 +79,6 @@ static uint32_t touch_head, touch_tail;        /* read from head, add at tail */
  */
 #define EXIT_FINGERS    5
 #define EXIT_HOLD_MS    1500
-
-extern void loader_return(void);
 
 static thread_call_t exit_call;
 static uint32_t fingers_down;           /* one bit for each finger a driver says is down */
@@ -134,9 +142,13 @@ touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y, bool from_dri
 	wakeup(&touch_queue);
 }
 
+/* when a finger last touched the screen, in absolute time */
+uint64_t hakios_touch_last;
+
 void
 hakios_touch_post(uint32_t type, uint32_t finger, uint32_t x, uint32_t y)
 {
+	hakios_touch_last = mach_absolute_time();
 	touch_post(type, finger, x, y, true);
 }
 
@@ -214,17 +226,7 @@ hakios_input_init(void)
 		printf("hakios-touch: cannot create the device\n");
 	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
-	hakios_board_init();
-	hakios_virtio_input_init();
-	mtk_tcm_init();
-	mtk_keys_init();
-	hakios_net_init();
-	mtk_mali_init();
-	mtk_connsys_init();
-	mtk_scp_init();
-	mtk_camera_init();
-	mtk_battery_init();
-}
+}  /* (the drivers are started by hakios_drivers_init(), bsd/dev/hakios_drivers.c) */
 
 /* One transaction at a time on the PMIC wrapper (mtk_camera.c, mtk_keys.c, mtk_connsys.c each drive its WACS2 channel by hand). */
 static LCK_GRP_DECLARE(mtk_pwrap_grp, "hakios-pwrap");

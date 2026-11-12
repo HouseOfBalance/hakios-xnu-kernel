@@ -1,7 +1,7 @@
 /*
  * A file of one of this port's RAM disks, by path, for the drivers that want one before there is
- * a root or without asking it: firmware for a GPU, a Wi-Fi radio or an audio DSP
- * (the Qualcomm port's drivers use it so; xnu-kernel-qcom) -- "fw/NAME" of the image that travels with
+ * a root or without asking it: the GPU's firmware (hakios_adreno.c), the Wi-Fi DSP's
+ * (hakios_wifi.c), the audio DSP's (hakios_adsp.c) -- "fw/NAME" of the image that travels with
  * the kernel (md1; md0 when there is nothing else) or of the resident one (md0).
  *
  * The image is an APFS container (tools/apfs/mkapfs.py: what userland/build.sh makes).  A file
@@ -20,8 +20,7 @@
 #include <sys/systm.h>
 #include <miscfs/apfs/apfs_lib.h>
 
-extern dev_t mdevlookup(int devid);
-extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
+#include "hakios_kernel.h"
 
 const uint8_t *hakios_image_file(const char *dir, const char *name, uint64_t *size, int *disk_out);
 
@@ -71,7 +70,12 @@ apfs_file(int disk, const uint8_t *base, uint64_t length, const char *dir, const
 	if (length < 4096 || memcmp(base + 32, "NXSB", 4) != 0) {
 		return NULL;
 	}
-	snprintf(path, sizeof(path), "/%s/%s", dir, name);
+	/* a path that does not fit is no file: cut short it could be another one's */
+	if ((size_t)snprintf(path, sizeof(path), "/%s/%s", dir, name) >= sizeof(path)) {
+		printf("hakios_image: /%s/%s: a path longer than %lu bytes is not looked up\n", dir, name,
+		    (unsigned long)sizeof(path) - 1);
+		return NULL;
+	}
 	lck_mtx_lock(&image_lock);
 	for (i = 0; i < sizeof(kept) / sizeof(kept[0]) && kept[i].data != NULL; i++) {
 		if (kept[i].disk == disk && strcmp(kept[i].path, path) == 0) {

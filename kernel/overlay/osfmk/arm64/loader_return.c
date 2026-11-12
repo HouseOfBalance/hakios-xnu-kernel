@@ -25,7 +25,7 @@
 #include <pexpert/pexpert.h>
 #include <pexpert/arm64/board_config.h>
 #include <vm/vm_page.h>
-#include <vm/vm_compressor.h>
+#include <vm/vm_compressor_xnu.h>  /* xnu-12377 split */
 
 /*
  * The console log handed back to the loader. A long session writes more than fits, and both
@@ -563,3 +563,83 @@ hv_wdt_pet_init(void)
 	hv_wdt_pet(NULL, NULL);
 }
 STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, hv_wdt_pet_init);
+
+/*
+ * hakios: a crash report in the loader's log. A process that dies of a signal that would dump core
+ * (SIGABRT, SIGSEGV, SIGBUS, SIGTRAP, SIGILL) leaves its registers and the return addresses of its
+ * frame chain here, with the shared cache's slide, so they can be named offline (ipsw dyld a2s); the system's
+ * own crash reports need daemons that are not running yet. Called on the dying thread, from postsig.
+ */
+#include <kern/task.h>
+#include <arm/thread.h>
+#include <libkern/copyio.h>
+
+#define HK_USER_ADDR(a) ((a) & 0x0000007fffffffffULL)  /* without the pointer's signature */
+
+void hk_crash_report(const char *name, int pid, int sig);
+
+void
+hk_crash_report(const char *name, int pid, int sig)
+{
+	thread_t thread = current_thread();
+	task_t task = current_task();
+	struct arm_saved_state *ss = find_user_regs(thread);
+	char line[200];
+	uint64_t fp, frame[2];
+
+	if (ss == NULL || !is_saved_state64(ss)) {
+		return;
+	}
+	snprintf(line, sizeof(line), "hakios: crash %s[%d] signal %d pc %llx lr %llx sp %llx far %llx esr %llx slide %llx\n",
+	    name, pid, sig, HK_USER_ADDR(get_saved_state_pc(ss)), HK_USER_ADDR(get_saved_state_lr(ss)),
+	    get_saved_state_sp(ss), get_saved_state_far(ss), (unsigned long long)get_saved_state_esr(ss),
+	    (unsigned long long)task->task_shared_region_slide);
+	loader_log_line(line);
+	snprintf(line, sizeof(line), "hakios:   x0 %llx x1 %llx x2 %llx x3 %llx x8 %llx x16 %llx\n",
+	    get_saved_state_reg(ss, 0), get_saved_state_reg(ss, 1), get_saved_state_reg(ss, 2),
+	    get_saved_state_reg(ss, 3), get_saved_state_reg(ss, 8), get_saved_state_reg(ss, 16));
+	loader_log_line(line);
+	fp = get_saved_state_fp(ss);
+	for (int i = 0; i < 24 && fp != 0 && (fp & 7) == 0; i++) {
+		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
+			break;
+		}
+		snprintf(line, sizeof(line), "hakios:   frame %d: %llx\n", i, HK_USER_ADDR(frame[1]));
+		loader_log_line(line);
+		if (frame[0] <= fp) {
+			break;
+		}
+		fp = frame[0];
+	}
+	/* and where this project's own libraries were loaded in it, for the frames that are in them
+	 * (dyld's all_image_infos: version, count, then the array of { load address, path, date });
+	 * ours are those of the small image, which stage0 mounts at /hakios */
+	if (task->all_image_info_addr != 0) {
+		uint32_t head[2];
+		uint64_t array = 0;
+
+		if (copyin((user_addr_t)task->all_image_info_addr, head, sizeof(head)) == 0 &&
+		    copyin((user_addr_t)task->all_image_info_addr + 8, &array, sizeof(array)) == 0) {
+			for (uint32_t i = 0; i < head[1] && i < 1024; i++) {
+				uint64_t info[3];
+				char path[96] = "";
+
+				if (copyin((user_addr_t)(array + 24 * i), info, sizeof(info)) != 0) {
+					break;
+				}
+				if (info[0] >= 0x180000000ull && info[0] < 0x300000000ull) {
+					continue;
+				}
+				size_t got = 0;
+
+				(void)copyinstr((user_addr_t)info[1], path, sizeof(path) - 1, &got);
+				path[sizeof(path) - 1] = '\0';
+				if (strnstr(path, "/hakios/", sizeof(path)) == NULL) {
+					continue;
+				}
+				snprintf(line, sizeof(line), "hakios:   frame image %llx %s\n", info[0], path);
+				loader_log_line(line);
+			}
+		}
+	}
+}

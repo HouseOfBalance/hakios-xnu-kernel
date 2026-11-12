@@ -1,13 +1,13 @@
 diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
 --- a/iokit/Kernel/IOPMrootDomain.cpp
 +++ b/iokit/Kernel/IOPMrootDomain.cpp
-@@ -555,7 +555,16 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
+@@ -564,7 +564,16 @@ static uint32_t         gDarkWakeFlags = kDarkWakeFlagPromotionEarly;
  #endif /* !defined(XNU_TARGET_OS_OSX) */
  
  static uint32_t         gNoIdleFlag = 0;
 -static uint32_t         gSleepDisabledFlag = 0;
 +/*
-+ * the system does not sleep. There is nothing here to sleep into and nothing that would
++ * hakios: the system does not sleep. There is nothing here to sleep into and nothing that would
 + * wake it: with the screen locked, powerd asks for system sleep within seconds, and that request
 + * ended in IOCPUSleepKernel() -- with one processor it came straight back out, again and again
 + * (every time a round of sleep and wake notifications to all the system); with more than one it
@@ -19,7 +19,7 @@ diff --git a/iokit/Kernel/IOPMrootDomain.cpp b/iokit/Kernel/IOPMrootDomain.cpp
  static uint32_t         gSwdPanic = 1;
  static uint32_t         gSwdSleepTimeout = 0;
  static uint32_t         gSwdWakeTimeout = 0;
-@@ -1587,6 +1596,13 @@ IOPMrootDomain::start( IOService * nub )
+@@ -1762,6 +1771,13 @@ IOPMrootDomain::start( IOService * nub )
  #endif /* DEVELOPMENT || DEBUG */
  
  	PE_parse_boot_argn("noidle", &gNoIdleFlag, sizeof(gNoIdleFlag));
@@ -46,7 +46,7 @@ diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.c
  #include <libkern/OSAtomic.h>
  
  #if defined(__arm64__)
-@@ -2176,6 +2179,14 @@ IOPlatformExpertDevice::generatePlatformUUID( void )
+@@ -2222,6 +2225,14 @@ IOPlatformExpertDevice::generatePlatformUUID( void )
  	uuid_string_t     uuid;
  
  #if !defined(__x86_64__)
@@ -64,7 +64,24 @@ diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.c
 diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
 --- a/iokit/Kernel/IOService.cpp
 +++ b/iokit/Kernel/IOService.cpp
-@@ -5179,7 +5179,10 @@ IOService::setRootMedia(IOService * root)
+@@ -5396,7 +5396,15 @@ IOService::publishHiddenMedia(IOService * parent)
+ 	bool                wasHiding;
+ 
+ 	iomediaClass = OSMetaClass::getMetaClassWithName(gIOMediaKey);
+-	assert(iomediaClass);
++	/*
++	 * hakios: IOMedia lives in the IOStorageFamily kext, which is not built into the
++	 * non-Apple bring-up kernel, so its metaclass is never registered.  With no IOMedia
++	 * class there are no (hidden) IOMedia instances to publish -- make this a safe no-op
++	 * instead of asserting during root-media setup for the md0 RAM disk.
++	 */
++	if (iomediaClass == NULL) {
++		return;
++	}
+ 
+ 	LOCKWRITENOTIFY();
+ 	wasHiding = gIOServiceHideIOMedia;
+@@ -5449,7 +5457,10 @@ IOService::setRootMedia(IOService * root)
  	bool unhide;
  
  	ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
@@ -79,7 +96,7 @@ diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
 diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
 --- a/iokit/Kernel/IOUserClient.cpp
 +++ b/iokit/Kernel/IOUserClient.cpp
-@@ -3536,6 +3536,25 @@ IOCopyPropertyCompatible(IORegistryEntry * regEntry, const char * name)
+@@ -3679,6 +3679,25 @@ IOCopyPropertyCompatible(IORegistryEntry * regEntry, const char * name)
  	return obj;
  }
  
@@ -105,7 +122,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  /* Routine io_registry_entry_get_property */
  kern_return_t
  is_io_registry_entry_get_property_bytes(
-@@ -3563,6 +3582,7 @@ is_io_registry_entry_get_property_bytes(
+@@ -3706,6 +3725,7 @@ is_io_registry_entry_get_property_bytes(
  #endif
  
  	obj = IOCopyPropertyCompatible(entry, property_name);
@@ -113,7 +130,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  	if (!obj) {
  		return kIOReturnNoResources;
  	}
-@@ -3631,6 +3651,7 @@ is_io_registry_entry_get_property(
+@@ -3774,6 +3794,7 @@ is_io_registry_entry_get_property(
  #endif
  
  	obj = IOCopyPropertyCompatible(entry, property_name);
@@ -121,7 +138,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  	if (!obj) {
  		return kIOReturnNotFound;
  	}
-@@ -3679,6 +3700,7 @@ is_io_registry_entry_get_property_recursively(
+@@ -3822,6 +3843,7 @@ is_io_registry_entry_get_property_recursively(
  
  	obj = entry->copyProperty( property_name,
  	    IORegistryEntry::getPlane( plane ), options );
@@ -129,7 +146,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  	if (!obj) {
  		return kIOReturnNotFound;
  	}
-@@ -3873,6 +3895,7 @@ is_io_registry_entry_get_property_bin_buf(
+@@ -4016,6 +4038,7 @@ is_io_registry_entry_get_property_bin_buf(
  	}
  
  	err = kIOReturnNotFound;
@@ -137,7 +154,7 @@ diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
  	if (gIORegistryEntryPropertyKeysKey == sym) {
  		obj = entry->copyPropertyKeys();
  	} else {
-@@ -3905,6 +3928,7 @@ is_io_registry_entry_get_property_bin_buf(
+@@ -4048,6 +4071,7 @@ is_io_registry_entry_get_property_bin_buf(
  	}
  
  	sym->release();
@@ -159,9 +176,9 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
  const char * gIOKernelConfigTables =
      "("
      "   {"
-@@ -39,4 +43,11 @@ const char * gIOKernelConfigTables =
-     "     'IOProviderClass' = IOPlatformExpertDevice;"
-     "     'IOProbeScore'    = 0:32;"
+@@ -44,4 +48,11 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOService;"
+     "     'IOExclaveProxy'  = 1:32;"
      "   }"
 +#if defined(__arm64__) && !defined(APPLE_ARM64_ARCH_FAMILY)
 +    "   ,{"
@@ -174,15 +191,7 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -64,6 +64,7 @@ extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
- extern dev_t mdevlookup(int devid);
- extern void mdevremoveall(void);
- extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
-+extern int mtk_emmc_root(dev_t *root);
- extern void di_root_ramfile(IORegistryEntry * entry);
- extern int IODTGetDefault(const char *key, void *infoAddr, unsigned int infoSize);
- extern boolean_t cpuid_vmm_present(void);
-@@ -683,7 +684,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+@@ -708,7 +708,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  	assert(matching);
  	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
  
@@ -198,7 +207,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  		OSSafeReleaseNULL(service);
  	} else {
  		IOLog("!BSD\n");
-@@ -762,10 +770,39 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+@@ -791,6 +798,17 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  #endif /* __LP64__ */
  				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
  			}
@@ -210,31 +219,9 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 +			if (data && data->getLength() >= 2 * sizeof(uintptr_t)) {
 +				uintptr_t *ramdParms = (uintptr_t *)data->getBytesNoCopy();
 +				if (ramdParms[1] <= (((uint64_t)UINT_MAX) << 12)) {
-+					/* md1 even without an md0 (the system image read off the eMMC instead, rd=emmc) */
-+					(void)mdevadd(1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
++					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
 +				}
 +			}
  			regEntry->release();                                                            /* Toss the entry */
  		}
  	}
- 
-+//
-+//	The first phone's system image on its eMMC, read as it is needed (bsd/dev/mtk_emmc.c): boot-arg
-+//	emmc_root=1 beside rd=md0, which stays for user space to see -- libignition takes the "ramdisk" boot
-+//	from it, and any other rd= for a boot that wants a preboot volume (run 322)
-+//
-+	uint32_t emmcRoot = 0;
-+	if (PE_parse_boot_argn("emmc_root", &emmcRoot, sizeof(emmcRoot)) && emmcRoot) {
-+		OSSafeReleaseNULL(matching);
-+		if (mtk_emmc_root(root) != 0) {
-+			panic("IOFindBSDRoot: emmc_root=1, but the eMMC's xnusys partition could not be read");
-+		}
-+		strlcpy(rootName, "emmc0", rootNameSize);
-+		IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
-+		*oflags = 0;
-+		goto iofrootx;
-+	}
-+
- //
- //	Now check if we are trying to root on a memory device
- //

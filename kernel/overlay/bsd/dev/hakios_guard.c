@@ -29,7 +29,7 @@
  *   monitor    a further reduction that the amplifiers' watch asks for (hakios_speaker.c:
  *              Android's table for a cold amplifier, and a low battery)
  *
- * Before all that, a gain (sound_gain, at most 12 dB): The system's own processing for the reference phone's
+ * Before all that, a gain (sound_gain, at most 12 dB): the system's own processing for the reference phone's
  * speaker keeps even a full-scale tone at its top volume 12.6 to 14.3 dB under full scale, so
  * without it the system at the top would stay that much under Android at the top. What it lifts over
  * full scale is held to full scale by the peak limiter (or to its lower limit), never clipped.

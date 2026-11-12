@@ -24,6 +24,7 @@
  */
 
 #include <kern/clock.h>
+#include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 #include <kern/locks.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
