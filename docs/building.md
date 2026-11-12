@@ -1,7 +1,7 @@
 # From a clone to the home screen
 
 Every command between `git clone` and the system's home screen on a phone whose package is on the `devices` branch (the first one: `x6826b`), in order, with what each one needs and how long it took.
-It was done exactly so on 10 November 2026: a new clone of this branch in an empty directory, on an Intel Mac with macOS 14.0, Apple clang 15.0.0,
+It was done so on 11 and 12 November 2026: a new clone of this repository in an empty directory, on an Intel Mac with macOS 14.0, Apple clang 15.0.0,
 Command Line Tools 15.3, no Homebrew. Whatever stopped that clone is fixed in the scripts or said here. On Linux the steps are the same and the
 packages are those of [kernel/README.md](../kernel/README.md); that side was not run again for this page.
 
@@ -29,18 +29,22 @@ The path of the clone must have no spaces in it.
 ```sh
 export HAKIOS_SERIAL=<your phone's adb serial>     # only ever in the environment, never in a file
 
-tools/device.py add x6826b   #        the phone's package: what the kernel's table and the loader are built from
-kernel/assemble.sh ../xnu-8796-hakios   #  8 s   Apple's xnu-8796.121.2 + kernel/overlay + kernel/patches, next to the clone
-kernel/deps/setup.sh            #  1 min what the kernel's build needs: sources, host tools, the SDK's overlay, two libraries
-kernel/build.sh -j8 -k        #  3 min the kernel. -k is needed: one harmless error (lldbmacros) ends make with code 2
-tools/get-zig.sh             #  1 min zig 0.13.0 into build/zig: its ld.lld links the loader (not needed where ld.lld is installed)
-system/fetch.sh              # 30 min at 4 MB/s: the files of the system image (20F66) out of Apple's IPSW; a broken download is taken up again
-./userland/build.sh          #  4 min our programs and libraries, userland/root.apfs (4 MB) and userland/system.apfs (2.3 GB)
-tools/mkpayload.sh      # 1 s: build/payload.bin = the kernel + the small root
-mkdir -p backup && cp <your rooted boot image> backup/boot_a_magisk.img
-tools/system-flash.sh        #  3 min system.apfs into xnusys (Android must be up; 2.3 GB free on /data for the way there)
-XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh      # the board file's [boot]: 120 s, cpus=4 touchscreen=2 mali=1 fbscale=2 fbfit=3    # 5 min
+make check                               # 16 s    everything that needs no phone
+tools/device.py add x6826b               #         the phone's package: what the kernel's table and the loader are built from
+kernel/assemble.sh ../xnu-8796-hakios    #         Apple's xnu-8796.121.2 + kernel/overlay + kernel/patches, next to the clone
+kernel/deps/setup.sh                     # 40 s    what the kernel's build needs: sources, host tools, the SDK's overlay, two libraries
+kernel/build.sh -j8 -k                   # 2 min 48 s the kernel. -k is needed: one harmless error (lldbmacros) ends make with code 2
+tools/get-zig.sh                         #         zig 0.13.0 into build/zig: its ld.lld links the loader (not needed where ld.lld is installed)
+system/fetch.sh                          # ~30 min at 4 MB/s: the files of the system image (20F66) from Apple's server; a broken download is taken up again
+userland/build.sh                        # 4 min   our programs and libraries, userland/root.apfs (4 MB) and userland/system.apfs (2.4 GB)
+tools/mkpayload.sh                       # 1 s     build/payload.bin = the kernel + the small root
+mkdir -p backup fw-touch && cp <your rooted boot image> backup/boot_a_magisk.img && cp <the touch firmware> fw-touch/hdl_firmware.img
+tools/system-flash.sh                    # ~2 min  system.apfs into xnusys (Android must be up; 2.4 GB free on /data for the way there)
+XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh   # 5 min   the board file's [boot]: 120 s, cpus=4 touchscreen=2 mali=1 fbscale=2 fbfit=3
 ```
+
+The times are those of a clone of this repository built on 12 November 2026 on the Intel Mac named above;
+where none is given, the step was run but its time was not kept.
 
 The last command builds the loader, packs it with Android's kernel and the payload into `build/boot_a.img` (30 MB; `boot_a` holds 32),
 flashes `boot_a`, lets Android come up, asks it for one XNU boot, and reads the log when Android is back. The phone shows the home screen about
