@@ -36,7 +36,7 @@
 extern dev_t mdevlookup(int devid);
 extern int mdevgetkernelrange(dev_t dev, vm_offset_t *base, uint64_t *size);
 
-#define SPARSE_MAGIC   "HAKIOSSPARSE1\0\0"
+#define SPARSE_MAGIC   "HAKIOSSPARSE1\0\0\0"
 #define SPARSE_SECTOR  512
 
 struct sparse_header {

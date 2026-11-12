@@ -1378,7 +1378,7 @@ main(int argc, char **argv, char **envp)
 	}
 
 	(void)envp;
-	if (argc > 0 && strncmp(argv[0], "/hakios/", 9) == 0) {
+	if (argc > 0 && strncmp(argv[0], "/hakios/", sizeof("/hakios/") - 1) == 0) {
 		base = "/hakios";
 	}
 	/* Not process 1: a command runner, "init FILE" (this is how a launchd job runs a list of commands). */
