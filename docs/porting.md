@@ -67,10 +67,15 @@ with this loader: every run writes `boot_a`.
 ## Describe the board
 
 ```sh
-tools/boards.py new NAME --soc mt6768 --description "Maker Model"     # devices/NAME/ from the template
+adb shell su -c 'cat /sys/firmware/fdt' > fdt.dtb     # the live tree, with what LK added at boot
+tools/boards.py new NAME --soc mt6768 --description "Maker Model" --dtb fdt.dtb
 ```
 
-Then read these from your phone, all under Android, as root, before any code is run.
+With `--dtb` the tool fills in what the tree says (tools/devicetree.py): for a chip that has no SoC
+file it writes one, each key with the node it came from; for one that has, it says whether the phone's
+tree agrees with it -- a disagreement means another chip or another revision. It lists what the tree
+does not have. The rest of the board file is read from your phone, all under Android, as root, before
+any code is run.
 `tools/fdtfind.py <file.dtb> <word>` searches a device tree saved to a file
 (`adb shell su -c 'cat /sys/firmware/fdt' > fdt.dtb`); the live one is under
 `/sys/firmware/devicetree/base`. The example values are the first phone's and are named as such:

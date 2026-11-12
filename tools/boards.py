@@ -9,8 +9,9 @@
                                        DIR (build/boards): the kernel's table (hakios_board_table.h) and, for
                                        each board with a [loader] section, the loader's header
                                        (NAME/hakios_platform.h). The builds run this themselves.
-  tools/boards.py new NAME --soc SOC [--description TEXT]
-                                       start devices/NAME/ from the template
+  tools/boards.py new NAME --soc SOC [--description TEXT] [--dtb FILE]
+                                       start devices/NAME/ from the template; with --dtb, fill in what the phone's
+                                       device tree says (tools/devicetree.py), and write soc/SOC.toml if it is new
   tools/boards.py which                the one phone that is here (what loader/build.sh builds for when not told)
   tools/boards.py get BOARD SECTION.KEY   one value, for the shell scripts (lists: space-separated)
 
@@ -34,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import minitoml  # noqa: E402  (TOML where Python has no reader of its own yet: tools/minitoml.py)
+from devicetree import from_dtb  # noqa: E402  (what a phone's device tree says: tools/devicetree.py)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICES = ROOT / 'devices'
@@ -494,25 +496,93 @@ def phones(boards):
     return sorted(name for name, board in boards.items() if 'loader' in board)
 
 
-def new_board(name, soc_name, description=None):
+def toml_value(kind, value):
+    if isinstance(value, list):
+        return '[' + ', '.join(str(v) for v in value) + ']'
+    if isinstance(value, str):
+        return c_string(value)
+    return f'0x{value:08x}' if kind in (A, X) else str(value)
+
+
+def soc_text(soc_name, found):
+    """A new SoC file from what the tree said: every key with the node it came from."""
+    out = [f'# {soc_name}: what every board with this chip shares, read by tools/boards.py new --dtb from one',
+           "# phone's Android device tree. Check each value; fill in what the end of the file lists.",
+           f'name = "{soc_name}"', 'description = "MediaTek ... (' + soc_name.upper() + ')"', '']
+    for section in ('platform', 'blocks'):
+        out.append(f'[{section}]')
+        for key, (kind, _) in SOC_SCHEMA[section].items():
+            if key in found['soc'][section]:
+                line = f'{key} = {toml_value(kind, found["soc"][section][key])}'
+                out.append(f'{line:36}# {found["sources"].get(f"{section}.{key}", "")}')
+        out.append('')
+    out += ['# Not found in the tree:'] + [f'#   {m}' for m in found['missing'] if m.startswith(('[blocks]', 'the', 'a UART', '/psci'))]
+    out += ['# [cpufreq] (the big cluster\'s PLL) is never in a tree: the vendor\'s cpufreq table for the chip.', '']
+    return '\n'.join(out)
+
+
+def soc_differences(soc, found):
+    """What an existing SoC file and the phone's tree disagree on, in words."""
+    out = []
+    for section in ('platform', 'blocks'):
+        for key, value in found['soc'][section].items():
+            have = soc.get(section, {}).get(key)
+            if have is None:
+                out.append(f'[{section}] {key}: the file has none, the tree says {value!r}')
+            elif have != value and key not in ('io_base', 'io_size'):
+                out.append(f'[{section}] {key}: the file says {have!r}, the tree {value!r} ({found["sources"].get(section + "." + key, "")})')
+    return out
+
+
+def new_board(name, soc_name, description=None, dtb=None):
     if not NAME.match(name):
         raise SystemExit(f'boards.py: {name!r}: lower-case letters, digits and dashes')
     target = DEVICES / name
     if target.exists():
         raise SystemExit(f'boards.py: {shown(target)} is there already')
+    found = None
+    if dtb:
+        try:
+            found = from_dtb(Path(dtb).read_bytes())
+        except (OSError, ValueError) as error:
+            raise SystemExit(f'boards.py: {dtb}: {error}')
     if not (SOCS / f'{soc_name}.toml').is_file():
         if not NAME.match(soc_name):
             raise SystemExit(f'boards.py: {soc_name!r}: lower-case letters, digits and dashes')
-        text = (DEVICES / '_template/soc.toml').read_text()
-        (SOCS / f'{soc_name}.toml').write_text(text.replace('name = "mt0000"', f'name = "{soc_name}"'))
-        print(f'boards.py: soc/{soc_name}.toml is new: every address in it is to be read from your phone')
+        if found:
+            (SOCS / f'{soc_name}.toml').write_text(soc_text(soc_name, found))
+            print(f'boards.py: soc/{soc_name}.toml written from the tree: check it, then fill in what its end lists')
+        else:
+            text = (DEVICES / '_template/soc.toml').read_text()
+            (SOCS / f'{soc_name}.toml').write_text(text.replace('name = "mt0000"', f'name = "{soc_name}"'))
+            print(f'boards.py: soc/{soc_name}.toml is new: every address in it is to be read from your phone')
+    elif found:
+        differences = soc_differences(minitoml.loads((SOCS / f'{soc_name}.toml').read_text()), found)
+        print(f'boards.py: soc/{soc_name}.toml and the tree: ' + ('they agree' if not differences else
+              'they DISAGREE -- another chip, or another revision of it:\n  ' + '\n  '.join(differences)))
     target.mkdir(parents=True)
     text = (DEVICES / '_template/board.toml').read_text()
     text = text.replace('name = "NAME"', f'name = "{name}"').replace('soc = "mt0000"', f'soc = "{soc_name}"')
     if description:
         text = text.replace('description = "Maker Model"', f'description = {c_string(description)}')
+    if found:
+        board = found['board']
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            if line.startswith('# core_order = ') and 'core_order' in board:
+                lines[i] = f'# core_order = {toml_value(LIST, board["core_order"])}     # from the tree: {found["sources"]["loader.core_order"]}'
+            elif line.startswith('# fb_base = ') and 'fb_base' in board:
+                lines[i] = f'# fb_base = 0x{board["fb_base"]:08x}              # from the tree: {found["sources"]["display.fb_base"]}'
+            elif line.startswith('# fb_size = ') and 'fb_size' in board:
+                lines[i] = f'# fb_size = 0x{board["fb_size"]:x}'
+        if 'ramoops_region' in board:
+            address, size = board['ramoops_region']
+            lines.insert(lines.index('# [ramoops]') + 1, f'#                                   (the tree: the region is 0x{address:08x} + 0x{size:x})')
+        text = '\n'.join(lines)
     (target / 'board.toml').write_text(text)
     shutil.copy(DEVICES / '_template/README.md', target / 'README.md')
+    if found and found['missing']:
+        print('boards.py: not in the tree, to be read another way:\n  ' + '\n  '.join(found['missing']))
     print(f'boards.py: {shown(target)}/board.toml: fill in what is marked, in the order of docs/porting.md; '
           f'then tools/boards.py check')
 
@@ -537,6 +607,7 @@ def main():
     new.add_argument('name')
     new.add_argument('--soc', required=True)
     new.add_argument('--description')
+    new.add_argument('--dtb', help="the phone's Android device tree (as root: cat /sys/firmware/fdt)")
     args = parser.parse_args()
     MORE_DEVICES.extend(Path(d) for d in args.devices)
     MORE_SOCS.extend(Path(d) for d in args.soc_dir)
@@ -546,7 +617,7 @@ def main():
         MORE_DEVICES.extend(Path(d) for d in os.environ.get('HAKIOS_DEVICES', '').split(os.pathsep) if d)
 
     if args.command == 'new':
-        new_board(args.name, args.soc, args.description)
+        new_board(args.name, args.soc, args.description, args.dtb)
         return 0
     if args.command == 'check':
         problems = Problems()

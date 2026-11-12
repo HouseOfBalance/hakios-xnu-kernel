@@ -126,5 +126,85 @@ class Boards(unittest.TestCase):
             self.assertIn(key, soc)
 
 
+
+def fdt(nodes):
+    """A flattened device tree of {path: {property: bytes}}, paths in order, for the tests (no dtc needed)."""
+    import struct
+    strings, structure = b'', b''
+    offsets = {}
+
+    def name_offset(name):
+        nonlocal strings
+        if name not in offsets:
+            offsets[name] = len(strings)
+            strings += name.encode() + b'\0'
+        return offsets[name]
+
+    def pad(b):
+        return b + b'\0' * (-len(b) % 4)
+    open_path = []
+    for path, props in list(nodes.items()) + [('/', None)]:
+        parts = [] if path == '/' else path.strip('/').split('/')
+        while open_path and open_path != parts[:len(open_path)]:
+            structure += struct.pack('>I', 2)
+            open_path.pop()
+        if props is None:
+            break
+        for part in parts[len(open_path):]:
+            structure += struct.pack('>I', 1) + pad(part.encode() + b'\0')
+            open_path.append(part)
+        for key, value in props.items():
+            structure += struct.pack('>III', 3, len(value), name_offset(key)) + pad(value)
+    structure = struct.pack('>I', 1) + pad(b'\0') + structure + struct.pack('>II', 2, 9)
+    off_struct = 40 + 16
+    off_strings = off_struct + len(structure)
+    total = off_strings + len(strings)
+    return struct.pack('>10I', 0xd00dfeed, total, off_struct, off_strings, 40, 17, 16, 0, len(strings), len(structure)) + \
+        b'\0' * 16 + structure + strings
+
+
+class DeviceTree(unittest.TestCase):
+    def tree(self):
+        import struct
+
+        def reg(*pairs):
+            return b''.join(struct.pack('>QQ', a, s) for a, s in pairs)
+        nodes = {
+            '/interrupt-controller': {'compatible': b'arm,gic-v3\0', 'reg': reg((0x0d000000, 0x40000), (0x0d040000, 0x200000))},
+            '/serial@12002000': {'reg': reg((0x12002000, 0x1000))},
+            '/psci': {'method': b'hvc\0'},
+            '/mmc@12230000': {'reg': reg((0x12230000, 0x10000))},
+            '/msdc@12230000': {'reg': reg((0x12230000, 0x10000))},
+            '/msdc@12240000': {'reg': reg((0x12240000, 0x10000))},
+            '/scp@11500000': {'reg': reg((0x11500000, 0x80000), (0x115c0000, 0x3000), (0x115c4000, 0x1000))},
+            '/toprgu@11007000': {'reg': reg((0x11007000, 0x1000))},
+            '/gpio@11005000': {'reg': reg((0x11005000, 0x1000)), 'status': b'disabled\0'},
+            '/reserved-memory/pstore': {'reg': reg((0x5e010000, 0xe0000))},
+        }
+        for i in range(4):
+            nodes[f'/cpus/cpu@{i}'] = {'reg': struct.pack('>I', i << 8), 'compatible': b'arm,cortex-a75\0' if i == 3 else b'arm,cortex-a55\0'}
+        return fdt(nodes)
+
+    def test_what_the_tree_says(self):
+        import devicetree
+        found = devicetree.from_dtb(self.tree())
+        platform, blocks = found['soc']['platform'], found['soc']['blocks']
+        self.assertEqual((platform['gic_dist'], platform['gic_redist'], platform['uart0']), (0x0d000000, 0x0d040000, 0x12002000))
+        self.assertEqual((platform['cores'], platform['core_shift'], platform['big_cores'], platform['psci']), (4, 8, [3], 'hvc'))
+        self.assertEqual(found['board']['core_order'], [0, 3, 1, 2])
+        self.assertEqual((blocks['msdc0'], blocks['msdc1']), (0x12230000, 0x12240000))
+        self.assertEqual((blocks['scp_sram'], blocks['scp_cfg'], blocks['scp_clkctrl']), (0x11500000, 0x115c0000, 0x115c4000))
+        self.assertEqual(blocks['toprgu'], 0x11007000)
+        self.assertNotIn('gpio', blocks)                            # (disabled: left out, not taken)
+        self.assertEqual(found['board']['ramoops_region'], (0x5e010000, 0xe0000))
+        self.assertTrue(any('gpio' in m for m in found['missing']))
+        self.assertTrue(any('framebuffer' in m for m in found['missing']))
+
+    def test_refuses_what_is_not_a_tree(self):
+        import devicetree
+        with self.assertRaises(ValueError):
+            devicetree.from_dtb(b'\0' * 64)
+
+
 if __name__ == '__main__':
     unittest.main()
