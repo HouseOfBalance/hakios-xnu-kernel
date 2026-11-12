@@ -223,7 +223,6 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 				-lc++ -I../tools/mesa/air -Isrc -o obj/HakiosMetal src/hakiosmetal.m \
 				obj/metal/air.o obj/metal/buffer.o obj/metal/log.o obj/metal/texture.o obj/metal/blit.o obj/metal/draw.o obj/metal/command.o obj/metal/recipes.o obj/metal/import.o obj/metal/perf.o obj/metal/plib.o obj/metal/shape.o obj/metal/argenc.o obj/metal/run.o obj/metal/worker.o obj/metal/surfaces.o obj/metal/render.o obj/metal/compute.o obj/metal/cmdbuf.o obj/metal/pipeline.o obj/metal/drawable.o
 			$DYN -framework CoreFoundation -framework IOKit -o obj/metal_props src/metal_props.c
-			$DYN -o obj/tolog src/tolog.c
 			$DYN -o obj/psgrep src/psgrep.c
 			$DYN -framework Foundation -framework IOKit -framework Metal -lobjc \
 				-o obj/metal_drv_test src/metal_drv_test.m
@@ -274,6 +273,8 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 		fi
 		# the output device of the audio server: a plug-in for CoreAudio's HAL
 		$DYN -bundle -framework CoreFoundation -o obj/HakiosAudio src/audio_plugin.c
+		# a program's output into the log (rc.launchd.aks and the job lists run programs under it): every image has it
+		$DYN -o obj/tolog src/tolog.c
 		if [ -n "$GL" ]; then
 			# the OpenGL ES library, and the table of functions that hands CoreAnimation's calls to it
 			# (Mesa says beside the library what it was built from: one from other patches is built again)
@@ -295,6 +296,7 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 		fi
 	fi
 	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/cputop obj/nullxpc obj/mg_test root/bin/
+	[ -f obj/tolog ] && cp obj/tolog root/bin/
 	[ -n "$BT" ] && [ -f obj/bt_test ] && cp obj/bt_test root/bin/     # (src/bt_test.m: CoreBluetooth's scan, for Bluetooth runs)
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
 	[ -f obj/cow_test ] && cp obj/cow_test root/bin/
@@ -346,7 +348,7 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 		mkdir -p root/lib/HakiosMetal.bundle
 		cp obj/HakiosMetal root/lib/HakiosMetal.bundle/
 		cp src/metal_plugin.plist root/lib/HakiosMetal.bundle/Info.plist
-		cp obj/metal_props obj/metal_drv_test obj/tolog obj/psgrep root/bin/
+		cp obj/metal_props obj/metal_drv_test obj/psgrep root/bin/
 		# on the Mali the driver's compiler is inside libOSMesa (tools/mesa/panfrost-osmesa-air.patch)
 		ln -s libOSMesa.8.dylib root/lib/libhakiosair.dylib
 		# QC_METALLIB=FILE: QuartzCore's shaders in AIR for CoreAnimation's Metal renderer (boot-arg

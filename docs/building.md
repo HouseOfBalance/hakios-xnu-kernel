@@ -79,6 +79,29 @@ The log keeps its last 256 KB, so a picture wider than the default 60 pixels, or
   them with macOS's `codesign`.
 - `lsd` fills the log with `denied attempt to escape CPU monitor`, twenty lines a second. It is harmless and it is why the log's beginning is lost.
 
+## Wi-Fi, Bluetooth and Metal
+
+Each needs more in the images than the plain boot, and the phone's CONNSYS firmware in
+`kernel/deps/build/connsys-fw/firmware` (the files are listed in the package's Wi-Fi journal; never in the
+repository). `tools/image.sh` makes both images and the payload; the system image changes, so write it
+before the run.
+
+```sh
+tools/image.sh wifi && tools/system-flash.sh       # and fw-wifi/network: your network's name, then its passphrase
+XNU_ARGS="cpus=4 touchscreen=2 buttons=2 mali=1 fbscale=2 fbfit=3 scp_step=7 connsys_step=17 connsys_wake=0 mtkbatt=1" \
+  XNU_SECS=210 tools/xnu-cycle.sh
+
+tools/image.sh bluetooth && tools/system-flash.sh  # the same arguments and connsys_bt=2 aks_keys=1, XNU_SECS=300
+QC_METALLIB=<QuartzCore's shaders> tools/image.sh metal && tools/system-flash.sh   # and metal=1 fb_queue=1 fb_flip=1
+```
+
+What was seen on 12 November 2026 from this repository: Wi-Fi joined the network given (WPA2, its keys
+in) and Settings showed it ticked; the status bar had the battery's percentage; `bt_test` saw 19 BLE
+devices through CoreBluetooth; with Metal the plug-in `HakiosMetalDevice` was on `IOAcceleratorES` and
+CoreAnimation drew through the GPU, up to 17 frames a second (`35 checks, 4 failed`: the files of init's
+four tests that the Metal image leaves out for room). The pictures come from the job lists'
+`fbgrab -log NAME`: `python3 tools/fbjpg.py LOG OUT.jpg NAME`.
+
 ## If it does not come back
 
 A kernel that hangs costs a power cycle: the image boots Android unless asked for XNU, once. If `boot_a` itself is broken, the way back is the boot
