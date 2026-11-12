@@ -1,0 +1,18 @@
+name: The docs say what is not so
+description: A guide, a comment or a README that is wrong, out of date, or leaves out a step.
+labels: [docs]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      placeholder: docs/building.md, "The commands"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it says, and what is so
+      description: With what showed it (a command and its output, a file and line).
+    validations:
+      required: true

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/oosexgang/xnu-kernel-mtk-helio/blob/main/docs/troubleshooting.md
+    about: What went wrong on the first phone, what it looked like, and what fixed it. Read it first.

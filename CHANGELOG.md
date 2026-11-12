@@ -84,3 +84,10 @@ run on the phone showed what.
   the voltage alone, the two too far apart, charging, no conversion, a wrapper that never answers)
   and `keys_driver_test` (volume and power keys, a bounce, a silent PMIC).
 - `kernel/syntax-check.sh` (`make syntax-check`): every overlay file through the host's clang.
+
+## Guides and repository files (2026-11-12)
+
+- [boot-args.md](docs/boot-args.md) (generated), [writing-a-driver.md](docs/writing-a-driver.md) with
+  an example driver and its test, [troubleshooting.md](docs/troubleshooting.md).
+- Issue templates (a bug, another phone, the docs), a pull request template, `.editorconfig`,
+  `.gitattributes`.

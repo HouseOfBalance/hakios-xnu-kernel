@@ -1,0 +1,36 @@
+name: Another phone
+description: Porting to a MediaTek phone that has no device package yet (docs/porting.md).
+labels: [device]
+body:
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and SoC
+      placeholder: Maker Model, MT6768
+    validations:
+      required: true
+  - type: dropdown
+    id: unlocked
+    attributes:
+      label: Can its boot loader be unlocked, and can it be rooted under Android?
+      options: ["Yes, both", "Unlocked, not rooted", "No", "Not known yet"]
+    validations:
+      required: true
+  - type: dropdown
+    id: brom
+    attributes:
+      label: Can it reach the boot ROM's download mode (mtkclient)? It is the way back from a broken boot_a.
+      options: ["Yes, checked", "No", "Not checked yet"]
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "`tools/boards.py status NAME`"
+      description: Its output for your package, once there is one.
+      render: text
+  - type: textarea
+    id: where
+    attributes:
+      label: How far it got, and where it stopped
+      description: The step of docs/porting.md, and the last lines of the log or of pstore.
