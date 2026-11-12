@@ -67,3 +67,15 @@ went: [docs/migrating.md](docs/migrating.md).
 
 See the commit messages: each says what was built, what was checked on the build machine and which
 run on the phone showed what.
+
+## Tests of the drivers (2026-11-12)
+
+- `tests/fakekernel/`: enough of XNU's interfaces for a driver's own `.c` to run as a host program
+  (pthreads for threads, the host's clock, a table for sysctls), on macOS as well as Linux.
+- `tests/run.sh` runs `input_queue`, `station`, `apple80211`, `sparse_driver`, `guard` and
+  `audio_device` against it, one scenario a process.
+- Three drivers got the bounds checks those tests ask for: `hakios_sta.c` holds the radio's
+  channel count to the list's room; `hakios_apple80211.c` holds a network's name and information
+  elements to their record; `hakios_sparse.c` checks the header's sizes without a sum that can wrap,
+  and refuses a table entry past the image's blocks. Host tests only: not yet run on a phone.
+- `kernel/syntax-check.sh` (`make syntax-check`): every overlay file through the host's clang.

@@ -18,4 +18,30 @@ if command -v clang > /dev/null; then
 else
 	echo "tests: no clang on this machine: the loader was not compiled"
 fi
+
+# the drivers: each test #includes one driver's .c file and runs it against tests/fakekernel (the kernel
+# functions it calls, made of ordinary C) and, where it talks to hardware, a model of that hardware.
+# A test lists its scenarios when run without one; each runs in its own process.
+HERE=$PWD/tests
+SRC=$PWD/kernel/overlay/bsd/dev
+CC=${CC:-cc}
+DRIVER_FLAGS=(-std=gnu11 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -O2 -pthread
+	-I"$HERE" -I"$HERE/fakekernel" -I"$SRC" -I"$SRC/.." -I"$out" "$HERE/fakekernel/fakekernel.c")
+failed=0
+for test in input_queue_test station_test apple80211_test sparse_driver_test guard_test audio_device_test; do
+	echo "== $test"
+	if ! "$CC" "${DRIVER_FLAGS[@]}" "$HERE/$test.c" -o "$out/$test"; then
+		failed=1
+		continue
+	fi
+	list=$("$out/$test")
+	if [ -z "$list" ]; then
+		echo "FAIL: $test lists no scenario"
+		failed=1
+	fi
+	for scenario in $list; do
+		"$out/$test" "$scenario" || failed=1
+	done
+done
+[ "$failed" = 0 ] || { echo "tests: FAILED (above)"; exit 1; }
 echo "tests: ok"
