@@ -7,6 +7,8 @@
 | [building.md](building.md) | **From a clone to the home screen**: every command, what each needs and how long it took |
 | [drivers.md](drivers.md) | Every driver: the part it is for, its feature and boot argument, how tied to one phone it is |
 | [boot-args.md](boot-args.md) | Every boot argument the kernel reads, with the comment beside its read (generated: `make docs`) |
+| [writing-a-driver.md](writing-a-driver.md) | A new driver: the rules, the steps, an example driver with its host test |
+| [troubleshooting.md](troubleshooting.md) | What went wrong on the first phone, what it looked like, what fixed it |
 | [migrating.md](migrating.md) | For a branch from the old layout: where things went, what the names became |
 | [bluetooth-porting.md](bluetooth-porting.md) | Bluetooth: the skeleton driver and the five operations a phone supplies |
 | [camera-porting.md](camera-porting.md) | The camera: the skeleton driver and its table of operations |
