@@ -1,0 +1,405 @@
+diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
+--- a/bsd/kern/sys_work_interval.c
++++ b/bsd/kern/sys_work_interval.c
+@@ -265,6 +265,22 @@ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
+ 
+ 		break;
+ 
++	case 6:
++	case 7:
++	case 8:
++		/*
++		 * (redwood) Not in the open source: what os_workgroup_interval_start(), _update() and
++		 * _finish() of iOS send, for the performance controller, which is not here either.
++		 * CoreAudio does it in every I/O cycle and logs an error each time it is refused: fifty
++		 * lines a second from the audio server's real-time thread. For its threads, and only
++		 * for them, there is nothing to do and nothing wrong. (The window server asks for its
++		 * frames too, and is used to the refusal.)
++		 */
++		if (kern_work_interval_type_of_thread(current_thread()) == WORK_INTERVAL_TYPE_COREAUDIO) {
++			return 0;
++		}
++		return ENOTSUP;
++
+ 	default:
+ 		return ENOTSUP;
+ 	}
+diff --git a/osfmk/kern/bsd_kern.c b/osfmk/kern/bsd_kern.c
+--- a/osfmk/kern/bsd_kern.c
++++ b/osfmk/kern/bsd_kern.c
+@@ -1510,3 +1510,81 @@ bsd_to_mach_failure(int bsd_err)
+ 		return KERN_FAILURE;
+ 	}
+ }
++
++/*
++ * redwood: every thread of a task, by its user registers and frame pointers -- for a daemon that answers
++ * nobody and in which no thread of ours runs (mediaserverd on the Infinix, runs 248-265), seen from here
++ * without asking anything of it. The task's and each thread's suspend counts first (a task held by
++ * task_suspend runs no thread at all), then for each thread its state, user pc, lr and up to 9 return
++ * addresses, raw (the shared cache's slide is the same for every process: the caller knows it).
++ * Said through `say`, a line each; at most 40 threads. bsd/dev/redwood_ustack.c is the sysctl.
++ */
++#if defined(__arm64__)
++#include <arm/thread.h>
++
++void redwood_task_ustacks(task_t task, void (*say)(const char *, ...));
++
++void
++redwood_task_ustacks(task_t task, void (*say)(const char *, ...))
++{
++	struct {
++		uint64_t pc, lr, fp;
++		int state, suspended;
++		uint32_t user_ms, system_ms;
++	} seen[40];
++	unsigned count = 0, total = 0;
++	int task_suspended;
++	thread_t thread;
++	vm_map_t map;
++
++	task_lock(task);
++	task_suspended = (int)task->suspend_count;
++	map = task->map;
++	vm_map_reference(map);
++	queue_iterate(&task->threads, thread, thread_t, task_threads) {
++		struct arm_saved_state *regs = get_user_regs(thread);
++
++		total++;
++		if (count == 40 || regs == NULL) {
++			continue;
++		}
++		seen[count].pc = get_saved_state_pc(regs);
++		seen[count].lr = get_saved_state_lr(regs);
++		seen[count].fp = get_saved_state_fp(regs);
++		seen[count].state = thread->state;
++		seen[count].suspended = (int)thread->suspend_count + (int)thread->user_stop_count;
++		{
++			/* its CPU time so far, in user space and in the kernel (where a thread spinning through
++			 * the kernel shows, which its user stack cannot) */
++			time_value_t user, system;
++
++			thread_read_times(thread, &user, &system, NULL);
++			seen[count].user_ms = (uint32_t)(user.seconds * 1000 + user.microseconds / 1000);
++			seen[count].system_ms = (uint32_t)(system.seconds * 1000 + system.microseconds / 1000);
++		}
++		count++;
++	}
++	task_unlock(task);
++	say("ustack: %u threads, the task suspended %d time(s)", total, task_suspended);
++	for (unsigned i = 0; i < count; i++) {
++		char line[200];
++		size_t used;
++		uint64_t fp = seen[i].fp;
++
++		used = (size_t)snprintf(line, sizeof(line), "ustack t%u state %#x stops %d cpu %u+%u ms: %llx %llx", i, seen[i].state,
++		    seen[i].suspended, seen[i].user_ms, seen[i].system_ms, (unsigned long long)seen[i].pc, (unsigned long long)seen[i].lr);
++		for (unsigned k = 0; k < 9 && fp != 0 && (fp & 7) == 0 && used < sizeof(line); k++) {
++			uint64_t frame[2];
++
++			if (copyinmap(map, (vm_map_offset_t)fp, frame, sizeof(frame)) != KERN_SUCCESS) {
++				break;
++			}
++			used += (size_t)snprintf(line + used, sizeof(line) - used, " %llx",
++			    (unsigned long long)(frame[1] & 0x0000000fffffffffULL));
++			fp = frame[0] > fp ? frame[0] : 0;
++		}
++		say("%s", line);
++	}
++	vm_map_deallocate(map);
++}
++#endif
+diff --git a/osfmk/kern/debug.c b/osfmk/kern/debug.c
+--- a/osfmk/kern/debug.c
++++ b/osfmk/kern/debug.c
+@@ -1147,9 +1147,12 @@ panic_trap_to_debugger(const char *panic_format_str, va_list *panic_args, unsign
+ 	__builtin_unreachable();
+ }
+ 
++extern void loader_return(void);
++
+ void
+ panic_spin_forever(void)
+ {
++	loader_return();
+ 	for (;;) {
+ #if defined(__arm__) || defined(__arm64__)
+ 		/* On arm32, which doesn't have a WFE timeout, this may not return.  But that should be OK on this path. */
+@@ -1163,6 +1166,7 @@ panic_spin_forever(void)
+ static void
+ kdp_machine_reboot_type(unsigned int type, uint64_t debugger_flags)
+ {
++	loader_return();
+ 	if ((type == kPEPanicRestartCPU) && (debugger_flags & DEBUGGER_OPTION_SKIP_PANICEND_CALLOUTS)) {
+ 		PEHaltRestart(kPEPanicRestartCPUNoCallouts);
+ 	} else {
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -636,6 +636,11 @@ check_exc_receiver_dependency(
+  *	Returns:
+  *		KERN_SUCCESS if exception is handled by any of the handlers.
+  */
++#if defined(__arm64__)
++extern void user_exception_trace(exception_type_t exception, mach_exception_data_t code,
++    mach_msg_type_number_t count, thread_t thread);
++#endif
++
+ kern_return_t
+ exception_triage_thread(
+ 	exception_type_t        exception,
+@@ -650,6 +655,11 @@ exception_triage_thread(
+ 	struct exception_action *actions;
+ 	kern_return_t   kr = KERN_FAILURE;
+ 
++#if defined(__arm64__)
++	/* bring-up aid, see osfmk/arm64/user_exception_trace.c */
++	user_exception_trace(exception, code, codeCnt, thread);
++#endif
++
+ 	assert(exception != EXC_RPC_ALERT);
+ 
+ 	/*
+diff --git a/osfmk/kern/percpu.h b/osfmk/kern/percpu.h
+--- a/osfmk/kern/percpu.h
++++ b/osfmk/kern/percpu.h
+@@ -236,15 +236,22 @@ extern vm_offset_t other_percpu_base(int cpu_number);
+  * @param it            the name of the iterator
+  * @param name          the per-CPU variable name
+  */
++/*
++ * (redwood) All of the arithmetic is on integers here. As Apple wrote it, the end was a pointer
++ * computed from the start, and a compiler may then take "start <= start + n" for "n >= 0":
++ * with one processor start is VM_MAX_KERNEL_ADDRESS and end is 0, n looks positive, and the
++ * loop that must not run at all runs once on memory that does not exist (clang 18+ does this;
++ * the panic was in mbuf_mtypes_sync(), the first time a daemon asked for the mbuf statistics).
++ */
+ #define percpu_foreach_secondary(it, name) \
+ 	for (__PERCPU_TYPE(name) it, \
+-	    __base_ ## it = (typeof(it))__unsafe_forge_bidi_indexable(void *, percpu_base.start, percpu_base.end - percpu_base.start), \
+-	    __end_ ## it = (typeof(it))((caddr_t)__base_ ## it  + percpu_base.end - percpu_base.start); \
++	    __base_ ## it = (typeof(it))percpu_base.start, \
++	    __end_ ## it = (typeof(it))percpu_base.end; \
+         \
+-	    (it = (typeof(it))((caddr_t)__base_ ## it + __PERCPU_ADDR(name)), \
+-	    __base_ ## it <= __end_ ## it); \
++	    (it = (typeof(it))((vm_address_t)__base_ ## it + __PERCPU_ADDR(name)), \
++	    (vm_address_t)__base_ ## it <= (vm_address_t)__end_ ## it); \
+         \
+-	    __base_ ## it = (typeof(it))((caddr_t)__base_ ## it + percpu_section_size()))
++	    __base_ ## it = (typeof(it))((vm_address_t)__base_ ## it + percpu_section_size()))
+ 
+ #pragma mark - implementation details
+ 
+diff --git a/osfmk/kern/sched.h b/osfmk/kern/sched.h
+--- a/osfmk/kern/sched.h
++++ b/osfmk/kern/sched.h
+@@ -464,4 +464,13 @@ extern int sched_rt_n_backup_processors;
+ 
+ extern bool system_is_SMT;
+ 
++/*
++ * The "secondaries" are not the second threads of hyperthreaded cores but slower cores of their
++ * own, each paired with a faster one (ml_pair_slow_processors() in osfmk/arm64/machine_routines.c):
++ * the scheduler still prefers the primaries, but what runs on one core does not slow the other,
++ * so a secondary is not kept idle for its primary's sake, and when a primary goes idle a thread
++ * running on a secondary is moved to it.
++ */
++extern bool sched_slow_secondaries;
++
+ #endif  /* _KERN_SCHED_H_ */
+diff --git a/osfmk/kern/sched_clutch.c b/osfmk/kern/sched_clutch.c
+--- a/osfmk/kern/sched_clutch.c
++++ b/osfmk/kern/sched_clutch.c
+@@ -3204,7 +3204,7 @@ extern int sched_allow_rt_smt;
+ static bool
+ sched_clutch_thread_avoid_processor(processor_t processor, thread_t thread)
+ {
+-	if (processor->processor_primary != processor) {
++	if (processor->processor_primary != processor && !sched_slow_secondaries) {
+ 		/*
+ 		 * This is a secondary SMT processor.  If the primary is running
+ 		 * a realtime thread, only allow realtime threads on the secondary.
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -2042,6 +2042,7 @@ sched_vm_group_maintenance(void)
+ #endif
+ 
+ int sched_allow_rt_smt = 1;
++bool sched_slow_secondaries = false;
+ int sched_avoid_cpu0 = SCHED_AVOID_CPU0;
+ int sched_allow_rt_steal = 1;
+ int sched_backup_cpu_timeout_count = 5; /* The maximum number of 10us delays to wait before using a backup cpu */
+@@ -2097,6 +2098,7 @@ void
+ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ {
+ 	processor_t ast_processor = NULL;
++	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 
+ #if (DEVELOPMENT || DEBUG)
+ 	if (__improbable(sched_smt_balance == 0)) {
+@@ -2105,7 +2107,39 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ #endif
+ 
+ 	assert(cprocessor == current_processor());
+-	if (cprocessor->is_SMT == FALSE) {
++	if (cprocessor->is_SMT == FALSE && !sched_slow_secondaries) {
++		goto smt_balance_exit;
++	}
++
++	if (sched_slow_secondaries) {
++		/*
++		 * A faster core is going idle: the thread of highest priority that runs on a slower one
++		 * (not a real-time one: those stay where they are) is sent here. Its core is made to
++		 * reschedule; a thread on a secondary goes back to the run queue then, and an idle
++		 * primary is where it is put.
++		 */
++		integer_t highest = -1;
++
++		if (cprocessor->processor_primary != cprocessor) {
++			goto smt_balance_exit;
++		}
++		uint64_t running_secondaries = (cpset->cpu_state_map[PROCESSOR_RUNNING] & ~cpset->primary_map &
++		    ~cpset->pending_AST_URGENT_cpu_mask);
++		for (int cpuid = lsb_first(running_secondaries); cpuid >= 0; cpuid = lsb_next(running_secondaries, cpuid)) {
++			processor_t sprocessor = processor_array[cpuid];
++
++			if (sprocessor->current_pri < BASEPRI_RTQUEUES && sprocessor->current_pri > highest &&
++			    sprocessor->current_pri > MINPRI) {
++				highest = sprocessor->current_pri;
++				ast_processor = sprocessor;
++			}
++		}
++		if (ast_processor != PROCESSOR_NULL) {
++			ipi_type = sched_ipi_action(ast_processor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
++			if (ipi_type == SCHED_IPI_NONE) {
++				ast_processor = PROCESSOR_NULL;
++			}
++		}
+ 		goto smt_balance_exit;
+ 	}
+ 
+@@ -2120,7 +2154,6 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ 
+ 	processor_t sprocessor;
+ 
+-	sched_ipi_type_t ipi_type = SCHED_IPI_NONE;
+ 	uint64_t running_secondary_map = (cpset->cpu_state_map[PROCESSOR_RUNNING] &
+ 	    ~cpset->primary_map);
+ 	for (int cpuid = lsb_first(running_secondary_map); cpuid >= 0; cpuid = lsb_next(running_secondary_map, cpuid)) {
+@@ -2581,6 +2614,10 @@ restart:
+ 		bool is_yielding         = (*reason & AST_YIELD) == AST_YIELD;
+ 
+ 		bool needs_smt_rebalance = !is_yielding && thread->sched_pri < BASEPRI_RTQUEUES && processor->processor_primary != processor;
++		if (needs_smt_rebalance && sched_slow_secondaries) {
++			/* (a slower core of its own: worth leaving only for a faster one that is idle) */
++			needs_smt_rebalance = (pset->recommended_bitmask & pset->primary_map & pset->cpu_state_map[PROCESSOR_IDLE]) != 0;
++		}
+ 
+ 		bool affinity_mismatch   = thread->affinity_set != AFFINITY_SET_NULL && thread->affinity_set->aset_pset != pset;
+ 
+@@ -2705,7 +2742,7 @@ pick_new_rt_thread:
+ 
+ 				clear_pending_AST_bits(pset, processor, 3);
+ 
+-				if (processor->processor_secondary != NULL) {
++				if (processor->processor_secondary != NULL && !sched_slow_secondaries) {
+ 					processor_t sprocessor = processor->processor_secondary;
+ 					if ((sprocessor->state == PROCESSOR_RUNNING) || (sprocessor->state == PROCESSOR_DISPATCHING)) {
+ 						ipi_type = sched_ipi_action(sprocessor, NULL, SCHED_IPI_EVENT_SMT_REBAL);
+@@ -2774,7 +2811,8 @@ send_followup_ipi_before_idle:
+ 				goto restart;
+ 			}
+ 
+-			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES)) {
++			if ((processor->processor_primary != processor) && (processor->processor_primary->current_pri >= BASEPRI_RTQUEUES) &&
++			    !sched_slow_secondaries) {
+ 				/* secondary can only run realtime thread */
+ 				if (idle_reason == 0) {
+ 					idle_reason = 4;
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -156,6 +156,7 @@
+ #include <security/mac_mach_internal.h>
+ #if CONFIG_VNGUARD
+ extern void vnguard_policy_init(void);
++extern void minimac_policy_init(void);
+ #endif
+ #endif
+ 
+@@ -721,6 +722,9 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("vnguard_policy_init");
+ 	vnguard_policy_init();
+ #endif
++	/* stand-ins for the AMFI and Sandbox policies (bsd/kern/kern_minimac.c) */
++	kernel_bootstrap_log("minimac_policy_init");
++	minimac_policy_init();
+ #endif
+ 
+ #if CONFIG_DTRACE
+diff --git a/osfmk/kern/thread.c b/osfmk/kern/thread.c
+--- a/osfmk/kern/thread.c
++++ b/osfmk/kern/thread.c
+@@ -3065,6 +3065,26 @@ thread_get_tag(thread_t th)
+ 	return thread_get_tag_internal(th);
+ }
+ 
++/*
++ * For apfs's lock statistics (bsd/miscfs/apfs/apfs_vnops.c): how long the current thread has
++ * been runnable (running included) and how long it has run, in mach_absolute_time() units.
++ * Taken before and after a wait for a lock, the two tell the wait apart: blocked, queued for
++ * a processor, or spinning on one.
++ */
++void thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run);
++
++void
++thread_runnable_and_run_self(uint64_t *runnable, uint64_t *run)
++{
++	thread_t thread = current_thread();
++	boolean_t istate = ml_set_interrupts_enabled(FALSE);
++	uint64_t now = mach_absolute_time();
++
++	*runnable = thread->runnable_timer.all_bits + (now - thread->runnable_timer.tstamp);
++	*run = recount_current_thread_time_mach();
++	ml_set_interrupts_enabled(istate);
++}
++
+ uint64_t
+ thread_last_run_time(thread_t th)
+ {
+diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
+--- a/osfmk/kern/work_interval.c
++++ b/osfmk/kern/work_interval.c
+@@ -683,6 +683,18 @@ work_interval_get_priority(thread_t thread)
+ 	return priority;
+ }
+ 
++/*
++ * (redwood) What kind of work the thread's work interval is for: one of WORK_INTERVAL_TYPE_*,
++ * or WORK_INTERVAL_TYPE_LAST for a thread that has joined none.
++ */
++uint32_t
++kern_work_interval_type_of_thread(thread_t thread)
++{
++	const struct work_interval *work_interval = thread->th_work_interval;
++
++	return work_interval ? work_interval->wi_create_flags & WORK_INTERVAL_TYPE_MASK : WORK_INTERVAL_TYPE_LAST;
++}
++
+ /*
+  * Switch to a policy driven by the work interval (if applicable).
+  */
+diff --git a/osfmk/kern/work_interval.h b/osfmk/kern/work_interval.h
+--- a/osfmk/kern/work_interval.h
++++ b/osfmk/kern/work_interval.h
+@@ -83,6 +83,8 @@ extern kern_return_t
+ kern_work_interval_notify(thread_t thread, struct kern_work_interval_args* kwi_args);
+ extern kern_return_t
+ kern_work_interval_set_name(mach_port_name_t port_name, char *name, size_t len);
++extern uint32_t
++kern_work_interval_type_of_thread(thread_t thread);
+ extern kern_return_t
+ kern_work_interval_set_workload_id(mach_port_name_t port_name,
+     struct kern_work_interval_workload_id_args *workload_id_args);

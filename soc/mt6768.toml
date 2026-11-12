@@ -1,0 +1,63 @@
+# MediaTek Helio G85 / G80 / G70 (MT6768, MT6769). What every board with this chip shares: where its
+# blocks are. Every address is the first `reg` entry of the named node in the Android device tree of
+# a phone with this chip (read with tools/fdtfind.py), unless said otherwise.
+name = "mt6768"
+description = "MediaTek Helio G85 (MT6768)"
+
+# What the loader tells the kernel of the machine (loader/mtkloader.c, the device tree it builds).
+[platform]
+io_base = 0x0c000000                # one window over the SoC's peripherals: from the interrupt controller ...
+io_size = 0x14000000                # ... to the end of the display and camera blocks (0x20000000)
+gic_dist = 0x0c000000               # /interrupt-controller (arm,gic-v3): reg, first entry
+gic_redist = 0x0c040000             # ... second entry
+uart0 = 0x11002000                  # /serial@11002000 (mediatek,mt6577-uart): the console the kernel is told of
+cores = 8                           # /cpus: cpu@000 ... cpu@700
+core_shift = 8                      # their reg is 0x000, 0x100 ...: MPIDR's second affinity field
+big_cores = [6, 7]                  # the Cortex-A75s (/proc/cpuinfo: CPU part 0xd0a); the rest are Cortex-A55s
+psci = "smc"                        # /psci: method
+debug_core0 = 0x0e010000            # /cpu_dbgapb@0e010000: core 0's debug registers (the loader's timer probe reads them)
+
+# The peripherals' blocks, one page each unless the node says more.
+[blocks]
+topckgen = 0x10000000               # /topckgen@10000000: the clock multiplexers
+infracfg_ao = 0x10001000            # /infracfg_ao@10001000: bus clock gates, bus protection
+gpio = 0x10005000                   # /gpio@10005000: pin modes, directions, levels
+spm = 0x10006000                    # /sleep@10006000: the power domains' switches
+toprgu = 0x10007000                 # /toprgu@10007000: the watchdog and the reset generator
+apmixed = 0x1000c000                # /apmixed@1000c000: the PLLs
+pwrap = 0x1000d000                  # /pwrap@1000d000: the wrapper the PMIC (MT6358) is reached through
+keypad = 0x10010000                 # /kp@10010000
+scp_sram = 0x10500000               # /scp@10500000, reg 0: the sensor hub's memory
+scp_cfg = 0x105c0000                # ... reg 1: its configuration
+scp_clkctrl = 0x105c4000            # ... reg 2: its clocks
+ap_dma_btif_tx = 0x11000b80         # /btif@1100c000, reg 1: the BTIF's transmit channel of the AP DMA
+i2c2 = 0x11009000                   # /i2c2@11009000
+btif = 0x1100c000                   # /btif@1100c000, reg 0: the serial link to CONNSYS's Bluetooth
+i2c4 = 0x11011000                   # /i2c4@11011000
+spi2 = 0x11012000                   # /spi2@11012000
+msdc0 = 0x11230000                  # /mmc@11230000: the eMMC's controller
+msdc1 = 0x11240000                  # /msdc@11240000: the SD card's
+mipi_rx = 0x11c10000                # /mipi_rx_ana_csi0a@11c10000: the camera receivers' analog blocks, 0x1000 apart
+mfgcfg = 0x13000000                 # /mfg_cfg@13000000: the GPU's clock gates
+mali = 0x13040000                   # /mali@13040000, 0x4000: the GPU (a Mali-G52)
+mmsys = 0x14000000                  # /mmsys_config@14000000: the display subsystem's gates and routing
+disp_mutex0 = 0x14001000            # /disp_mutex0@14001000
+smi_common = 0x14002000             # /smi_common@14002000
+disp_ovl0 = 0x1400b000              # /disp_ovl0@1400b000: the overlay engine whose layer 0 LK shows its framebuffer on
+conn = 0x18000000                   # /wifi@18000000, 0x100000: CONNSYS's window (the Wi-Fi's registers from its start)
+conn_mcu = 0x18002000               # /consys@18002000, reg 0
+conn_hif_on = 0x18007000            # ... reg 4
+conn_top_misc_off = 0x180b1000      # ... reg 5
+conn_wbg = 0x180b3000               # inside /wifi@18000000's window (not a node of the tree): the radio's analog block
+conn_misc_on = 0x180c0000           # inside the same window (not a node of the tree): CONN_CFG_ON
+camsys = 0x1a000000                 # /camsys@1a000000: the camera subsystem's clock gates
+smi_larb3 = 0x1a002000              # /smi_larb3@1a002000
+seninf = 0x1a040000                 # /seninf1@1a040000: the sensor interface
+camsv0 = 0x1a050000                 # /camsv1@1a050000
+camsv1 = 0x1a051000                 # /camsv2@1a051000
+
+# The big cluster's PLL, for the loader: LK leaves it slow, and the vendor's own table for this chip
+# (cpufreq_v1, mach/mt6768, "OPP table B") has a speed that needs no change of voltage.
+[cpufreq]
+armpll_big_con1 = 0x20c             # ARMPLL_CON1 in apmixed: bit 31 asks for the value, 24..26 the post divider
+big_mhz = 1176                      # what the cluster may run at on the 800 mV LK leaves it at

@@ -1,0 +1,30 @@
+# A SoC file with every key, explained: where the blocks of a chip are, once for every board with it.
+# Every address is read from the Android device tree of a phone with the chip (as root:
+# /sys/firmware/fdt; tools/fdtfind.py FILE WORD searches it). Name the node each value is from.
+name = "mt0000"
+description = "MediaTek ... (MT0000)"
+
+# What the loader tells the kernel of the machine.
+[platform]
+# io_base = 0x0c000000              # one window over the peripherals, from the interrupt controller on
+# io_size = 0x14000000
+# gic_dist = 0x0c000000             # /interrupt-controller (arm,gic-v3): reg, first entry
+# gic_redist = 0x0c040000           # ... second entry
+# uart0 = 0x11002000                # /serial@...
+# cores = 8                         # /cpus
+# core_shift = 8                    # their reg is 0x000, 0x100 ...: MPIDR's second affinity field
+# big_cores = [6, 7]                # the cores of the highest capacity
+# psci = "smc"                      # /psci: method
+# debug_core0 = 0x0e010000          # /cpu_dbgapb: only for the loader's timer probe; may be left out
+
+# The peripherals' blocks. A feature says which ones it needs (tools/boards.py status NAME).
+[blocks]
+# topckgen, infracfg_ao, gpio, spm, toprgu, apmixed, pwrap, keypad, scp_sram, scp_cfg, scp_clkctrl,
+# ap_dma_btif_tx, i2c2, btif, i2c4, spi2, msdc0, msdc1, mipi_rx, mfgcfg, mali, mmsys, disp_mutex0,
+# smi_common, disp_ovl0, conn, conn_mcu, conn_hif_on, conn_top_misc_off, conn_wbg, conn_misc_on,
+# camsys, smi_larb3, seninf, camsv0, camsv1: soc/mt6768.toml shows each with its node.
+
+# The big cluster's PLL, for a board's big_cores_clock.
+# [cpufreq]
+# armpll_big_con1 = 0x20c           # the PLL's CON1 register in apmixed
+# big_mhz = 1176                    # a speed the vendor's own table allows at the voltage LK leaves

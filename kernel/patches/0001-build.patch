@@ -1,0 +1,433 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -143,8 +143,8 @@ installsrc:
+ 
+ else ifneq ($(findstring xnu_tests,$(RC_ProjectName)),)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell sysctl -n hw.physicalcpu 2>/dev/null || nproc)
++export SYSCTL_HW_LOGICALCPU  := $(shell sysctl -n hw.logicalcpu 2>/dev/null || nproc)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -160,8 +160,8 @@ installsrc:
+ 
+ else ifeq ($(RC_ProjectName),xnu_tests_driverkit)
+ 
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell sysctl -n hw.physicalcpu 2>/dev/null || nproc)
++export SYSCTL_HW_LOGICALCPU  := $(shell sysctl -n hw.logicalcpu 2>/dev/null || nproc)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ default: install
+@@ -193,8 +193,8 @@ endif
+ # CPUs. If the system does not support SMT, use N+1.
+ # If MAKEJOBS or -jN is passed on the make line, that takes precedence.
+ #
+-export SYSCTL_HW_PHYSICALCPU := $(shell /usr/sbin/sysctl -n hw.physicalcpu)
+-export SYSCTL_HW_LOGICALCPU  := $(shell /usr/sbin/sysctl -n hw.logicalcpu)
++export SYSCTL_HW_PHYSICALCPU := $(shell sysctl -n hw.physicalcpu 2>/dev/null || nproc)
++export SYSCTL_HW_LOGICALCPU  := $(shell sysctl -n hw.logicalcpu 2>/dev/null || nproc)
+ MAKEJOBS := --jobs=$(shell expr $(SYSCTL_HW_LOGICALCPU) + 1)
+ 
+ TOP_TARGETS = \
+diff --git a/SETUP/config/doconf b/SETUP/config/doconf
+--- a/SETUP/config/doconf
++++ b/SETUP/config/doconf
+@@ -1,4 +1,4 @@
+-#!/bin/csh -f
++#!/usr/bin/env -S csh -f
+ set path = ($path .)
+ ######################################################################
+ # HISTORY
+diff --git a/bsd/conf/Makefile.arm64 b/bsd/conf/Makefile.arm64
+--- a/bsd/conf/Makefile.arm64
++++ b/bsd/conf/Makefile.arm64
+@@ -5,6 +5,11 @@
+ # Inline assembly doesn't interact well with LTO
+ fbt_arm.o_CFLAGS_ADD += $(CFLAGS_NOLTO_FLAG)
+ 
++# libdeflate's arm headers (bsd/miscfs/apfs/libdeflate) include the compiler's own <arm_acle.h>
++# and <arm_neon.h>, which the kernel's include paths do not have: they come after those paths,
++# so the kernel's <stdint.h> and the rest are still the ones found.
++apfs_deflate.o_CFLAGS_ADD += -idirafter $(shell $(CC) -print-resource-dir)/include
++
+ kern_csr.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
+ 
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -109,6 +109,35 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+ bsd/dev/unix_startup.c			standard
+ 
+ bsd/dev/monotonic.c optional monotonic
++bsd/dev/hakios_board.c		standard
++bsd/dev/redwood_input.c		standard
++bsd/dev/redwood_virtio_input.c	standard
++bsd/dev/redwood_tcm.c	standard
++bsd/dev/redwood_mtkkeys.c	standard
++bsd/dev/redwood_mali.c	standard
++bsd/dev/redwood_connsys.c	standard
++bsd/dev/redwood_btsk.c	standard
++bsd/dev/redwood_mtkwifi.c	standard
++bsd/dev/redwood_wpa.c	standard
++bsd/dev/redwood_emmc.c	standard
++bsd/dev/redwood_ustack.c	standard
++bsd/dev/redwood_scp.c	standard
++bsd/dev/redwood_battery.c	standard
++bsd/dev/redwood_net.c		standard
++bsd/dev/redwood_virtio_net.c	standard
++bsd/dev/redwood_apple80211.c	standard
++bsd/dev/redwood_audio.c		standard
++bsd/dev/redwood_virtio_sound.c	standard
++bsd/dev/redwood_guard.c		standard
++bsd/dev/redwood_mtkcam.c	standard
++bsd/dev/redwood_mtkbatt.c	standard
++bsd/dev/redwood_fbgrab.c	standard
++bsd/dev/redwood_image.c		standard
++bsd/dev/redwood_virtio_blk.c	standard
++bsd/dev/redwood_sparse.c	standard
++bsd/dev/redwood_apfs_check.c	optional apfs
++bsd/dev/redwood_sta.c		standard
++bsd/dev/redwood_wifi_given.c	standard
+ bsd/dev/dev_perfmon.c optional config_perfmon
+ 
+ bsd/libkern/crc32.c			standard
+@@ -155,6 +184,14 @@ bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
+ bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
+ bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
++bsd/miscfs/apfs/apfs_deflate.c		optional apfs
++bsd/miscfs/apfs/apfs_zbitmap.c		optional apfs
++bsd/miscfs/apfs/apfs_lib.c		optional apfs
++bsd/miscfs/apfs/apfs_write.c		optional apfs
++bsd/miscfs/apfs/apfs_store.c		optional apfs
++bsd/miscfs/apfs/apfs_vfsops.c		optional apfs
++bsd/miscfs/apfs/apfs_vnops.c		optional apfs
++bsd/miscfs/ramfs/ramfs.c			optional ramfs
+ 
+ bsd/miscfs/routefs/routefs_ops.c	optional routefs
+ 
+@@ -361,6 +398,7 @@ bsd/security/audit/audit_syscalls.c		standard
+ bsd/security/audit/audit_worker.c		optional config_audit
+ 
+ bsd/pthread/pthread_shims.c		standard
++bsd/pthread/pthread_kext_static.c    standard
+ bsd/pthread/pthread_priority.c		standard
+ bsd/pthread/pthread_workqueue.c		standard
+ 
+@@ -383,6 +421,7 @@ bsd/kern/kern_debug.c			standard
+ bsd/kern/kern_symfile.c			standard
+ bsd/kern/kern_descrip.c			standard
+ bsd/kern/kern_guarded.c			standard
++bsd/kern/kern_minimac.c			optional config_macf
+ bsd/kern/kern_event.c			standard
+ bsd/kern/kern_control.c			optional networking
+ bsd/kern/kern_exec.c			standard
+diff --git a/config/MASTER b/config/MASTER
+--- a/config/MASTER
++++ b/config/MASTER
+@@ -113,6 +113,8 @@ options		CONFIG_WORKLOOP_DEBUG	# <config_workloop_debug>
+ #	4.4 filesystems
+ #
+ options		MOCKFS		# Boot from an executable	# <mockfs>
++options		APFS		# Apple File System, read only	# <apfs>
++options		RAMFS		# Read-write filesystem in memory	# <ramfs>
+ options		FIFO		# fifo support			# <fifo>
+ options		FDESC		# fdesc_fs support		# <fdesc>
+ options		DEVFS		# devfs support			# <devfs>
+diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
+--- a/config/MASTER.arm64.bcm2837
++++ b/config/MASTER.arm64.bcm2837
+@@ -16,15 +16,15 @@
+ #  Standard Apple OS Configurations:
+ #  -------- ----- -- ---------------
+ #
+-#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
++#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging nos_arm_pmap nos_arm_asm ]
+ #  KERNEL_RELEASE = [ KERNEL_BASE ]
+ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug ]
+ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_waitq_stats config_workloop_debug ]
+ #  BSD_BASE =       [ mach_bsd psynch config_proc_uuid_policy config_personas ]
+ #  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel ]
+-#  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+-#  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump pgo config_vnguard ]
+-#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs]
++#  BSD_DEV =        [ BSD_BASE config_netboot config_imageboot config_coredump config_vnguard ]
++#  BSD_DEBUG =      [ BSD_BASE config_netboot config_imageboot config_coredump config_vnguard ]
++#  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_fse routefs namedstreams bindfs mockfs ramfs apfs ]
+ #  FILESYS_RELEASE= [ FILESYS_BASE ]
+ #  FILESYS_DEV =    [ FILESYS_BASE config_union_mounts fdesc ]
+ #  FILESYS_DEBUG =  [ FILESYS_BASE config_union_mounts fdesc ]
+@@ -50,8 +50,8 @@
+ #  LIBKERN_DEBUG =  [ LIBKERN_BASE iotracking ]
+ #  PERF_DBG_BASE =  [ mach_kdp config_serial_kdp kperf kpc ]
+ #  PERF_DBG_RELEASE=[ PERF_DBG_BASE ist_kdebug ]
+-#  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
+-#  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
++#  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger config_iotrace]
++#  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger config_iotrace]
+ #  MACH_BASE =      [ mach config_ecc_logging vc_progress_white importance_inheritance config_atm config_coalitions config_iosched config_library_validation config_sysdiagnose config_telemetry config_mach_bridge_recv_time config_quiesce_counter config_service_port_info ]
+ #  MACH_RELEASE =   [ MACH_BASE config_skip_precise_user_kernel_time debugger_for_zone_info ]
+ #  MACH_DEV =       [ MACH_BASE config_io_accounting importance_trace ]
+diff --git a/config/Makefile b/config/Makefile
+--- a/config/Makefile
++++ b/config/Makefile
+@@ -71,7 +71,7 @@ $(1)_EXPORTS := $$(addprefix $$(SOURCE)/,$$(filter $(1)%,$$(EXPORTS_FILES)))
+ $$(TARGET)/$(1).symbolset: MY_EXPORTS_ARGS := $$(foreach file,$$($(1)_EXPORTS),-export $$(file))
+ $$(TARGET)/$(1).symbolset: $$($(1)_EXPORTS) $$(TARGET)/allsymbols $$(KEXT_CREATE_SYMBOL_SET)
+ 	@$$(LOG_SYMBOLSET) "$(1)$$(Color0) ($$(ColorLF)$$(CURRENT_ARCH_CONFIG_LC)$$(Color0))"
+-	$$(_v)$$(KEXT_CREATE_SYMBOL_SET)			\
++	-$$(_v)$$(KEXT_CREATE_SYMBOL_SET)			\
+ 		$$(ARCH_FLAGS_$$(CURRENT_ARCH_CONFIG))	\
+ 		-import $$(TARGET)/allsymbols		\
+ 		$$(MY_EXPORTS_ARGS)			\
+@@ -118,14 +118,14 @@ $(TARGET)/allsymbols: $(OBJPATH)/$(KERNEL_FILE_NAME)
+ 	$(_v)$(NM) -gj $< | sort -u > $@
+ 
+ check_all_exports: $(TARGET)/allsymbols $(KEXT_CREATE_SYMBOL_SET)
+-	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
++	-$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+ 		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+ 		-import $(TARGET)/allsymbols				\
+ 		$(foreach symbolset,$(filter-out Private,$(SYMBOL_COMPONENT_LIST)),	\
+ 			-export $(SOURCE)/$(symbolset).exports		\
+ 			-export $(SOURCE)/$(symbolset).$(EXPORT_SOURCE_ARCH_CONFIG_LC).exports)	\
+ 		-output /dev/null $(_vstdout)
+-	$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
++	-$(_v)$(KEXT_CREATE_SYMBOL_SET)					\
+ 		$(ARCH_FLAGS_$(CURRENT_ARCH_CONFIG))			\
+ 		-import $(TARGET)/allsymbols				\
+ 		$(foreach symbolset,$(filter-out Unsupported,$(SYMBOL_COMPONENT_LIST)),	\
+diff --git a/iokit/conf/files b/iokit/conf/files
+--- a/iokit/conf/files
++++ b/iokit/conf/files
+@@ -79,6 +79,16 @@ iokit/Kernel/IOSubMemoryDescriptor.cpp			optional iokitcpp
+ iokit/Kernel/IOGuardPageMemoryDescriptor.cpp		optional iokitcpp
+ 
+ iokit/Kernel/IOPlatformExpert.cpp			optional iokitcpp
++iokit/Kernel/GenericARMPE.cpp			optional iokitcpp
++iokit/Kernel/MiniIOSurface.cpp			optional iokitcpp
++iokit/Kernel/MiniIOMobileFramebuffer.cpp		optional iokitcpp
++iokit/Kernel/RedwoodMali.cpp				optional iokitcpp
++iokit/Kernel/RedwoodWLAN.cpp			optional iokitcpp
++iokit/Kernel/RedwoodBattery.cpp			optional iokitcpp
++iokit/Kernel/RedwoodBluetooth.cpp		optional iokitcpp
++iokit/Kernel/MiniAppleKeyStore.cpp			optional iokitcpp
++iokit/Kernel/MiniIONetworkStack.cpp			optional iokitcpp
++iokit/Kernel/MiniFairPlay.cpp			optional iokitcpp
+ iokit/Kernel/IOPlatformIO.cpp				optional iokitcpp
+ 
+ iokit/Kernel/IOCPU.cpp					optional iokitcpp
+diff --git a/libkern/conf/files b/libkern/conf/files
+--- a/libkern/conf/files
++++ b/libkern/conf/files
+@@ -109,6 +109,8 @@ libkern/apple_encrypted_archive/apple_encrypted_archive.c	standard
+ libkern/img4/interface.c 		standard
+ 
+ libkern/amfi/amfi.c 		standard
++libkern/amfi/miniamfi.c 		standard
++libkern/amfi/miniamfi_entitlements.cpp 	standard
+ 
+ libkern/stack_protector.c       standard
+ libkern/ptrauth_utils.c         standard
+diff --git a/libkern/libkern/c++/OSData.h b/libkern/libkern/c++/OSData.h
+--- a/libkern/libkern/c++/OSData.h
++++ b/libkern/libkern/c++/OSData.h
+@@ -965,7 +965,7 @@ private:
+ 		    "only trivially copyable types can be contained");
+ 		static_assert(!__is_pointer(T) || (acquisition == kValueNoCopy),
+ 		    "pointers cannot be contained");
+-		static_assert(KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
++		static_assert(XNU_NO_TYPE_BUILTINS || KALLOC_TYPE_IS_DATA_ONLY(T) || (acquisition == kValueNoCopy),
+ 		    "only plain data types can be contained (consider using OSValueObject)");
+ 		return 0; // C++11 does not support void-returning constexpr functions
+ 	}
+diff --git a/makedefs/MakeInc.cmd b/makedefs/MakeInc.cmd
+--- a/makedefs/MakeInc.cmd
++++ b/makedefs/MakeInc.cmd
+@@ -100,12 +100,12 @@ ifeq ($(VERBOSE),YES)
+ 	_v =
+ 	_vstdout =
+ 	_vstderr =
+-	XCRUN = /usr/bin/xcrun -verbose
++	XCRUN = xcrun -verbose
+ else
+ 	_v = @
+ 	_vstdout = > /dev/null
+ 	_vstderr = 2> /dev/null
+-	XCRUN = /usr/bin/xcrun
++	XCRUN = xcrun
+ endif
+ 
+ VERBOSE_GENERATED_MAKE_FRAGMENTS = NO
+@@ -275,27 +275,27 @@ REPLACECONTENTS = $(OBJROOT)/SETUP/replacecontents/replacecontents
+ JSONCOMPILATIONDB = $(OBJROOT)/SETUP/json_compilation_db/json_compilation_db
+ 
+ # Standard BSD tools
+-RM = /bin/rm -f
+-RMDIR = /bin/rmdir
+-CP = /bin/cp
+-MV = /bin/mv
+-LN = /bin/ln -fs
+-CAT = /bin/cat
+-MKDIR = /bin/mkdir -p
+-CHMOD = /bin/chmod
+-FIND = /usr/bin/find
+-XARGS = /usr/bin/xargs
+-PAX = /bin/pax
+-BASENAME = /usr/bin/basename
+-DIRNAME = /usr/bin/dirname
+-TR = /usr/bin/tr
+-TOUCH = /usr/bin/touch
+-SLEEP = /bin/sleep
+-AWK = /usr/bin/awk
+-SED = /usr/bin/sed
+-PLUTIL = /usr/bin/plutil
+-PATCH = /usr/bin/patch
+-GREP = /usr/bin/grep
++RM = rm -f
++RMDIR = rmdir
++CP = cp
++MV = mv
++LN = ln -fs
++CAT = cat
++MKDIR = mkdir -p
++CHMOD = chmod
++FIND = find
++XARGS = xargs
++PAX = pax
++BASENAME = basename
++DIRNAME = dirname
++TR = tr
++TOUCH = touch
++SLEEP = sleep
++AWK = awk
++SED = sed
++PLUTIL = plutil
++PATCH = patch
++GREP = grep
+ 
+ #
+ # Command to generate host binaries. Intentionally not
+@@ -317,7 +317,7 @@ ifeq ($(origin HOST_GM4),undefined)
+ 	export HOST_GM4		:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find gm4)
+ endif
+ ifeq ($(origin HOST_CODESIGN),undefined)
+-	export HOST_CODESIGN	:= /usr/bin/codesign
++	export HOST_CODESIGN	:= codesign
+ endif
+ ifeq ($(origin HOST_CODESIGN_ALLOCATE),undefined)
+ 	export HOST_CODESIGN_ALLOCATE	:= $(shell $(XCRUN) -sdk $(HOST_SDKROOT) -find codesign_allocate)
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -60,7 +60,7 @@ MACHINE_FLAGS_ARM64_T8101 = -DARM64_BOARD_CONFIG_T8101			-mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T8103 = -DARM64_BOARD_CONFIG_T8103                  -mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_T6000 = -DARM64_BOARD_CONFIG_T6000 		-mcpu=apple-a14
+ MACHINE_FLAGS_ARM64_VMAPPLE = -DARM64_BOARD_CONFIG_VMAPPLE              -march=armv8.5a
+-MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
++MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837 -Xclang -target-feature -Xclang +pan
+ 
+ 
+ #
+@@ -857,7 +857,10 @@ LDFILES_KERNEL_ONLY = $(TARGET)/all-kpi.exp $(TARGET)/all-alias.exp $(TARGET)/sy
+ # Default runtime libraries to be linked with the kernel
+ #
+ LD_KERNEL_LIBS	   = -lcc_kext
+-LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
++LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel -lpthread_kext
++# Darwin-on-redwood: objects made outside this tree, linked when the build is given any (the
++# Wi-Fi driver, see bsd/dev/redwood_lx.c)
++LD_KERNEL_ARCHIVES += $(REDWOOD_OBJECTS)
+ # Link opensource binary library
+ ifneq ($(filter T6000 T8101 VMAPPLE T6000 T8101 VMAPPLE,$(CURRENT_MACHINE_CONFIG)),)
+ 	LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a
+diff --git a/makedefs/MakeInc.top b/makedefs/MakeInc.top
+--- a/makedefs/MakeInc.top
++++ b/makedefs/MakeInc.top
+@@ -285,7 +285,7 @@ endif
+ # $(warning PRIMARY_KERNEL_CONFIGS is $(PRIMARY_KERNEL_CONFIGS))
+ # $(warning VARIANT_CONFIGS is $(VARIANT_CONFIGS))
+ 
+-MEMORY_SIZE := $(shell /usr/sbin/sysctl -n hw.memsize)
++MEMORY_SIZE := $(shell sysctl -n hw.memsize 2>/dev/null || awk '/MemTotal/{printf "%d", $$2*1024}' /proc/meminfo)
+ 
+ # Assume LTO scaling by default, unless it is being explicitly passed on the command-line
+ LARGE_BUILD_FOOTPRINT := $(if $(BUILD_LTO),$(BUILD_LTO),1)
+diff --git a/osfmk/conf/files b/osfmk/conf/files
+--- a/osfmk/conf/files
++++ b/osfmk/conf/files
+@@ -361,3 +361,6 @@ osfmk/corecrypto/ccsha256_ltc_di.c	standard
+ 
+ osfmk/prng/prng_random.c	standard
+ osfmk/prng/entropy.c   standard
++osfmk/minicrypto/mc_digests.c	standard
++osfmk/minicrypto/mc_provider.c	standard
++osfmk/minicrypto/mc_aes.c	standard
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -25,8 +25,8 @@ osfmk/arm64/WKdmCompress_4k.s	standard
+ osfmk/arm64/WKdmData.s		standard
+ osfmk/arm64/lz4_decode_arm64.s  standard
+ osfmk/arm64/lz4_encode_arm64.s  standard
+-osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
+-osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
++#osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
++#osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
+ osfmk/arm/caches.c		standard
+@@ -104,3 +104,8 @@ osfmk/arm64/machine_remote_time.c optional config_mach_bridge_recv_time
+ osfmk/arm64/corecrypto/sha256_compress_arm64.s	standard
+ 
+ osfmk/arm/counter.c	standard
++osfmk/arm64/generic_arm64_support.c	optional nos_arm_asm
++osfmk/arm64/loader_return.c	optional nos_arm_asm
++osfmk/arm64/user_exception_trace.c	standard
++osfmk/arm64/gic_v3_irq.c	optional nos_arm_asm
++osfmk/arm64/psci_smp.c	optional nos_arm_asm
+diff --git a/osfmk/kern/kalloc.h b/osfmk/kern/kalloc.h
+--- a/osfmk/kern/kalloc.h
++++ b/osfmk/kern/kalloc.h
+@@ -821,12 +821,16 @@ __options_decl(kt_granule_t, uint32_t, {
+  * @param ptr           the pointer whose type needs to be checked.
+  * @param type          the type which the pointer will be checked against.
+  */
++#if XNU_NO_TYPE_BUILTINS
++#define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)  (1)
++#else
+ #define KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type)                   \
+ 	_Pragma("clang diagnostic push")                               \
+ 	_Pragma("clang diagnostic ignored \"-Wvoid-ptr-dereference\"") \
+ 	(__builtin_xnu_types_compatible(__typeof__(*(ptr)), type) ||   \
+ 	    __builtin_xnu_types_compatible(__typeof__(*(ptr)), void))  \
+ 	_Pragma("clang diagnostic pop")
++#endif /* XNU_NO_TYPE_BUILTINS */
+ 
+ #define KALLOC_TYPE_ASSERT_COMPATIBLE_POINTER(ptr, type) \
+ 	_Static_assert(KALLOC_TYPE_IS_COMPATIBLE_PTR(ptr, type), \
+diff --git a/tools/lldbmacros/core/syntax_checker.py b/tools/lldbmacros/core/syntax_checker.py
+--- a/tools/lldbmacros/core/syntax_checker.py
++++ b/tools/lldbmacros/core/syntax_checker.py
+@@ -12,10 +12,13 @@ Usage:
+ """
+ import sys
+ import os
++# When this file is executed directly, its directory is first on sys.path.
++# That directory contains collections.py, which shadows Python's standard
++# library collections module while importing re on Python 3.14 and newer.
++_script_dir = os.path.dirname(os.path.abspath(__file__))
++sys.path = [p for p in sys.path if os.path.abspath(p or os.curdir) != _script_dir]
+ import re
+-
+ tabs_search_rex = re.compile("^\s*\t+",re.MULTILINE|re.DOTALL)
+-
+ def find_non_ascii(s):
+     for c in s:
+         if ord(c) >= 0x80: return True

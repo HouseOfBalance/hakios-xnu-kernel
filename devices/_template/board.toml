@@ -1,0 +1,76 @@
+# A board file with every key, explained. `tools/boards.py new NAME --soc SOC` copies it; docs/porting.md
+# is the guide, and says where on the phone each value is read. A value you have not read yet stays
+# out (a required one keeps `tools/boards.py check` failing until it is there): never guess an address.
+
+name = "NAME"                       # the directory's name, and what the loader puts in /chosen/darwin-board
+description = "Maker Model"         # for people: logs, hw.board.description, tools/boards.py list
+soc = "mt0000"                      # soc/mt0000.toml: where the blocks of the chip are
+
+# The drivers this board may start. Empty at first: add one once its driver has been seen to work
+# here, in the order of docs/porting.md. The kernel knows these (kernel/overlay/bsd/dev/hakios_board.h):
+#   emmc-msdc           the root on an eMMC behind MSDC0, as LK left the card (boot-arg emmc_root=1)
+#   keys-mt6358         power and volume keys through the keypad block and the MT6358; the clocks (buttons=2)
+#   gpu-mali-g52        a Mali-G52 in MFG's power domains (mali=1)
+#   scp-sensors         the sensor hub and its accelerometer (scp_step=N)
+#   battery-mt6358      the MT6358's fuel gauge; needs [battery] (mtkbatt=1)
+#   display-ovl-flip    frames shown by pointing OVL0 at a second picture in LK's framebuffer (fb_flip=1)
+# and these, each a driver of one part wired the way one phone has it -- list one only if your phone
+# has that part on the same pins and bus (docs/drivers.md):
+#   touch-td4160, connsys-mt6631, camera-s5kjn1
+features = []
+
+# What the loader is built with. Read every value from the phone under Android, as root.
+# [loader]
+# kernel_load = 0x40080000          # where LK starts a kernel: /proc/iomem "Kernel code"
+# chain_stub = 0x4a000000           # a page of free DRAM for the instructions that move Android's kernel into place
+# xnu_base = 0xc0000000             # one range of DRAM nothing else uses (reserved-memory, /proc/iomem) ...
+# xnu_size = 0xfe000000             # ... and its size
+# marker = 0x80000000               # a page that survives a warm reset (fbdiag's phase 2 says whether DRAM is kept)
+# panic_log = 0x80100000            # the kernel's panic log, outside the kernel's range, kept as well
+# panic_log_size = 0x80000
+# scratch = 0x50000000              # 2 MB of free DRAM for staging (touch firmware, the GPU probe)
+# test_buffer = 0xa0000000          # 4 MB of free DRAM for the eMMC read test
+# core_order = [0, 7, 6, 1, 2, 3, 4, 5]     # the boot core, then the big cores, then the rest
+# system_partition = "xnusys"       # the GPT partition with the system image: yours to make and name
+# big_cores_clock = true            # raise the big cluster's PLL to the SoC file's [cpufreq] big_mhz; leave out
+#                                   # until you have read your chip's table: it writes a PLL
+
+# Android's ramoops zones: the only way a log leaves the phone.
+# [ramoops]
+# console = 0x4d09f000              # the console zone: the region's start + the dump records' size
+# console_size = 0x40000
+# pmsg = 0x4d0e0000                 # the pmsg zone, after the ftrace zone
+# pmsg_size = 0x10000
+
+# The panel and LK's framebuffer.
+# [display]
+# fb_base = 0x787b0000              # reserved-memory "framebuffer"; fbdiag prints the address OVL0 scans
+# fb_size = 0x1050000
+# fb_pitch = 2944                   # bytes a line (LK may round the width up)
+# width = 720
+# height = 1640
+
+# loader/fbdiag.c, the first thing a port runs.
+# [fbdiag]
+# marker = 0x4d0df000               # a word that survives the watchdog reset and that Android rewrites: the
+#                                   # header of ramoops' ftrace zone
+# probes = [0x42000000, 0x80000000] # words of DRAM to write a pattern to and look at after the reset
+# dump = []                         # other addresses to print 32 bytes of
+
+# The cell, for "battery-mt6358".
+# [battery]
+# design_uah = 5132000              # the 25 degree table of the phone's battery profile
+
+# CONNSYS's memory as Android's kernel placed it, for "connsys-mt6631" (its log at boot).
+# [connsys]
+# emi = 0x51000000                  # consys-reserve-memory
+# emi_size = 0x400000
+# wifi_dma = 0x51400000             # wifi-reserve-memory
+# wifi_dma_size = 0x100000
+
+# A plain run (tools/xnu-cycle.sh).
+# [boot]
+# android_device = "codename"       # `adb shell getprop ro.product.device`: the tools refuse any other phone
+# cpus = 4                          # how many cores the kernel is given (one is always kept for the loader's watcher)
+# seconds = 120                     # how long the kernel runs before it hands the log back
+# bootargs = ["touchscreen=2"]      # NAME or NAME=VALUE each

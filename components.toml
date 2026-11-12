@@ -1,0 +1,127 @@
+# Everything this project takes from elsewhere, at the exact version it takes. One place to see what
+# a build fetches, what a change of version touches, and under which licence it comes.
+#
+# Each `pins` entry is the string that pins the version, and `pinned_in` the file of this repository
+# that does the fetching and checks it: `tools/components.py check` (part of `make lint`) fails when
+# the two disagree, so this file cannot say one thing while a script fetches another. To move a
+# component to another version, change the script and this file together.
+#
+# Not listed, because they are yours and stay on your machine: the phone's rooted boot image and
+# its firmware.
+
+[[component]]
+id = "xnu"
+what = "Apple's kernel: the release this port is made from"
+source = "https://github.com/apple-oss-distributions/xnu.git"
+pins = ["xnu-8796.121.2", "c54f35ca767986246321eb901baf8f5ff7923f6a"]
+pinned_in = "kernel/UPSTREAM"
+used_for = "kernel"
+licence = "APSL-2.0"
+
+[[component]]
+id = "AvailabilityVersions"
+what = "availability.pl for the kernel's generated headers"
+source = "https://github.com/apple-oss-distributions/AvailabilityVersions.git"
+pins = ["5d9baee345b3bc72b26c71adc65f94f2d5e9ced2"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel"
+licence = "APSL-2.0"
+
+[[component]]
+id = "libdispatch"
+what = "the firehose (os_log) buffer code linked into the kernel"
+source = "https://github.com/apple-oss-distributions/libdispatch.git"
+pins = ["a641558f447659d90ad002ef0ee6f0212273fbfc"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel"
+licence = "Apache-2.0"
+
+[[component]]
+id = "libpthread"
+what = "the pthread kernel extension, linked into the kernel"
+source = "https://github.com/apple-oss-distributions/libpthread.git"
+pins = ["a6c70ca0e544347a0377babf748f831577ec24f9"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel"
+licence = "APSL-2.0"
+
+[[component]]
+id = "bootstrap_cmds"
+what = "mig, in a port that builds on glibc (host tool, Linux only)"
+source = "https://github.com/markmentovai/bootstrap_cmds"
+pins = ["f337e600741638896fb6056ce87c6479f74b89a3"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "APSL-2.0"
+
+[[component]]
+id = "tcsh"
+what = "csh for XNU's doconf script (host tool, Linux only)"
+source = "https://github.com/tcsh-org/tcsh.git"
+pins = ["b7db07931546178c4cb2542b5fc850c483628ed5"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "BSD-3-Clause"
+
+[[component]]
+id = "unifdef"
+what = "unifdef for the kernel's exported headers (host tool)"
+source = "https://github.com/fanf2/unifdef.git"
+pins = ["08d12cd3059fe072929ea001ad9833f5487fd355"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "BSD-2-Clause"
+
+[[component]]
+id = "macos-sdk-13.3"
+what = "Kernel.framework's DriverKit headers, which the closed iig would generate (by name only: the script checks no hash)"
+source = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz"
+pins = ["MacOSX13.3.sdk.tar.xz"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "Apple SDK licence: fetched, never redistributed here"
+
+[[component]]
+id = "theos-sdk"
+what = "the SDK the kernel and the user-space programs are compiled against (yours to put in $THEOS/sdks)"
+source = "https://github.com/theos/sdks"
+pins = ["iPhoneOS16.5.sdk"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel, userland"
+licence = "Apple SDK licence: fetched, never redistributed here"
+
+[[component]]
+id = "zig"
+what = "only its linker: ld.lld links the loader where the machine has none"
+source = "https://ziglang.org/download/0.13.0/"
+pins = ["0.13.0", "8b06ed1091b2269b700b3b07f8e3be3b833000841bae5aa6a09b1a8b4773effd", "46fae219656545dfaf4dce12fb4e8685cec5b51d721beee9389ab4194d43394c", "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea", "041ac42323837eb5624068acd8b00cd5777dac4cf91179e8dad7a7e90dd0c556"]
+pinned_in = "tools/get-zig.sh"
+used_for = "loader"
+licence = "MIT"
+
+[[component]]
+id = "mesa"
+what = "panfrost and the shader front end's host, for the GPU path (GL=1, METAL=1)"
+source = "https://archive.mesa3d.org/"
+pins = ["592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6"]
+pinned_in = "tools/mk-mesa.sh"
+used_for = "userland"
+licence = "MIT"
+
+[[component]]
+id = "libdeflate"
+what = "the decompressing half, for the kernel's APFS driver (already in kernel/overlay; the script refreshes it)"
+source = "https://github.com/ebiggers/libdeflate"
+pins = ["a0dda1c4b804742066db07b9510876edd09cc0ca06cdc32c5dfe1b2016a26463"]
+pinned_in = "tools/mk-libdeflate.sh"
+used_for = "kernel"
+licence = "MIT"
+
+[[component]]
+id = "system-image"
+what = "the system image's files, build 20F66 for iPhone10,3: fetched by you from their maker, never kept here"
+source = "https://updates.cdn-apple.com/"
+pins = ["032-85130"]
+pinned_in = "system/fetch-from-ipsw.py"
+used_for = "system image"
+licence = "Apple's software licence: yours to accept; nothing of it is in the repository"

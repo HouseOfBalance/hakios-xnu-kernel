@@ -1,0 +1,88 @@
+.DS_Store
+__pycache__/
+*~
+*.orig
+*.rej
+*.o
+
+# what the builds make: the board tables, the loader, the payload, the boot image, zig
+/build/
+# device packages brought in with tools/device.py: they are kept on the devices branch, not here
+/devices/*/
+!/devices/_template/
+# yours and your phone's, never the repository's: the rooted boot image, firmware, logs, packages
+/backup/
+/logs/
+/jb/
+fw-*/
+
+# of kernel/deps only what is ours; setup.sh fetches and builds the rest
+/kernel/deps/*
+!/kernel/deps/setup.sh
+!/kernel/deps/gen-iig-stubs.py
+!/kernel/deps/hostinc/
+!/kernel/deps/iig-impl/
+!/kernel/deps/host/
+/kernel/deps/host/*
+!/kernel/deps/host/bin/
+/kernel/deps/host/bin/*
+!/kernel/deps/host/bin/codesign
+!/kernel/deps/host/bin/iig
+!/kernel/deps/host/bin/install
+!/kernel/deps/host/bin/plutil
+!/kernel/deps/host/bin/python
+!/kernel/deps/host/bin/sw_vers
+!/kernel/deps/host/bin/xcrun
+!/kernel/deps/host/bin/xnu-clang
+!/kernel/deps/build/
+/kernel/deps/build/*
+!/kernel/deps/build/pthread/
+/kernel/deps/build/pthread/*
+!/kernel/deps/build/pthread/build.sh
+!/kernel/deps/build/pthread/inc/
+!/kernel/deps/build/lzbitmap/
+/kernel/deps/build/lzbitmap/*
+!/kernel/deps/build/lzbitmap/unzbm.c
+!/kernel/deps/build/lzbitmap/libzbitmap.c
+!/kernel/deps/build/lzbitmap/libzbitmap.h
+
+# the system image's files are fetched by system/fetch.sh from their maker and stay on your machine
+/system/*
+!/system/fetch.sh
+!/system/*.py
+
+# of userland only sources; what build.sh makes there is ignored
+/userland/*
+!/userland/build.sh
+!/userland/*.py
+!/userland/rc.*
+!/userland/com.*.plist
+!/userland/src/
+!/userland/libmini/
+!/userland/var/
+!/userland/share/
+/userland/share/*
+!/userland/share/rwm-recipes.txt
+/userland/src/camera_trace_local.h
+/tools/android/f2fs-resize
+
+# Nothing of a system image's maker and nothing of a phone's vendor, wherever it would land: no
+# picture of the screen, no firmware, no image or device tree taken off a phone.
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.gif
+*.mp4
+*.mov
+*.ipsw
+*.dmg
+*.metallib
+*.dylib
+*.dtb
+*.fd
+*.img
+*.bin
+*.ko
+*.apfs
+*.zst
