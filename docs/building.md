@@ -39,7 +39,7 @@ system/fetch.sh              # 30 min at 4 MB/s: the files of the system image (
 tools/mkpayload.sh      # 1 s: build/payload.bin = the kernel + the small root
 mkdir -p backup && cp <your rooted boot image> backup/boot_a_magisk.img
 tools/system-flash.sh        #  3 min system.apfs into xnusys (Android must be up; 2.3 GB free on /data for the way there)
-XNU_SECS=120 XNU_ARGS="cpus=4 touchscreen=2 mali=1" XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh    # 5 min
+XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh      # the board file's [boot]: 120 s, cpus=4 touchscreen=2 mali=1 fbscale=2 fbfit=3    # 5 min
 ```
 
 The last command builds the loader, packs it with Android's kernel and the payload into `build/boot_a.img` (30 MB; `boot_a` holds 32),

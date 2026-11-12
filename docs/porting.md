@@ -166,7 +166,7 @@ export HAKIOS_SERIAL=<your phone's adb serial>          # never in a file
 kernel/build.sh -j8 -k                                   # the kernel (kernel/README.md for the first time)
 ./userland/build.sh                                     # the small root, userland/root.apfs (its head comment lists the switches)
 tools/mkpayload.sh         # the payload: kernel + the small root
-XNU_SECS=120 XNU_ARGS="cpus=4 touchscreen=2 mali=1" XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh
+XNU_LOG_OUT=logs/run1.log tools/xnu-cycle.sh      # the board file's [boot]: 120 s, cpus=4 touchscreen=2 mali=1 fbscale=2 fbfit=3
 ```
 
 `xnu-cycle.sh` builds the loader with the run's flags (anything after the script's name goes to the compiler, such as `-DXNU_CHECKPOINT=17`), packs

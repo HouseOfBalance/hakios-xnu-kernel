@@ -144,7 +144,7 @@ static TUNABLE(uint32_t, gFBHeight, "fbheight", kFBDefaultHeight);
 #define kFBDefaultScale         3
 static TUNABLE(uint32_t, gFBScale, "fbscale", 0);
 /*
- * Boot-arg fbxr=1 (with fbscale=2): the reference phoneR's screen instead, 414 x 896 points at two pixels a
+ * Boot-arg fbxr=1 (with fbscale=2): the screen of the reference phone's larger sibling (the XR) instead, 414 x 896 points at two pixels a
  * point. The system has a status bar for that one; for the reference phone's 375 points at two it has none and puts
  * up a red bar that says so ("Please see rdar://45025538"). It is also more room: 414 points across
  * instead of 375, so less of everything is too large on a big panel.

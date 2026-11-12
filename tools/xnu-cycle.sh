@@ -8,9 +8,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT=${XNU_LOG_OUT:-$ROOT/logs/xnu-last.log}
 # test settings: XNU picked by default, watchdog and watcher on, XNU comes back by itself
 # XNU_SECS: how long the kernel runs before it hands the log back (the watcher waits a bit longer)
-SECS=${XNU_SECS:-45}
+# (a plain run, without XNU_SECS or XNU_ARGS, is the board file's [boot]: its seconds, cpus and bootargs)
+BOARD=${HAKIOS_BOARD:-$("$ROOT/tools/boards.py" which)}
+SECS=${XNU_SECS:-$("$ROOT/tools/boards.py" get "$BOARD" boot.seconds || echo 45)}
 # XNU_ARGS: the kernel's own command line (cores and so on); the clock comes from this machine
-XNU_ARGS=${XNU_ARGS:-cpus=1}
+if [ -z "${XNU_ARGS:-}" ]; then
+	XNU_ARGS="cpus=$("$ROOT/tools/boards.py" get "$BOARD" boot.cpus || echo 1) $("$ROOT/tools/boards.py" get "$BOARD" boot.bootargs || true)"
+fi
 # the device tree offers the kernel exactly this many cores; "cpus=" in XNU_ARGS should match
 CORES=${XNU_CORES:-$(expr "$XNU_ARGS" : '.*cpus=\([0-9]*\)' || echo 1)}
 [ -n "$CORES" ] || CORES=1
@@ -25,7 +29,6 @@ done
 [ -f "$ROOT/build/payload.bin" ] || { echo "xnu-cycle.sh: no build/payload.bin: make it with tools/mkpayload.sh"; exit 1; }
 mkdir -p "$(dirname "$OUT")"
 # the phone must be the one the board file describes (its [boot] android_device), when Android is up to ask
-BOARD=${HAKIOS_BOARD:-$("$ROOT/tools/boards.py" which)}
 WANT=$("$ROOT/tools/boards.py" get "$BOARD" boot.android_device || true)
 if [ -n "$WANT" ] && [ "$(adb -s $S get-state 2>/dev/null)" = device ]; then
 	GOT=$(adb -s $S shell getprop ro.product.device | tr -d '\r')
