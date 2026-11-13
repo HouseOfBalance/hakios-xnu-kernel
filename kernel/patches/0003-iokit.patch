@@ -191,7 +191,15 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -708,7 +708,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+@@ -64,6 +64,7 @@ extern "C" {
+ #endif
+ 
+ extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
++extern int mtk_emmc_root(dev_t *root);
+ extern dev_t mdevlookup(int devid);
+ extern void mdevremoveall(void);
+ extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
+@@ -708,7 +709,14 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  	assert(matching);
  	matching->setObject(gIOResourceMatchedKey, gIOBSDKey);
  
@@ -207,7 +215,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  		OSSafeReleaseNULL(service);
  	} else {
  		IOLog("!BSD\n");
-@@ -791,6 +798,17 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+@@ -791,10 +799,42 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  #endif /* __LP64__ */
  				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
  			}
@@ -219,9 +227,34 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 +			if (data && data->getLength() >= 2 * sizeof(uintptr_t)) {
 +				uintptr_t *ramdParms = (uintptr_t *)data->getBytesNoCopy();
 +				if (ramdParms[1] <= (((uint64_t)UINT_MAX) << 12)) {
-+					(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
++					/* md1 even without an md0 (the system image read off the eMMC instead, emmc_root=1) */
++					(void)mdevadd(1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);
 +				}
 +			}
  			regEntry->release();                                                            /* Toss the entry */
  		}
  	}
+ 
++//
++//	The MediaTek phone's system image on its eMMC, read as it is needed (bsd/dev/mtk_emmc.c): boot-arg
++//	emmc_root=1 beside rd=md0, which stays for user space to see -- libignition takes the "ramdisk" boot
++//	from it
++//
++	{
++		uint32_t emmcRoot = 0;
++
++		if (PE_parse_boot_argn("emmc_root", &emmcRoot, sizeof(emmcRoot)) && emmcRoot) {
++			OSSafeReleaseNULL(matching);
++			if (mtk_emmc_root(root) != 0) {
++				panic("IOFindBSDRoot: emmc_root=1, but the eMMC's xnusys partition could not be read");
++			}
++			strlcpy(rootName, "emmc0", rootNameSize);
++			IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
++			*oflags = 0;
++			goto iofrootx;
++		}
++	}
++
+ //
+ //	Now check if we are trying to root on a memory device
+ //

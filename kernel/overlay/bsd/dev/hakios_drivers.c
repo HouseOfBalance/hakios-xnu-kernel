@@ -16,6 +16,7 @@
 #include <sys/hakios_apfs_check.h>
 #include <sys/hakios_audio.h>
 #include <sys/hakios_input.h>
+#include <sys/mtk_emmc.h>
 #include <sys/hakios_sparse.h>
 #include <sys/hakios_virtio_blk.h>
 
@@ -52,7 +53,8 @@ hakios_drivers_init(void)
 	hakios_audio_init();           /* /dev/hakios-audio: what the system plays, to a sink */
 	hakios_virtio_sound_init();    /* boot-arg virtio_sound=1: QEMU's sound device */
 
-	/* storage that is not the phone's own */
+	/* storage */
+	mtk_emmc_devfs();               /* /dev/emmc0: the system image on the eMMC (emmc_root=1) */
 	hakios_virtio_blk_init();      /* /dev/rvblk0: a disk image of the host (QEMU) */
 	hakios_sparse_init();          /* /dev/rsp0: part of an image too big to hold */
 #if APFS

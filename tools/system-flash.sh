@@ -13,7 +13,12 @@ adb -s $S shell 'su -c "ls -l /dev/block/by-name/xnusys"' || {
 TMP=/data/local/tmp/system.apfs
 # the last 96 MiB of the partition are the payload's (tools/payload-flash.sh): an image that reaches them is refused
 BYTES=$(adb -s $S shell "su -c 'blockdev --getsize64 /dev/block/by-name/xnusys'" | tr -d '\r')
-[ "$(wc -c < "$IMG")" -le $((BYTES - 96 * 1024 * 1024)) ] || { echo "the image reaches the partition's last 96 MiB (the payload's)"; exit 1; }
+# (with the payload in boot_a, HAKIOS_PAYLOAD unset, the whole partition is the image's: the 27 release's is 4.29 GB)
+if [ "${HAKIOS_PAYLOAD:-}" = flash ]; then
+	[ "$(wc -c < "$IMG")" -le $((BYTES - 96 * 1024 * 1024)) ] || { echo "the image reaches the partition's last 96 MiB (the payload's)"; exit 1; }
+else
+	[ "$(wc -c < "$IMG")" -le "$BYTES" ] || { echo "the image is larger than the partition"; exit 1; }
+fi
 echo "sending $(du -h "$IMG" | cut -f1) to the phone..."
 adb -s $S push "$IMG" $TMP
 echo "writing it to xnusys..."

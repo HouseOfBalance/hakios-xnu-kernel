@@ -97,6 +97,8 @@ enum {
 
 /* The swap request (IOMobileFramebufferSwapEnd): 0x46c bytes, of which we read these. */
 #define SWAP_SIZE               0x46c
+#define SWAP26_SIZE             0x588                   /* the 26 and 27 releases' request ... */
+#define SWAP26_SHIFT            0x48                    /* ... with these fields that much further on */
 #define SWAP_ID                 0x50
 #define SWAP_SURFACE(layer)     (0x54 + 4 * (layer))    /* surface number, 0 = none */
 #define SWAP_SOURCE(layer)      (0x64 + 16 * (layer))   /* x, y, width, height in the surface */
@@ -1475,8 +1477,18 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		if (sid == 0) {
 			/* the bottom layer taken away: nothing is shown, the screen is black */
 			if (layer == 0 && (set & 1) && fGraphics) {
+				/*
+				 * Plain aligned stores, not bzero: the panel's memory is mapped as device memory, and bzero's
+				 * DC ZVA and unaligned stores fault there ("Unaligned kernel data abort" in
+				 * IOMobileFramebuffer::show, the first time the 27 release's SpringBoard dropped the bottom layer;
+				 * the Qualcomm port met it first).
+				 */
 				for (uint32_t y = 0; y < fPanelHeight; y++) {
-					bzero(fBase + (size_t) y * fRowBytes, (size_t) fPanelWidth * 4);
+					volatile uint64_t *row = (volatile uint64_t *) (fBase + (size_t) y * fRowBytes);
+
+					for (uint32_t x = 0; x < fPanelWidth / 2; x++) {
+						row[x] = 0;
+					}
 				}
 			}
 			continue;
@@ -1882,6 +1894,19 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
 		if (args->structureInput == NULL || args->structureInputSize < SWAP_SIZE) {
 			IOLog("MiniIOMobileFramebuffer: swap request of %u bytes, expected %u\n", args->structureInputSize, SWAP_SIZE);
 			return kIOReturnBadArgument;
+		}
+		if (args->structureInputSize >= SWAP26_SIZE) {
+			/*
+			 * The 26 and 27 releases' request (0x588 bytes and more: 0x6e0 from 24B119) is 16.5's with 0x48
+			 * bytes more ahead of the swap's own fields -- the ID, the layers' surfaces, source rectangles,
+			 * flags, destination rectangles, the masks of the layers set and cleared all sit 0x48 further on
+			 * (the Qualcomm port's reading of kern_SwapBegin/SwapSetLayer). Seen from there it is the old one.
+			 */
+			uint8_t old[SWAP_SIZE];
+
+			memcpy(old, (const uint8_t *) args->structureInput + SWAP26_SHIFT, SWAP_SIZE);
+			fOwner->present(old);
+			return kIOReturnSuccess;
 		}
 		fOwner->present((const uint8_t *) args->structureInput);
 		return kIOReturnSuccess;
