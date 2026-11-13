@@ -20,6 +20,7 @@
 #include <mach/machine/thread_status.h>
 #include <string.h>
 #include <vm/vm_map.h>
+extern void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
 #include <vm/vm_map_xnu.h>          /* xnu-12377 split the kernel-internal VM API into *_xnu.h */
 #include <vm/vm_shared_region.h>
 #include <vm/vm_shared_region_xnu.h>
@@ -130,20 +131,32 @@ user_abort_trace(void)
 		slide = region->sr_slide;
 		vm_shared_region_deallocate(region);
 	}
-	printf("userabort: %s[%d] aborts, shared cache slide 0x%x; called from:", proc ? proc_name_address(proc) : "?",
-	    proc ? proc_pid(proc) : -1, slide);
+	const char *name = proc ? proc_name_address(proc) : "?";
+	/* the window server's and SpringBoard's, also into the host's lines (the log's middle goes) */
+	bool keep = strcmp(name, "backboardd") == 0 || strcmp(name, "SpringBoard") == 0;
+	char frames[160];
+	size_t used = 0;
+
+	frames[0] = 0;
+	printf("userabort: %s[%d] aborts, shared cache slide 0x%x; called from:", name, proc ? proc_pid(proc) : -1, slide);
 	fp = (uint64_t)get_saved_state_fp(state);
 	for (int depth = 0; depth < 24 && plausible_user_address(fp) && (fp & 7) == 0; depth++) {
 		if (copyin((user_addr_t)fp, frame, sizeof(frame)) != 0) {
 			break;
 		}
 		printf(" 0x%llx", (unsigned long long)frame[1]);
+		if (keep && used + 13 < sizeof(frames)) {
+			used += (size_t)snprintf(frames + used, sizeof(frames) - used, " %llx", (unsigned long long)frame[1]);
+		}
 		if (frame[0] <= fp) {
 			break;
 		}
 		fp = frame[0];
 	}
 	printf("\n");
+	if (keep) {
+		hakios_host_keep_add("userabort: %s[%d] slide 0x%x:%s", name, proc ? proc_pid(proc) : -1, slide, frames);
+	}
 }
 
 /*

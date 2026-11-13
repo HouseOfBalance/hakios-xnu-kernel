@@ -30,6 +30,7 @@
 #include <sys/sysctl.h>
 #include <stdarg.h>
 #include <sys/systm.h>
+#include <sys/proc.h>
 #include <vm/vm_kern.h>
 #include <vm/vm_kern_xnu.h>  /* xnu-12377: the KMA flags and kmem_alloc moved to the internal header */
 
@@ -642,9 +643,73 @@ wait_job(uint32_t at, uint32_t mask, uint32_t want, uint32_t ms)
 #define AS_COMMAND_FLUSH_PT 4
 #define JS0                 0x1800      /* fragment jobs; everything else goes to slot 1 */
 #define GPU_ADDRESS_FIRST   0x01000000ull
-#define GPU_ADDRESS_END     (1ull << 35)
+/*
+ * Below 4 GB, and given out again once taken back -- as Linux's panfrost does (panfrost_mmu.c: a drm_mm of
+ * [32 MB, 4 GB)). The MMU translates 35 bits, but the jobs do not keep to them: once the addresses here,
+ * never given twice, passed 4 GB (some minutes into the 27 release, whose window server makes and frees a
+ * dozen 8 MB textures a second), every new buffer was used at its address less 4 GB -- descriptors held
+ * 0x1_45390000 and the GPU faulted at 0x45390000, an old buffer's (run 28). That was every "texture freed a
+ * minute before", the dead iconservicesagent's heap in the window server's jobs, and the garbage stripes.
+ */
+#define GPU_ADDRESS_END     (1ull << 32)
+#define GPU_GRANULE_SHIFT   16                  /* 64 KB */
+#define GPU_GRANULES        ((GPU_ADDRESS_END - GPU_ADDRESS_FIRST) >> GPU_GRANULE_SHIFT)
+static uint64_t gpu_granule_used[(GPU_GRANULES + 63) / 64];
+static uint64_t gpu_granule_next;                       /* where the next search starts (next fit) */
+static uint64_t gpu_granules_taken;
 
-static uint64_t next_address = GPU_ADDRESS_FIRST;
+/* granules a buffer of `size` holds: its own, rounded up, and one empty after it, so that an overrun faults */
+static uint64_t
+gpu_granules_of(uint64_t size)
+{
+	return ((size + (1ull << GPU_GRANULE_SHIFT) - 1) >> GPU_GRANULE_SHIFT) + 1;
+}
+
+static bool
+gpu_granule_is_used(uint64_t g)
+{
+	return (gpu_granule_used[g / 64] >> (g % 64)) & 1;
+}
+
+static void
+gpu_granules_set(uint64_t first, uint64_t count, bool used)
+{
+	for (uint64_t g = first; g < first + count && g < GPU_GRANULES; g++) {
+		if (used) {
+			gpu_granule_used[g / 64] |= 1ull << (g % 64);
+		} else {
+			gpu_granule_used[g / 64] &= ~(1ull << (g % 64));
+		}
+	}
+	gpu_granules_taken = used ? gpu_granules_taken + count : gpu_granules_taken - MIN(count, gpu_granules_taken);
+}
+
+/* `count` free granules in a row, from the cursor on and then from the start: the first, or GPU_GRANULES. With mali_lock held. */
+static uint64_t
+gpu_granules_find(uint64_t count)
+{
+	for (int pass = 0; pass < 2; pass++) {
+		uint64_t g = pass == 0 ? gpu_granule_next : 0, end = pass == 0 ? GPU_GRANULES : gpu_granule_next + count;
+
+		while (g + count <= MIN(end, GPU_GRANULES)) {
+			uint64_t run = 0;
+
+			if (gpu_granule_used[g / 64] == ~0ull && g % 64 == 0) {
+				g += 64;
+				continue;
+			}
+			while (run < count && !gpu_granule_is_used(g + run)) {
+				run++;
+			}
+			if (run == count) {
+				return g;
+			}
+			g += run + 1;
+		}
+	}
+	return GPU_GRANULES;
+}
+
 
 /*
  * The last buffers handed GPU addresses, and whether they have been taken out of the tables
@@ -656,8 +721,15 @@ static struct {
 	uint64_t address, size;
 	uint32_t freed, kind;                   /* kind: 0 not said, 1 a panfrost BO, 2 an IOSurface */
 	uint32_t width, height, row_bytes, format, offset;
+	int made_pid, freed_pid;                /* who asked for it and who gave it back (proc_selfpid) */
+	char made_name[17], freed_name[17];
+	uint64_t freed_at;                      /* mach_absolute_time of the unmap */
 } mali_recent[MALI_RECENT];
 static uint32_t mali_recent_next;
+/* the job the worker runs now: whose it is (the fault report says it) */
+static int mali_running_pid;
+static char mali_running_name[17];
+static uint64_t mali_running_seq, mali_running_queued;
 
 /* What a buffer just made is, for describe_address. */
 void
@@ -689,7 +761,7 @@ say_kind(int i)
 	}
 }
 
-static void
+static int
 describe_address(uint64_t address)
 {
 	int below = -1;
@@ -703,7 +775,21 @@ describe_address(uint64_t address)
 			    address - mali_recent[i].address, mali_recent[i].size, mali_recent[i].address,
 			    mali_recent[i].freed ? "FREED already" : "still there (a page not entered?)");
 			say_kind(i);
-			return;
+			printf("mali:     made by %s[%d]; %s %s[%d]; the job is %s[%d]'s, number %llu\n", mali_recent[i].made_name,
+			    mali_recent[i].made_pid, mali_recent[i].freed ? "given back by" : "not given back;",
+			    mali_recent[i].freed ? mali_recent[i].freed_name : "-", mali_recent[i].freed_pid, mali_running_name,
+			    mali_running_pid, mali_running_seq);
+			if (mali_recent[i].freed) {
+				uint64_t ns;
+				bool before = mali_recent[i].freed_at <= mali_running_queued;
+
+				absolutetime_to_nanoseconds(before ? mali_running_queued - mali_recent[i].freed_at :
+				    mali_recent[i].freed_at - mali_running_queued, &ns);
+				printf("mali:     given back %llu us %s the job was queued: %s\n", ns / 1000, before ? "BEFORE" : "after",
+				    before ? "the program sent a job naming a buffer it had freed" :
+				    "freed while the job was waiting in the queue");
+			}
+			return mali_recent[i].freed ? i : -1;
 		}
 		if (mali_recent[i].address <= address && (below < 0 || mali_recent[i].address > mali_recent[below].address)) {
 			below = i;
@@ -717,6 +803,7 @@ describe_address(uint64_t address)
 	} else {
 		printf("mali:   the fault is in no buffer of the last %u\n", MALI_RECENT);
 	}
+	return -1;
 }
 
 /* The last job that did not finish, to be repeated where the end of the log keeps it. */
@@ -809,22 +896,40 @@ mtk_mali_parameter(uint32_t which, uint64_t *value)
 	}
 }
 
-/* `size` bytes of GPU addresses, never given out twice: there are 32 GB of them. 0: none left. */
+/* `size` bytes of GPU addresses below 4 GB, given out again once mtk_mali_unmap takes them back. 0: none left. */
 uint64_t
 mtk_mali_address(uint64_t size)
 {
-	uint64_t address;
+	uint64_t address, count = gpu_granules_of(size), first;
 
 	lck_mtx_lock(&mali_lock);
-	address = next_address;
-	if (address + size > GPU_ADDRESS_END) {
+	first = size == 0 ? GPU_GRANULES : gpu_granules_find(count);
+	if (first == GPU_GRANULES) {
+		static unsigned said;
+
 		address = 0;
+		if (said++ < 4) {
+			printf("mali: no %llu bytes of GPU addresses left below 4 GB (%llu of %llu granules taken)\n", size,
+			    gpu_granules_taken, (uint64_t)GPU_GRANULES);
+		}
 	} else {
-		next_address += (size + 0xffff) & ~0xffffull;   /* 64 KB between buffers: an overrun faults */
+		gpu_granules_set(first, count, true);
+		gpu_granule_next = first + count;
+		address = GPU_ADDRESS_FIRST + (first << GPU_GRANULE_SHIFT);
+		/* an address given again: the old record of it says nothing about this buffer */
+		for (int i = 0; i < MALI_RECENT; i++) {
+			if (mali_recent[i].address == address) {
+				mali_recent[i].size = 0;
+			}
+		}
 		mali_recent[mali_recent_next % MALI_RECENT].address = address;
 		mali_recent[mali_recent_next % MALI_RECENT].size = size;
 		mali_recent[mali_recent_next % MALI_RECENT].freed = 0;
 		mali_recent[mali_recent_next % MALI_RECENT].kind = 0;
+		mali_recent[mali_recent_next % MALI_RECENT].made_pid = proc_selfpid();
+		proc_selfname(mali_recent[mali_recent_next % MALI_RECENT].made_name, sizeof(mali_recent[0].made_name));
+		mali_recent[mali_recent_next % MALI_RECENT].freed_pid = 0;
+		mali_recent[mali_recent_next % MALI_RECENT].freed_name[0] = 0;
 		mali_recent_next++;
 	}
 	lck_mtx_unlock(&mali_lock);
@@ -838,6 +943,9 @@ mtk_mali_unmap(uint64_t gpu, uint64_t size)
 	for (int i = 0; i < MALI_RECENT; i++) {
 		if (mali_recent[i].address == gpu && mali_recent[i].size != 0) {
 			mali_recent[i].freed = 1;
+			mali_recent[i].freed_pid = proc_selfpid();
+			mali_recent[i].freed_at = mach_absolute_time();
+			proc_selfname(mali_recent[i].freed_name, sizeof(mali_recent[i].freed_name));
 		}
 	}
 	for (uint64_t at = gpu; at < gpu + size; at += 4096) {        /* the GPU's pages, not the kernel's 16 KB */
@@ -858,6 +966,10 @@ mtk_mali_unmap(uint64_t gpu, uint64_t size)
 	lck_mtx_lock(&mali_job_lock);                   /* an entry taken out: the TLB may hold it */
 	lck_mtx_lock(&mali_lock);
 	as0_update(pt_top_phys, TRANSCFG_AARCH64_4K);
+	/* the addresses free again only now, when no TLB can still hold their old pages */
+	if (gpu >= GPU_ADDRESS_FIRST && gpu < GPU_ADDRESS_END) {
+		gpu_granules_set((gpu - GPU_ADDRESS_FIRST) >> GPU_GRANULE_SHIFT, gpu_granules_of(size), false);
+	}
 	lck_mtx_unlock(&mali_lock);
 	lck_mtx_unlock(&mali_job_lock);
 }
@@ -883,6 +995,7 @@ mtk_mali_mapped(void)
 }
 
 /* The entries of each level for GPU address `gpu`, as far as there are tables (with the lock held). */
+static void walk_tables(uint64_t gpu, uint64_t walk[3]);
 static void
 walk_tables(uint64_t gpu, uint64_t walk[3])
 {
@@ -894,6 +1007,206 @@ walk_tables(uint64_t gpu, uint64_t walk[3])
 		walk[level] = table[(gpu >> shift[level]) & (level == 0 ? 31 : 511)];
 		table = (walk[level] & 1) && level < 2 ? (uint64_t *)phystokv(walk[level] & PTE_ADDRESS) : NULL;
 	}
+}
+
+/* The buffer that holds GPU address `a`, live ones first; -1: none of the last MALI_RECENT. */
+static int
+recent_of(uint64_t a)
+{
+	int freed = -1;
+
+	for (int i = 0; i < MALI_RECENT; i++) {
+		if (mali_recent[i].size != 0 && a >= mali_recent[i].address && a < mali_recent[i].address + mali_recent[i].size) {
+			if (!mali_recent[i].freed) {
+				return i;
+			}
+			freed = i;
+		}
+	}
+	return freed;
+}
+
+/* A 64-bit word of GPU memory, read through the GPU's own tables (with mali_lock held); false: no page there. */
+static bool
+gpu_word(uint64_t gpu, uint64_t *value)
+{
+	uint64_t walk[3];
+
+	walk_tables(gpu & ~7ull, walk);
+	if (!(walk[2] & 1)) {
+		return false;
+	}
+	*value = *(volatile uint64_t *)phystokv((walk[2] & PTE_ADDRESS) | (gpu & 0xff8));
+	return true;
+}
+
+/*
+ * Where a job that faulted into a freed buffer found its address: from the job chain on, 512 bytes
+ * of every place a word points to that is mapped, five levels deep, and every word that points into
+ * [lo, hi) said with the buffer that holds it and who made that one. Raw words only: no descriptor's
+ * layout is assumed (a pointer's low bits may carry flags, so they are also tried with 6 of them off).
+ */
+#define STALE_NODES 160
+#define STALE_DEPTH 5
+#define STALE_WORDS 64
+static void
+trace_stale(uint64_t chain, uint64_t lo, uint64_t hi)
+{
+	uint64_t nodes[STALE_NODES];
+	unsigned depth[STALE_NODES], count = 0, said = 0;
+
+	nodes[count] = chain;
+	depth[count++] = 0;
+	for (unsigned n = 0; n < count && said < 12; n++) {
+		for (unsigned w = 0; w < STALE_WORDS; w++) {
+			uint64_t v, probe, at = nodes[n] + 8 * w;
+
+			if (!gpu_word(at, &v) || v == 0) {
+				continue;
+			}
+			for (int masked = 0; masked < 2; masked++) {
+				uint64_t p = masked ? (v & ~0x3full) : v;
+
+				if (p >= lo && p < hi && said < 12) {
+					int holder = recent_of(at);
+
+					said++;
+					printf("mali:   stale: %#llx (+%#llx into the freed buffer) is the word at %#llx, level %u from the "
+					    "chain, in a buffer of %#llx bytes at %#llx made by %s[%d]%s\n", v, p - lo, at, depth[n],
+					    holder >= 0 ? mali_recent[holder].size : 0, holder >= 0 ? mali_recent[holder].address : 0,
+					    holder >= 0 ? mali_recent[holder].made_name : "?", holder >= 0 ? mali_recent[holder].made_pid : -1,
+					    holder >= 0 && mali_recent[holder].freed ? " (freed too)" : "");
+					break;
+				}
+				if (depth[n] < STALE_DEPTH && count < STALE_NODES && p > 0xffff && p < GPU_ADDRESS_END && gpu_word(p, &probe)) {
+					bool seen = false;
+
+					for (unsigned k = 0; k < count && !seen; k++) {
+						seen = nodes[k] == p;
+					}
+					if (!seen) {
+						nodes[count] = p;
+						depth[count++] = depth[n] + 1;
+					}
+				}
+			}
+		}
+	}
+	if (said == 0) {
+		printf("mali:   stale: no word within 5 levels of the chain at %#llx points into the freed buffer (%u places read)\n",
+		    chain, count);
+	}
+}
+
+/* The live buffers just below and above GPU address `a` (with mali_lock held): a job reading past the
+ * end of a live one goes through the 64 KB between buffers into the next, which may be a freed one. */
+static void
+say_live_neighbours(uint64_t a)
+{
+	int below = -1, above = -1;
+
+	for (int i = 0; i < MALI_RECENT; i++) {
+		if (mali_recent[i].size == 0 || mali_recent[i].freed) {
+			continue;
+		}
+		if (mali_recent[i].address + mali_recent[i].size <= a &&
+		    (below < 0 || mali_recent[i].address > mali_recent[below].address)) {
+			below = i;
+		}
+		if (mali_recent[i].address > a && (above < 0 || mali_recent[i].address < mali_recent[above].address)) {
+			above = i;
+		}
+	}
+	if (below >= 0) {
+		hakios_host_keep_add("mali live below: %#llx bytes at %#llx, ends %#llx before the fault; kind %u %ux%u row %u "
+		    "fmt %#x; made by %s[%d]", mali_recent[below].size, mali_recent[below].address,
+		    a - (mali_recent[below].address + mali_recent[below].size), mali_recent[below].kind, mali_recent[below].width,
+		    mali_recent[below].height, mali_recent[below].row_bytes, mali_recent[below].format,
+		    mali_recent[below].made_name, mali_recent[below].made_pid);
+	}
+	if (above >= 0) {
+		hakios_host_keep_add("mali live above: %#llx bytes at %#llx, %#llx after the fault; kind %u; made by %s[%d]",
+		    mali_recent[above].size, mali_recent[above].address, mali_recent[above].address - a,
+		    mali_recent[above].kind, mali_recent[above].made_name, mali_recent[above].made_pid);
+	}
+}
+
+/*
+ * Every page the GPU's tables map, whoever's buffer it is and however old (the table of recent
+ * buffers forgets the long-lived ones), for words that point into [lo, hi). Up to three freed
+ * buffers a run, 8 places each, said into the host's lines. With mali_lock held.
+ */
+static void
+scan_all_pages(uint64_t lo, uint64_t hi)
+{
+	static unsigned scans;
+	static uint64_t scanned_lo[3];
+	unsigned said = 0;
+	uint64_t pages = 0;
+
+	for (unsigned k = 0; k < scans; k++) {
+		if (scanned_lo[k] == lo) {
+			return;
+		}
+	}
+	if (scans == 3 || pt_top == NULL) {
+		return;
+	}
+	scanned_lo[scans++] = lo;
+	for (unsigned l0 = 0; l0 < 32 && said < 8; l0++) {
+		uint64_t *middle;
+
+		if (!(pt_top[l0] & 1)) {
+			continue;
+		}
+		middle = (uint64_t *)phystokv(pt_top[l0] & PTE_ADDRESS);
+		for (unsigned l1 = 0; l1 < 512 && said < 8; l1++) {
+			uint64_t *bottom;
+
+			if (!(middle[l1] & 1)) {
+				continue;
+			}
+			bottom = (uint64_t *)phystokv(middle[l1] & PTE_ADDRESS);
+			for (unsigned l2 = 0; l2 < 512 && said < 8; l2++) {
+				uint64_t page = ((uint64_t)l0 << 30) | ((uint64_t)l1 << 21) | ((uint64_t)l2 << 12);
+				volatile uint64_t *words;
+
+				if (!(bottom[l2] & 1)) {
+					continue;
+				}
+				words = (volatile uint64_t *)phystokv(bottom[l2] & PTE_ADDRESS);
+				pages++;
+				for (unsigned w = 0; w < 1024 && said < 8; w++) {
+					/* every 32-bit word too: GPU addresses here are below 4 GB, and a descriptor may keep a
+					 * pointer's low half in a field with other fields beside it (run 26: no 64-bit word did) */
+					uint32_t u = ((volatile uint32_t *)words)[w];
+					uint64_t v = (w & 1) ? 0 : words[w / 2], m = v & ~0x3full;
+					bool whole = (v >= lo && v < hi) || (m >= lo && m < hi);
+
+					/* a half is counted only as the buffer's start (or a plane a page into it), 64-byte aligned:
+					 * pixels are 32-bit words too, and any range of them matches by chance */
+					if (whole || (hi <= (1ull << 32) && u >= lo && u < lo + 0x1000 && (u & 0x3f) == 0)) {
+						unsigned at = (w / 2) & ~7u;
+						int holder = recent_of(page + 4 * w);
+
+						said++;
+						hakios_host_keep_add("mali page scan: %s %#x (+%#llx into freed %#llx) at %#llx; %s %#llx bytes at %#llx "
+						    "by %s[%d] kind %u", whole ? "word" : "half", u, (uint64_t)(u & ~0x3fu) - lo, lo, page + 4 * w,
+						    holder >= 0 ? "in" : "in a buffer not in the table,",
+						    holder >= 0 ? mali_recent[holder].size : 0, holder >= 0 ? mali_recent[holder].address : 0,
+						    holder >= 0 ? mali_recent[holder].made_name : "?", holder >= 0 ? mali_recent[holder].made_pid : -1,
+						    holder >= 0 ? mali_recent[holder].kind : 0);
+						hakios_host_keep_add("mali page scan:   %016llx %016llx %016llx %016llx", words[at], words[at + 1],
+						    words[at + 2], words[at + 3]);
+						hakios_host_keep_add("mali page scan:   %016llx %016llx %016llx %016llx", words[at + 4], words[at + 5],
+						    words[at + 6], words[at + 7]);
+					}
+				}
+			}
+		}
+	}
+	hakios_host_keep_add("mali page scan: freed %#llx..%#llx: %u places in %llu mapped pages (%llu MB)", lo, hi, said,
+	    pages, pages >> 8);
 }
 
 /*
@@ -935,7 +1248,31 @@ mtk_mali_submit(uint64_t chain, bool fragment)
 		walk_tables(last_failure.fault_address | ((uint64_t)rd(mali, AS0 + 0x24) << 32), last_failure.walk);
 		printf("mali: a job on slot %u did not finish: interrupts %#x, status %#x, MMU %#x fault %#x at %#x\n", slot, raw,
 		    last_failure.status, last_failure.mmu, last_failure.fault, last_failure.fault_address);
-		describe_address(last_failure.fault_address | ((uint64_t)rd(mali, AS0 + 0x24) << 32));
+		{
+			int freed = describe_address(last_failure.fault_address | ((uint64_t)rd(mali, AS0 + 0x24) << 32));
+
+			if (freed >= 0) {
+				trace_stale(chain, mali_recent[freed].address, mali_recent[freed].address + mali_recent[freed].size);
+				{
+					static unsigned neighbours_said;
+
+					if (neighbours_said++ < 6) {
+						uint64_t at = last_failure.fault_address | ((uint64_t)rd(mali, AS0 + 0x24) << 32);
+
+						hakios_host_keep_add("mali fault at %#llx: +%#llx into a freed buffer of %#llx at %#llx (kind %u %ux%u "
+						    "row %u), freed by %s[%d]; job %s[%d]", at, at - mali_recent[freed].address,
+						    mali_recent[freed].size, mali_recent[freed].address, mali_recent[freed].kind,
+						    mali_recent[freed].width, mali_recent[freed].height, mali_recent[freed].row_bytes,
+						    mali_recent[freed].freed_name, mali_recent[freed].freed_pid, mali_running_name,
+						    mali_running_pid);
+						say_live_neighbours(at);
+					}
+				}
+				if (mali_recent[freed].freed_at <= mali_running_queued) {
+					scan_all_pages(mali_recent[freed].address, mali_recent[freed].address + mali_recent[freed].size);
+				}
+			}
+		}
 		wr(mali, GPU_INT_CLEAR, 0xffffffffu);
 		wr(mali, GPU_CMD, 1);                   /* soft reset, then everything back as it was */
 		(void)wait_for(mali, GPU_INT_RAWSTAT, IRQ_RESET_COMPLETED, IRQ_RESET_COMPLETED, 100);
@@ -965,6 +1302,8 @@ mtk_mali_submit(uint64_t chain, bool fragment)
 static struct {
 	uint64_t chain, seq, queued;
 	bool fragment;
+	int pid;                                /* the program that sent it */
+	char name[17];
 } mali_queue[MALI_QUEUE];
 /* boot-arg mali_trace=1: a line for every job, "tl: j SEQ f|v q QUEUED b BEGAN e ENDED" in us of
  * mach_absolute_time, beside touch_lat's lines of the display's and the Metal driver's */
@@ -989,6 +1328,10 @@ mali_worker(__unused void *parameter, __unused wait_result_t result)
 		seq = mali_queue[mali_queue_head].seq;
 		uint64_t queued = mali_queue[mali_queue_head].queued;
 		fragment = mali_queue[mali_queue_head].fragment;
+		mali_running_pid = mali_queue[mali_queue_head].pid;
+		strlcpy(mali_running_name, mali_queue[mali_queue_head].name, sizeof(mali_running_name));
+		mali_running_seq = seq;
+		mali_running_queued = queued;
 		lck_mtx_unlock(&mali_queue_lock);
 
 		{
@@ -1063,6 +1406,8 @@ mtk_mali_enqueue(uint64_t chain, bool fragment)
 	mali_queue[at].fragment = fragment;
 	mali_queue[at].seq = seq;
 	mali_queue[at].queued = mach_absolute_time();
+	mali_queue[at].pid = proc_selfpid();
+	proc_selfname(mali_queue[at].name, sizeof(mali_queue[at].name));
 	mali_queue_count++;
 	lck_mtx_unlock(&mali_queue_lock);
 	wakeup((caddr_t)&mali_queue_count);

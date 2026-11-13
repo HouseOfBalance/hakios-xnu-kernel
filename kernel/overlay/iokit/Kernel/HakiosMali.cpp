@@ -45,6 +45,7 @@ void mtk_mali_tag(uint64_t address, uint32_t kind, uint32_t width, uint32_t heig
 uint32_t mtk_mali_submit(uint64_t chain, bool fragment);
 uint64_t mtk_mali_enqueue(uint64_t chain, bool fragment);
 bool mtk_mali_wait(uint64_t seq, uint64_t timeout_ns);
+void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 
 void HakiosMaliStart(void);
 void MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_t height, uint32_t rowBytes);
@@ -271,20 +272,68 @@ HakiosMaliUserClient::buffer(uint32_t handle)
 	return &fBuffers[handle - 1];
 }
 
-/* With the lock held. No job can still be using it: every job has finished before its call returned. */
-void
-HakiosMaliUserClient::freeBuffer(struct mali_buffer * b)
+/*
+ * Buffers given back while a job queued or running still uses them, freed when that job is done.
+ * A program that ends with jobs in the queue (the 27 release's iconservicesagent aborts every ten
+ * seconds with Metal open) has its buffers given back at once, and the old wait of two seconds is
+ * shorter than a queue can be with fragment jobs of half a second each; after it the buffer went
+ * whether its jobs had run or not. As HakiosGPU.cpp's fLeft, but one list for every client, so a
+ * gone program's buffers are freed later instead of kept. With gMaliLock held.
+ */
+#define MALI_LATE 512
+static struct mali_buffer gMaliLate[MALI_LATE];
+static uint32_t gMaliLateCount, gMaliLateMost;
+
+static void
+maliRelease(struct mali_buffer * b)
 {
-	/* not while a job queued or running may still use it (jobs are run in a queue now) */
-	if (b->last_seq != 0) {
-		(void)mtk_mali_wait(b->last_seq, 2ull * NSEC_PER_SEC);
-	}
 	mtk_mali_unmap(b->address, b->size);
 	b->memory->release();
 	if (b->surface != NULL) {
 		MiniIOSurfaceDrop(b->surface);
 	}
 	bzero(b, sizeof(*b));
+}
+
+/* the late ones whose job is done; with `wait`, also the oldest, waiting for it (the list is full) */
+static void
+maliReapLate(bool wait)
+{
+	for (uint32_t i = 0; i < gMaliLateCount;) {
+		if (mtk_mali_wait(gMaliLate[i].last_seq, wait && i == 0 ? 10ull * NSEC_PER_SEC : 0)) {
+			maliRelease(&gMaliLate[i]);
+			gMaliLate[i] = gMaliLate[--gMaliLateCount];
+			bzero(&gMaliLate[gMaliLateCount], sizeof(gMaliLate[0]));
+			wait = false;
+		} else {
+			i++;
+		}
+	}
+}
+
+/* With the lock held. A buffer a job queued or running still uses goes when that job is done. */
+void
+HakiosMaliUserClient::freeBuffer(struct mali_buffer * b)
+{
+	maliReapLate(false);
+	if (b->last_seq != 0 && !mtk_mali_wait(b->last_seq, 0)) {
+		if (gMaliLateCount == MALI_LATE) {
+			maliReapLate(true);
+		}
+		if (gMaliLateCount < MALI_LATE) {
+			gMaliLate[gMaliLateCount++] = *b;
+			if (gMaliLateCount > gMaliLateMost) {
+				gMaliLateMost = gMaliLateCount;
+				if (gMaliLateMost % 64 == 1) {
+					IOLog("HakiosMali: %u buffers given back wait for their jobs\n", gMaliLateMost);
+				}
+			}
+			bzero(b, sizeof(*b));
+			return;
+		}
+		(void)mtk_mali_wait(b->last_seq, 10ull * NSEC_PER_SEC);
+	}
+	maliRelease(b);
 }
 
 /*
@@ -353,6 +402,30 @@ HakiosMaliUserClient::createBO(struct drm_panfrost_create_bo * request)
 	if (memory == NULL) {
 		IOLog("HakiosMali: no memory for a buffer of %llu bytes\n", size);
 		return kIOReturnNoMemory;
+	}
+	/*
+	 * Zeroes, as Linux's GEM gives every new buffer and as HakiosGPU.cpp gives its own, pushed out of the processor's
+	 * cache to where the GPU reads. Without them a buffer came with whatever its pages last held, another program's
+	 * pixels and descriptors among it, and panfrost counts on a new buffer being zero.
+	 */
+	{
+		void * bytes = memory->getBytesNoCopy();
+
+		if (bytes != NULL) {
+			bzero(bytes, (size_t) size);
+			FlushPoC_DcacheRegion((vm_offset_t) bytes, (size_t) size);
+		} else {
+			IOMemoryMap * passing = memory->map(kIOMapAnywhere | kIOMapDefaultCache);
+
+			if (passing == NULL) {
+				IOLog("HakiosMali: a buffer of %llu bytes could not be cleared\n", size);
+				memory->release();
+				return kIOReturnNoMemory;
+			}
+			bzero((void *) passing->getVirtualAddress(), (size_t) size);
+			FlushPoC_DcacheRegion((vm_offset_t) passing->getVirtualAddress(), (size_t) size);
+			passing->release();
+		}
 	}
 	b = newBuffer(memory, 0, size, &request->handle);
 	if (b == NULL) {

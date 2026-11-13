@@ -829,6 +829,15 @@ enum {
 enum {   /* MTLTextureUsage, a mask */
    RWA_USAGE_SHADER_READ = 0x1, RWA_USAGE_SHADER_WRITE = 0x2,
    RWA_USAGE_RENDER_TARGET = 0x4, RWA_USAGE_PIXEL_FORMAT_VIEW = 0x10,
+   /* The 27 release's Metal has two more, named by _MTLTextureUsageString (0x1a5c42ae8 in its
+    * cache), which tests bits 0, 1, 2, 4, 14 and 16 in the order its names lie in the strings
+    * (ShaderRead, ShaderWrite, RenderTarget, PixelFormatView, NoConcurrentAccess,
+    * BlockWritesOnly at 0x1a5d14ec9 on): 0x4000 and 0x10000. Both say how the texture will be
+    * written, for the GPU to lay it out or compress it; neither allows a binding the four
+    * above do not, so here they change nothing. Refused, they cost the window server 547
+    * textures a run (runs 20 to 25: QuartzCore's render targets with 0x10000) and with them
+    * the frames that were to be drawn into them. */
+   RWA_USAGE_NO_CONCURRENT_ACCESS = 0x4000, RWA_USAGE_BLOCK_WRITES_ONLY = 0x10000,
 };
 
 enum {   /* MTLSamplerAddressMode -- and see sampler_state_from_air about its numbering */
@@ -1360,14 +1369,18 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
     * given the sampled binding.
     */
    unsigned known = RWA_USAGE_SHADER_READ | RWA_USAGE_SHADER_WRITE |
-                    RWA_USAGE_RENDER_TARGET | RWA_USAGE_PIXEL_FORMAT_VIEW;
+                    RWA_USAGE_RENDER_TARGET | RWA_USAGE_PIXEL_FORMAT_VIEW |
+                    RWA_USAGE_NO_CONCURRENT_ACCESS | RWA_USAGE_BLOCK_WRITES_ONLY;
    if (shape->usage & ~known) {
       say(why, why_size, "usage bits 0x%x are not MTLTextureUsage's, and this library will "
                          "not guess what they allow", shape->usage & ~known);
       return NULL;
    }
-   bool read = shape->usage == 0 || (shape->usage & RWA_USAGE_SHADER_READ);
-   bool write = shape->usage == 0 || (shape->usage & RWA_USAGE_SHADER_WRITE);
+   /* the two hints decide nothing below: a usage of them alone is Metal's "assume anything" */
+   const unsigned usage =
+      shape->usage & ~(RWA_USAGE_NO_CONCURRENT_ACCESS | RWA_USAGE_BLOCK_WRITES_ONLY);
+   bool read = usage == 0 || (usage & RWA_USAGE_SHADER_READ);
+   bool write = usage == 0 || (usage & RWA_USAGE_SHADER_WRITE);
 
    /* A depth or stencil format turns the same usage bits into a different binding, and
     * the difference is not a convention: Gallium has PIPE_BIND_DEPTH_STENCIL where it
@@ -1392,7 +1405,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
     * explicit MTLTextureUsageShaderWrite is refused by name, and usage 0 -- Metal's
     * "assume anything" -- simply does not assume the write.
     */
-   if (multisample && (shape->usage & RWA_USAGE_SHADER_WRITE)) {
+   if (multisample && (usage & RWA_USAGE_SHADER_WRITE)) {
       say(why, why_size, "a %s with MTLTextureUsageShaderWrite: Metal has no multisample "
                          "texture a shader stores to (texture2d_ms takes access::read and "
                          "nothing else) and neither has this GPU, which declines an image "
@@ -1404,7 +1417,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
       write = false;
 
    bool depth_stencil = format_is_depth_stencil(fmt->pipe);
-   if (depth_stencil && (shape->usage & RWA_USAGE_SHADER_WRITE)) {
+   if (depth_stencil && (usage & RWA_USAGE_SHADER_WRITE)) {
       say(why, why_size, "a %s of %s with MTLTextureUsageShaderWrite: no shader stores to "
                          "a depth or stencil texture, in Metal or on this GPU, so there is "
                          "no binding this could be given", type_name, fmt->name);
@@ -1415,7 +1428,7 @@ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shap
 
    unsigned bind = (read ? PIPE_BIND_SAMPLER_VIEW : 0) |
                    (write ? PIPE_BIND_SHADER_IMAGE : 0) |
-                   ((shape->usage & RWA_USAGE_RENDER_TARGET) || (depth_stencil && !shape->usage)
+                   ((usage & RWA_USAGE_RENDER_TARGET) || (depth_stencil && !usage)
                        ? (depth_stencil ? PIPE_BIND_DEPTH_STENCIL : PIPE_BIND_RENDER_TARGET)
                        : 0);
    if (!bind) {

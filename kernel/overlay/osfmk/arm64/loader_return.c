@@ -578,6 +578,8 @@ STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, hv_wdt_pet_init);
 
 void hk_crash_report(const char *name, int pid, int sig);
 
+extern void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
+
 void
 hk_crash_report(const char *name, int pid, int sig)
 {
@@ -595,6 +597,18 @@ hk_crash_report(const char *name, int pid, int sig)
 	    get_saved_state_sp(ss), get_saved_state_far(ss), (unsigned long long)get_saved_state_esr(ss),
 	    (unsigned long long)task->task_shared_region_slide);
 	loader_log_line(line);
+	/* the window server's and SpringBoard's deaths, whole, into the host's lines: the log's middle
+	 * goes in a long run, and with it why the screen went black (run 24: backboardd 38 became 321) */
+	bool keep = strcmp(name, "backboardd") == 0 || strcmp(name, "SpringBoard") == 0;
+	char frames[200];
+	size_t used = 0;
+
+	if (keep) {
+		line[strlen(line) - 1] = 0;
+		hakios_host_keep_add("%s", line);
+		line[strlen(line)] = '\n';
+	}
+	frames[0] = 0;
 	snprintf(line, sizeof(line), "hakios:   x0 %llx x1 %llx x2 %llx x3 %llx x8 %llx x16 %llx\n",
 	    get_saved_state_reg(ss, 0), get_saved_state_reg(ss, 1), get_saved_state_reg(ss, 2),
 	    get_saved_state_reg(ss, 3), get_saved_state_reg(ss, 8), get_saved_state_reg(ss, 16));
@@ -606,10 +620,16 @@ hk_crash_report(const char *name, int pid, int sig)
 		}
 		snprintf(line, sizeof(line), "hakios:   frame %d: %llx\n", i, HK_USER_ADDR(frame[1]));
 		loader_log_line(line);
+		if (keep && used + 18 < sizeof(frames)) {
+			used += (size_t)snprintf(frames + used, sizeof(frames) - used, " %llx", HK_USER_ADDR(frame[1]));
+		}
 		if (frame[0] <= fp) {
 			break;
 		}
 		fp = frame[0];
+	}
+	if (keep && frames[0] != 0) {
+		hakios_host_keep_add("hakios:   %s[%d] frames:%s", name, pid, frames);
 	}
 	/* and where this project's own libraries were loaded in it, for the frames that are in them
 	 * (dyld's all_image_infos: version, count, then the array of { load address, path, date });
