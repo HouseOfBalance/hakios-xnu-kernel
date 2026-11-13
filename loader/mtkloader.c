@@ -243,6 +243,7 @@ struct xnu_syms {
 
 static struct xnu_syms xsyms; /* of the kernel that was started; kept for when it comes back */
 static const uint8_t *xkernel;  /* its Mach-O file, for symbols */
+static uint32_t xkernel_size;   /* and its length: what a run may have written over is checked against it */
 /* XNU's x29, x30, TCR_EL1 and TTBR1_EL1 when it came back (start.S) */
 uint64_t xnu_fp[4];
 static volatile uint64_t xnu_back __attribute__((aligned(64))); /* set by xnu_returned() */
@@ -1370,22 +1371,35 @@ static void out_sym(uint64_t addr)
 	const char *best_name = NULL;
 
 	out_hex(addr);
-	if (!xkernel) {
+	/*
+	 * The file is where the loader put it before XNU ran, and a long run may have written over it
+	 * (the 27 release's did: a load command's size sent this walk to an odd address and the loader
+	 * faulted, with the run's log not yet saved). Nothing in it is taken without a check.
+	 */
+	if (!xkernel || xkernel_size < sizeof(*mh) || mh->magic != MH_MAGIC_64 || mh->ncmds > 512 ||
+	    mh->sizeofcmds > xkernel_size - sizeof(*mh)) {
 		return;
 	}
 	lc = (const struct load_command *)(mh + 1);
+	uint32_t left = mh->sizeofcmds;
 	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (const void *)((const uint8_t *)lc + lc->cmdsize)) {
+		if (left < sizeof(*lc) || lc->cmdsize < sizeof(*lc) || lc->cmdsize % 8 || lc->cmdsize > left) {
+			return;
+		}
+		left -= lc->cmdsize;
 		if (lc->cmd == LC_SYMTAB) {
 			st = (const void *)lc;
 		}
 	}
-	if (!st) {
+	if (!st || st->symoff % 8 || st->symoff > xkernel_size || st->nsyms > (xkernel_size - st->symoff) / sizeof(struct nlist_64) ||
+	    st->stroff > xkernel_size || st->strsize > xkernel_size - st->stroff) {
 		return;
 	}
 	const struct nlist_64 *sym = (const struct nlist_64 *)(xkernel + st->symoff);
 	const char *strs = (const char *)(xkernel + st->stroff);
 	for (uint32_t i = 0; i < st->nsyms; i++) {
-		if ((sym[i].n_type & 0x0e) == 0x0e && sym[i].n_value <= addr && sym[i].n_value > best) { /* N_SECT */
+		if ((sym[i].n_type & 0x0e) == 0x0e && sym[i].n_value <= addr && sym[i].n_value > best && /* N_SECT */
+		    sym[i].n_strx < st->strsize) {
 			best = sym[i].n_value;
 			best_name = strs + sym[i].n_strx;
 		}
@@ -1671,6 +1685,7 @@ static void rescue_log(void)
 	}
 	xsyms = s;
 	xkernel = pi.kernel;
+	xkernel_size = pi.kernel_size;
 	rescue_state();
 	dbg_puts("=== XNU log (from DRAM; a few bits may have flipped in the reset) ===\n");
 	save_log(sp, n);
@@ -2255,6 +2270,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	find_syms(pi.kernel, &s);
 	xsyms = s;
 	xkernel = pi.kernel;
+	xkernel_size = pi.kernel_size;
 
 	/* XNU's console colors (32 bpp column) opaque. */
 	if (s.vc_colors) {

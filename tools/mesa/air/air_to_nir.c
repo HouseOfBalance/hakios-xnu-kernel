@@ -3267,6 +3267,88 @@ call_add_ptr_offsets(nir_call_instr *call, unsigned *idx, unsigned n,
          call->params[(*idx)++] = nir_src_for_ssa(argv[i]->ptr.offset);
 }
 
+/*
+ * An aggregate passed BY VALUE to a function of the module: the 27 release's
+ * QuartzCore passes its uber shader's image configs, a [2 x struct] built by
+ * insertvalue, to UberShader::set_lum_clip_on_format, and the call stopped at
+ * "an array where a number belongs" (run 14, 13 Nov), which was the NIR
+ * parameter being asked for one width for the whole array. A NIR parameter is
+ * one scalar or vector, so the aggregate travels as its leaves, in the order
+ * of its type, and the callee builds the same tree of values out of them. A
+ * leaf the caller never set (insertvalue left it undef) goes as an undef.
+ */
+static bool
+type_is_agg(const struct air_type *t)
+{
+   return t && (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY);
+}
+
+static unsigned
+agg_num_leaves(const struct air_type *t)
+{
+   if (!type_is_agg(t))
+      return 1;
+   unsigned n = 0, count = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+   for (unsigned i = 0; i < count; i++)
+      n += agg_num_leaves(t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem);
+   return n;
+}
+
+/* the leaves' parameters, appended at *idx */
+static void
+agg_add_params(struct air_ctx *c, nir_function *fn, unsigned *idx, const struct air_type *t)
+{
+   if (!type_is_agg(t)) {
+      fn->params[(*idx)++] = (nir_parameter){
+         .num_components = (uint8_t)air_nir_components(t),
+         .bit_size = (uint8_t)air_nir_bit_size(c, t),
+      };
+      return;
+   }
+   unsigned count = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+   for (unsigned i = 0; i < count; i++)
+      agg_add_params(c, fn, idx, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem);
+}
+
+/* the caller's side: each leaf's def, an undef where the value has none */
+static bool
+agg_push_leaves(struct air_ctx *c, nir_call_instr *call, unsigned *idx,
+                const struct air_type *t, const struct air_val *v)
+{
+   if (!type_is_agg(t)) {
+      nir_def *d = v && v->kind == AIR_VAL_SSA ? v->def : NULL;
+      if (!d) {
+         if (v && v->kind != AIR_VAL_NONE)
+            return air_error(c, "intrinsic: an aggregate argument whose field is not a value");
+         d = nir_undef(&c->b, air_nir_components(t), air_nir_bit_size(c, t));
+      }
+      call->params[(*idx)++] = nir_src_for_ssa(d);
+      return true;
+   }
+   if (v && v->kind != AIR_VAL_AGG && v->kind != AIR_VAL_NONE)
+      return air_error(c, "intrinsic: an aggregate argument that is not an aggregate here");
+   unsigned count = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+   for (unsigned i = 0; i < count; i++) {
+      const struct air_val *e = v && v->kind == AIR_VAL_AGG && i < v->num_elems ? v->elems[i] : NULL;
+      if (!agg_push_leaves(c, call, idx, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem, e))
+         return false;
+   }
+   return true;
+}
+
+/* the callee's side: the same tree, of its own parameters */
+static struct air_val *
+agg_from_params(struct air_ctx *c, unsigned *pidx, const struct air_type *t)
+{
+   if (!type_is_agg(t))
+      return air_val_ssa(c, nir_load_param(&c->b, (*pidx)++));
+   unsigned count = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+   struct air_val *v = air_val_agg(c, count);
+   for (unsigned i = 0; i < count; i++)
+      v->elems[i] = agg_from_params(c, pidx, t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem);
+   return v;
+}
+
 /* A function of the module, translated as a nir_function so that
  * nir_inline_functions can fold it into its callers afterwards.
  *
@@ -3354,7 +3436,9 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
    unsigned noffsets = 0;
    for (unsigned i = 0; i < f->num_args; i++)
       noffsets += argv && !is_param[i] && ptr_offset_is_param(argv[i]);
-   unsigned nparams = f->num_args + nret + noffsets;
+   unsigned nparams = nret + noffsets;
+   for (unsigned i = 0; i < f->num_args; i++)
+      nparams += is_param[i] && type_is_agg(f->args[i].type) ? agg_num_leaves(f->args[i].type) : 1;
    nir_function *fn = nir_function_create(c->nir, f->base.name ? f->base.name : "callee");
    fn->num_params = nparams;
    fn->params = rzalloc_array(c->nir, nir_parameter, MAX2(nparams, 1));
@@ -3386,6 +3470,10 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
       if (!is_param[i])
          continue;
       const struct air_type *at = f->args[i].type;
+      if (type_is_agg(at)) {
+         agg_add_params(c, fn, &idx, at);
+         continue;
+      }
       fn->params[idx++] = (nir_parameter){
          .num_components = (uint8_t)air_nir_components(at),
          .bit_size = (uint8_t)air_nir_bit_size(c, at),
@@ -3459,6 +3547,10 @@ translate_callee(struct air_ctx *c, const struct air_function *f,
    for (unsigned i = 0; i < f->num_args && ok; i++) {
       if (!is_param[i]) {
          air_set(c, &f->args[i], argv[i]);   /* the caller's own resolution */
+         continue;
+      }
+      if (type_is_agg(f->args[i].type)) {
+         air_set(c, &f->args[i], agg_from_params(c, &pidx, f->args[i].type));
          continue;
       }
       air_set(c, &f->args[i], air_val_ssa(c, nir_load_param(&c->b, pidx++)));
@@ -3569,6 +3661,11 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
    for (unsigned i = 0; i < f->num_args; i++) {
       if (!is_param[i])
          continue;
+      if (type_is_agg(f->args[i].type)) {
+         if (!agg_push_leaves(c, call, &idx, f->args[i].type, argv[i]))
+            return false;
+         continue;
+      }
       nir_def *a = air_get_ssa(c, in->operands[i + 1]);
       if (!a)
          return air_error(c, "intrinsic: argument %u of %s is not a value this can pass",
@@ -3738,6 +3835,11 @@ wrap_library_function(struct air_ctx *c, const struct air_md *out_md,
    if (!re || (re->kind != AIR_TYPE_FLOAT && re->kind != AIR_TYPE_HALF &&
                re->kind != AIR_TYPE_INT))
       return air_error(c, "library: the return value is neither a scalar nor a vector");
+   /* an argument slot here is one 16-byte value, and translate_callee would want an
+    * aggregate's leaves one by one */
+   for (unsigned i = 0; i < f->num_args; i++)
+      if (is_param[i] && type_is_agg(f->args[i].type))
+         return air_error(c, "library: argument %u is an aggregate, which a slot does not hold", i);
 
    nir_function *fn = translate_callee(c, f, argv, is_param);
    if (!fn)

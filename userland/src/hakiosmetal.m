@@ -435,6 +435,7 @@ _Static_assert(sizeof(struct MTLTargetDeviceArch) == 24 &&
 	BOOL _assertions;                   /* Metal's own assertion switch, stored for it */
 	struct MTLTargetDeviceArch _target;     /* answered by pointer; see -targetDeviceInfo */
 	char _targetName[96];               /* the bytes _target.name points at, inside the object */
+	id _targetArchitecture;             /* the 27 release's MTLTargetDeviceArchitecture; see -targetDeviceArchitecture */
 }
 /* Not part of any Metal protocol: how this driver's own objects reach the compiler. */
 - (struct rwa_device *)mesaDevice;
@@ -963,6 +964,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 
 - (void)dealloc
 {
+	[_targetArchitecture release];
 	if (_mesa != NULL) {
 		mesa.device_close(_mesa);
 	}
@@ -2279,6 +2281,37 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	return &_target;
 }
 
+/*
+ * The 27 release's Metal asks a second question before it loads a library, and does not look at
+ * the answer either: +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]
+ * (0x1a5b345a4 in 24B119's cache) sends -targetDeviceArchitecture to the device and asserts
+ * "Target device architecture is nil" when that is nil, which is what _MTLDevice's own entry
+ * answers (0x1a5c3880c: mov x0, #0). From the object it reads -driverVersion, -versionCombined,
+ * -cpuType and -subType, and makes the slice's id of the last two. The answer is an instance of
+ * Metal's own class, MTLTargetDeviceArchitecture (no such class before that release: then this
+ * method is never asked and answers nil). Its type is the one of the AIR slice of the release's
+ * own fat metallibs (QuartzCore's default.metallib: cputype 0x1000017, subtype 13), the slice this
+ * driver's compiler reads; there is no GPU slice for a Mali for it to choose instead.
+ */
+- (id)targetDeviceArchitecture
+{
+	if (_targetArchitecture == nil) {
+		Class cls = NSClassFromString(@"MTLTargetDeviceArchitecture");
+
+		if (cls == Nil) {
+			return nil;
+		}
+		id arch = [[cls alloc] init];
+
+		((void (*)(id, SEL, uint32_t))objc_msgSend)(arch, sel_registerName("setCpuType:"), 0x1000017u);
+		((void (*)(id, SEL, uint32_t))objc_msgSend)(arch, sel_registerName("setSubType:"), 13u);
+		_targetArchitecture = arch;
+		rw_print("targetDeviceArchitecture answers cpuType 0x1000017 subType 13 (the AIR slice), "
+			 "driverVersion nil, version 0\n");
+	}
+	return _targetArchitecture;
+}
+
 /* The two buffer entry points of MTLDevice that nothing in the chain answers. Anything
  * Metal would ask about storage modes is answered by the buffer itself. */
 - (id)newBufferWithLength:(NSUInteger)length options:(NSUInteger)options
@@ -3392,6 +3425,20 @@ hakios_clear_semaphore_debt(id commandBuffer)
  * server asks for it on buffers that carry no protected content at all, and refusing would stop
  * a composite that is in no danger.
  */
+/*
+ * The 27 release's window server sends this too, right after the first surface is made (run 12,
+ * 13 Nov: NSInvalidArgumentException, -[HakiosMetalCommandBuffer setResponsibleTaskIDs:count:]:
+ * unrecognized selector, and backboardd ended). _MTLCommandBuffer has an entry of that name in that
+ * release (0x1a5cccb00) and still does not answer it for us. It names the tasks the GPU's time is
+ * charged to; this driver charges nothing to anybody, so there is nothing to keep.
+ */
+- (void)setResponsibleTaskIDs:(const void *)ids count:(NSUInteger)count
+{
+	(void)ids;
+	RW_ONCE("the window server names %lu responsible task(s) per command buffer: nothing is charged here\n",
+		(unsigned long)count);
+}
+
 - (void)setProtectionOptions:(NSUInteger)options
 {
 	if (options != 0 && _protectionOptions != options) {
