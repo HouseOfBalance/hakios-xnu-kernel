@@ -7,6 +7,8 @@
 - `kernel/overlay/bsd/miscfs/apfs/libdeflate/` is libdeflate, under the MIT licence (its `COPYING`).
 - Everything else is under the **MIT licence** (`LICENSES/MIT.txt`), unless a file's header says
   otherwise.
+- `system27/` comes from [xnu-kernel-qcom](https://github.com/oosexgang/xnu-kernel-qcom) (MIT), with the
+  changes this port needed; `system27/README.md` says which.
 - Drivers name the Linux sources a register layout was read from. Those sources were read, not
   copied.
 

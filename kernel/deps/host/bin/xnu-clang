@@ -3,16 +3,21 @@
 #  - forces an Apple Mach-O target (stock Linux clang defaults to ELF)
 #  - drops flags only Apple's clang understands
 #  - links with the cctools ld64
+#  - on macOS, with LLVM 19.1.7 of kernel/deps/llvm19 when setup.sh put it there: xnu-12377 needs a
+#    newer clang than the Command Line Tools' 15 (its kasan regex, __builtin_clzg)
 HB="$(cd "$(dirname "$0")" && pwd)"
 case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) drv=clang; extra=();; esac
 args=()
 for a in "$@"; do
   case "$a" in
     -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang) ;;
-    -fapple-kext-vtable-verify|-Wno-vla-cxx-extension) ;;
+    -fapple-kext-vtable-verify|-Wno-vla-cxx-extension|-mno-implicit-sme) ;;   # (Apple clang only)
     -Werror|-Werror=*|-Weverything|-pedantic-errors) ;;
     *) args+=("$a");;
   esac
 done
-exec /usr/bin/$drv -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+# (not for arm64e: upstream LLVM compiles it to empty functions, so the 27 release's libraries take the system's clang)
+CC_DIR=/usr/bin
+case " $* " in *" arm64e "*) ;; *) [ -x "$HB/../../llvm19/bin/$drv" ] && CC_DIR="$HB/../../llvm19/bin" ;; esac
+exec "$CC_DIR/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
   -w "${extra[@]}" "${args[@]}"

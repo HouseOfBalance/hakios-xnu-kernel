@@ -7,6 +7,9 @@ __pycache__/
 
 # what the builds make: the board tables, the loader, the payload, the boot image, zig
 /build/
+# built by system27/mtk27.sh env
+/system27/tools/pacstrip
+/system27/userland/obj26
 # device packages brought in with tools/device.py: they are kept on the devices branch, not here
 /devices/*/
 !/devices/_template/

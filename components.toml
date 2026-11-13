@@ -47,7 +47,7 @@ licence = "APSL-2.0"
 
 [[component]]
 id = "bootstrap_cmds"
-what = "mig, in a port that builds on glibc (host tool, Linux only)"
+what = "mig, in a port that builds on glibc (host tool; on macOS too, for xnu-12377's -mach_msg2)"
 source = "https://github.com/markmentovai/bootstrap_cmds"
 pins = ["f337e600741638896fb6056ce87c6479f74b89a3"]
 pinned_in = "kernel/deps/setup.sh"
@@ -80,6 +80,24 @@ pins = ["MacOSX13.3.sdk.tar.xz"]
 pinned_in = "kernel/deps/setup.sh"
 used_for = "kernel build"
 licence = "Apple SDK licence: fetched, never redistributed here"
+
+[[component]]
+id = "macos-sdk-26.5"
+what = "xnu-12377's DriverKit headers in Kernel.framework, which the closed iig would generate"
+source = "https://github.com/socheatsok78/macos-sdks/releases/download/rolling/MacOSX26.5.sdk.tar.xz"
+pins = ["MacOSX26.5.sdk.tar.xz", "e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "Apple SDK licence: fetched, never redistributed here"
+
+[[component]]
+id = "llvm"
+what = "clang 19 for the kernel on macOS (the Command Line Tools' clang 15 does not compile xnu-12377)"
+source = "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-macOS-X64.tar.xz"
+pins = ["llvmorg-19.1.7", "49405e75fbe7ad6f8139a33f59ec8c5112b75b3027405c7b92d19f4c6f02c78a"]
+pinned_in = "kernel/deps/setup.sh"
+used_for = "kernel build"
+licence = "Apache-2.0 WITH LLVM-exception"
 
 [[component]]
 id = "theos-sdk"

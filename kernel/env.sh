@@ -16,6 +16,8 @@ export THEOS=${THEOS:-$HOME/theos}
 export XNU_SRC=${XNU_SRC:-$(cd "$HAKIOS/.." && pwd)/${UPSTREAM_TAG%%.*}-hakios}
 export XNUDEPS=$HAKIOS_KERNEL/deps
 export PATH=$XNUDEPS/host/bin:$PATH
-export XNU_SDK_PATH=$XNUDEPS/sdk/iPhoneOS16.5.xnu.sdk
+# (its usr/local holds the two libraries made against this release's headers: a directory of its own, so
+# that a checkout of the 16.5 kernel's branch beside it keeps its own)
+export XNU_SDK_PATH=$XNUDEPS/sdk/iPhoneOS16.5.xnu-${UPSTREAM_TAG#xnu-}.sdk
 export XNU_SDK_VERSION=16.5
 export XNU_PLATFORM_PATH=$XNUDEPS/sdk/Platforms/iPhoneOS.platform

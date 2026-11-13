@@ -16,8 +16,11 @@
 # What ends up where (all under kernel/deps/, none of it committed):
 #   AvailabilityVersions libdispatch libpthread     Apple open source, at the releases of the system image 20F66
 #   mm_bootstrap_cmds tcsh unifdef                  sources of mig, csh and unifdef
-#   MacOSX13.3.sdk                                  only Kernel.framework: the DriverKit headers
-#                                                   that Apple's closed "iig" would generate
+#   MacOSX13.3.sdk MacOSX26.5.sdk                   only Kernel.framework: the DriverKit headers
+#                                                   that Apple's closed "iig" would generate (26.5's
+#                                                   are xnu-12377's own, 13.3's fill what it lacks)
+#   llvm19                                          on macOS: LLVM 19.1.7, the kernel's compiler
+#                                                   (the Command Line Tools' clang 15 is too old for 12377)
 #   host/bin                                        mig, migcom, unifdef, tcsh, csh, unzbm, and links
 #                                                   to the cctools (next to our own wrappers)
 #   sdk/iPhoneOS16.5.xnu.sdk                        the theos SDK (as links) plus usr/local: what
@@ -36,6 +39,11 @@ else
 fi
 IOS_SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 MACOS_SDK_URL=https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz
+# xnu-12377's DriverKit headers (a "rolling" release: the checksum is what pins it)
+MACOS26_SDK_URL=https://github.com/socheatsok78/macos-sdks/releases/download/rolling/MacOSX26.5.sdk.tar.xz
+MACOS26_SDK_SHA256=e3dfe99521e8587b1eb820c5d8e21fa3721e629c8fe61e9ea4a89315ae249190
+LLVM_URL=https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-macOS-X64.tar.xz
+LLVM_SHA256=49405e75fbe7ad6f8139a33f59ec8c5112b75b3027405c7b92d19f4c6f02c78a
 
 log() { echo "setup: $*"; }
 die() { echo "setup: $*" >&2; exit 1; }
@@ -56,6 +64,12 @@ fetch() {
 # link TARGET NAME: a symbolic link, made only when it is not there already
 link() {
 	[ "$(readlink "$2" 2>/dev/null)" = "$1" ] || ln -sfn "$1" "$2"
+}
+
+# download FILE URL SHA256
+download() {
+	curl -L --fail --retry 3 -s -o "$1" "$2" || die "download failed: $2"
+	[ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$3" ] || { rm -f "$1"; die "$2: not the file this was made with (SHA-256)"; }
 }
 
 # replace FILE with what is on standard input, unless it is the same already (make looks at time stamps)
@@ -83,9 +97,10 @@ stage1() {
 		a641558f447659d90ad002ef0ee6f0212273fbfc        # libdispatch-1415.100.11
 	fetch libpthread https://github.com/apple-oss-distributions/libpthread.git \
 		a6c70ca0e544347a0377babf748f831577ec24f9        # libpthread-514.100.2
-	if [ "$(uname -s)" != Darwin ]; then     # macOS has mig and csh; see "host tools" below
-		fetch mm_bootstrap_cmds https://github.com/markmentovai/bootstrap_cmds \
-			f337e600741638896fb6056ce87c6479f74b89a3        # cross_platform/bootstrap_cmds-138
+	# (on macOS too: the Command Line Tools' mig is older than xnu-12377's -mach_msg2)
+	fetch mm_bootstrap_cmds https://github.com/markmentovai/bootstrap_cmds \
+		f337e600741638896fb6056ce87c6479f74b89a3        # cross_platform/bootstrap_cmds-138
+	if [ "$(uname -s)" != Darwin ]; then     # macOS has csh; see "host tools" below
 		fetch tcsh https://github.com/tcsh-org/tcsh.git b7db07931546178c4cb2542b5fc850c483628ed5
 	fi
 	fetch unifdef https://github.com/fanf2/unifdef.git 08d12cd3059fe072929ea001ad9833f5487fd355
@@ -103,17 +118,43 @@ stage1() {
 		fi || die "cannot unpack the macOS SDK"
 		rm -f macos-sdk.tar.xz
 	fi
+	if [ ! -d MacOSX26.5.sdk/System/Library/Frameworks/Kernel.framework/Headers/DriverKit ]; then
+		log "downloading the macOS 26.5 SDK for xnu-12377's DriverKit headers"
+		download macos26-sdk.tar.xz "$MACOS26_SDK_URL" $MACOS26_SDK_SHA256
+		if tar --version 2>/dev/null | grep -q GNU; then
+			tar -xJf macos26-sdk.tar.xz --wildcards '*MacOSX26.5.sdk/System/Library/Frameworks/Kernel.framework*'
+		else
+			tar -xJf macos26-sdk.tar.xz '*MacOSX26.5.sdk/System/Library/Frameworks/Kernel.framework*'
+		fi || die "cannot unpack the macOS 26.5 SDK"
+		rm -f macos26-sdk.tar.xz
+	fi
+	# the kernel's compiler on macOS (host/bin/xnu-clang takes it when it is here)
+	if [ "$(uname -s)" = Darwin ] && [ ! -x llvm19/bin/clang ]; then
+		[ "$(uname -m)" = x86_64 ] || die "LLVM 19.1.7 is pinned for x86_64 Macs only; put an LLVM 19 in kernel/deps/llvm19"
+		log "downloading LLVM 19.1.7"
+		download llvm19.tar.xz "$LLVM_URL" $LLVM_SHA256
+		rm -rf llvm19.new && mkdir llvm19.new && tar -xJf llvm19.tar.xz -C llvm19.new --strip-components 1 &&
+			mv llvm19.new llvm19 || die "cannot unpack LLVM"
+		rm -f llvm19.tar.xz
+	fi
 
 	# --- host tools ----------------------------------------------------------------------------
 	mkdir -p host/bin
-	# macOS has mig, migcom and csh of its own; on Linux they are built below
+	# macOS has csh of its own; on Linux it is built below
 	if [ "$(uname -s)" = Darwin ]; then
-		local mac_mig mac_migcom
-		mac_mig=$(/usr/bin/xcrun -f mig)
-		mac_migcom=$(dirname "$(dirname "$mac_mig")")/libexec/migcom
-		[ -x "$mac_mig" ] && [ -x "$mac_migcom" ] || die "no mig in the Command Line Tools"
-		link "$mac_mig" host/bin/mig
-		link "$mac_migcom" host/bin/migcom
+		# the links to the Command Line Tools' mig that the 16.5 kernel's setup made: that mig is too old
+		[ -L host/bin/mig ] && rm -f host/bin/mig host/bin/migcom
+		# mig without autotools (macOS has none): migcom is the parser, the lexer and the .c files its Makefile.am lists (not handler.c)
+		if [ ! -x host/bin/migcom ] || [ ! -x host/bin/mig ]; then
+			log "building mig"
+			mkdir -p build/mig
+			(cd build/mig && S=../../mm_bootstrap_cmds/migcom.tproj &&
+				bison -y -d -o parser.c $S/parser.y && lex -o lexxer.c $S/lexxer.l &&
+				clang -O2 -w -I. -I$S -I../../mm_bootstrap_cmds/compat -DMIG_VERSION='"bootstrap_cmds-138"' \
+					-o ../../host/bin/migcom parser.c lexxer.c $(sed -n "/migcom_SOURCES/,/^$/p" $S/Makefile.am | grep -o "[a-z_]*\.c" | sed "s|^|$S/|")) > mig-build.log 2>&1 ||
+				die "mig did not build, see kernel/deps/mig-build.log"
+			cp mm_bootstrap_cmds/migcom.tproj/mig.sh host/bin/mig && chmod +x host/bin/mig
+		fi
 		link /bin/tcsh host/bin/tcsh
 		# flex runs m4. Some Command Line Tools (15.3) have /usr/bin/m4 and nothing behind it, only gm4
 		if ! m4 --version >/dev/null 2>&1; then
@@ -152,7 +193,20 @@ stage1() {
 	for tool in nm otool strip lipo libtool nmedit ctf_insert codesign_allocate install_name_tool; do
 		link "$CCTOOLS/$tool" host/bin/$tool
 	done
-	link "$CCTOOLS/ld" host/bin/ld64
+	if [ "$(uname -s)" = Darwin ]; then
+		# LLVM 19's clang hands ld -lto_library with its own libLTO, whose libc++ crashes the Command
+		# Line Tools' ld; nothing here is built with LTO, so the linker is called without it
+		[ -L host/bin/ld64 ] && rm -f host/bin/ld64
+		update host/bin/ld64 <<EOF
+#!/bin/bash
+args=(); skip=0
+for a in "\$@"; do if [ \$skip = 1 ]; then skip=0; continue; fi; if [ "\$a" = -lto_library ]; then skip=1; continue; fi; args+=("\$a"); done
+exec "$CCTOOLS/ld" "\${args[@]}"
+EOF
+		chmod +x host/bin/ld64
+	else
+		link "$CCTOOLS/ld" host/bin/ld64
+	fi
 	link xnu-clang host/bin/xnu-clang++
 
 	# --- the SDK -------------------------------------------------------------------------------
@@ -212,13 +266,13 @@ stage2() {
 		log "building libfirehose_kernel.a"
 		mkdir -p build/firehose
 		xnu-clang -arch arm64 -c -Os -mkernel -nostdinc -fno-builtin \
-			-DKERNEL=1 -DKERNEL_PRIVATE=1 -DXNU_KERNEL_PRIVATE=0 -DPRIVATE=1 -D__DARWIN_64_BIT_INO_T=1 \
+			-DKERNEL=1 -DKERNEL_PRIVATE=1 -DPRIVATE=1 -D__DARWIN_64_BIT_INO_T=1 \
 			-DDISPATCH_USE_DTRACE=0 -DOS_ATOMIC_CONFIG_MEMORY_ORDER_DEPENDENCY=1 \
 			-DOS_ATOMIC_CONFIG_STARVATION_FREE_ONLY=0 -DOS_FIREHOSE_SPI=1 -DARM64_BOARD_CONFIG_BCM2837 \
 			-Ilibdispatch -Ilibdispatch/src -Ilibdispatch/src/firehose \
 			-I$hdrs/osfmk -I$hdrs/bsd -I$hdrs/libkern -I$hdrs/pexpert -I$hdrs/iokit -I$hdrs/security \
 			-I$XNU_SRC/libkern/firehose -I$hdrs/libkern/os -I$XNU_SRC/EXTERNAL_HEADERS \
-			-I$XNU_SDK_PATH/usr/local/include/kernel \
+			-I$XNU_SDK_PATH/usr/local/include/kernel -Ibuild/pthread/inc \
 			-o build/firehose/firehose_buffer.o libdispatch/src/firehose/firehose_buffer.c
 		libtool -static -o $lib/libfirehose_kernel.a build/firehose/firehose_buffer.o
 	fi

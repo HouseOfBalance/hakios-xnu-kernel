@@ -3,7 +3,9 @@
 # screen, a system image's files, home directories, a phone's serial number, keys, and names that went
 # out of the project. It looks at what git tracks or would track (not at what .gitignore keeps out).
 # Prints what it finds; exit status 1 if anything.
-set -uo pipefail
+# (no pipefail: each check is "... | xargs grep ... | grep . && bad=1", and xargs says 123 whenever one file
+# has no match, which with pipefail made every such check pass however much it printed)
+set -u
 R=$(cd "$(dirname "$0")/.." && pwd)
 cd "$R" || exit 1
 bad=0
@@ -51,7 +53,7 @@ found -i "redw[o]od" | grep -vE "^(README\.md|README\.ru\.md|NOTICE\.md|CHANGELO
 	while read -r f; do echo "old name: $f"; done | grep . && bad=1
 # The system image's trade names: only as the literal names of inputs and of what the system itself
 # looks for, and in the notices. Everything else says "the system" and "the reference phone".
-allowed='iPhoneOS[0-9.]*\.sdk|iPhone10,3|toolchain/linux/iphone|apple-ios|subsystem = .ios.|API_UNAVAILABLE\(ios\)|~iphone|/System/Volumes/iOS|chosen\[64\] = "iPhone"|trademarks? of Apple|товарные знаки'
+allowed='iPhoneOS[0-9.]*\.sdk|iPhone10,3|iPhone12,1|toolchain/linux/iphone|apple-ios|subsystem = .ios.|API_UNAVAILABLE\(ios\)|~iphone|/System/Volumes/iOS|chosen\[64\] = "iPhone"|trademarks? of Apple|товарные знаки'
 echo "$files" | grep -vE "^(NOTICE\.md|CHANGELOG\.md|docs/migrating\.md|kernel/patches/.*\.patch)$" | tr '\n' '\0' |
 	xargs -0 grep -nIwiE "ios|iphone" 2>/dev/null | grep -v "^$me:" | grep -vE "$allowed" |
 	while read -r l; do echo "the system's trade name: ${l:0:150}"; done | grep . && bad=1

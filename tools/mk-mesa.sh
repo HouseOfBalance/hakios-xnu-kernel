@@ -12,6 +12,9 @@
 #                        makes Mesa build it where there is no DRM). The library takes the GPU when the
 #                        kernel has one and the environment does not say OSMESA_SOFTWARE=1.
 #
+#   MESA_ARCH=arm64e     for the 27 release's processes, which are arm64e (system27/userland/metal27.sh);
+#                        built by the system's clang (xnu-clang takes it for arm64e), into out-arm64e
+#
 # What comes out, in kernel/deps/build/mesa/out:
 #   libOSMesa.8.dylib    everything in one library (install name /hakios/lib/libOSMesa.8.dylib): the
 #                        OpenGL (ES) entry points gl*, the compiler of the shading language, the drivers,
@@ -28,7 +31,9 @@ source "$ROOT/kernel/env.sh"
 B=$ROOT/kernel/deps/build/mesa
 SDK=$THEOS/sdks/iPhoneOS16.5.sdk
 CC=$ROOT/kernel/deps/host/bin/xnu-clang
-mkdir -p "$B/out"
+ARCH=${MESA_ARCH:-arm64}
+OUT=out; [ $ARCH = arm64 ] || OUT=out-$ARCH
+mkdir -p "$B/$OUT"
 cd "$B"
 
 # The sources are the archive's with tools/mesa/*.patch on top. When the patches change, a tree that was
@@ -61,11 +66,12 @@ export PATH=$B/venv/bin:$PATH
 # Archiver and strip: LLVM's where there is one, otherwise Apple's (a Mac with only the command line tools)
 AR=llvm-ar RANLIB=llvm-ranlib STRIP=llvm-strip
 command -v llvm-ar >/dev/null || { AR=ar; RANLIB=ranlib; STRIP=strip; }
-cat > cross.ini <<INI
+CROSS=cross.ini; [ $ARCH = arm64 ] || CROSS=cross-$ARCH.ini
+cat > $CROSS <<INI
 [binaries]
-c = ['$CC', '-arch', 'arm64', '-isysroot', '$SDK']
-cpp = ['$CC++', '-arch', 'arm64', '-isysroot', '$SDK', '-fuse-cxa-atexit']
-objc = ['$CC', '-arch', 'arm64', '-isysroot', '$SDK']
+c = ['$CC', '-arch', '$ARCH', '-isysroot', '$SDK']
+cpp = ['$CC++', '-arch', '$ARCH', '-isysroot', '$SDK', '-fuse-cxa-atexit']
+objc = ['$CC', '-arch', '$ARCH', '-isysroot', '$SDK']
 ar = '$AR'
 ranlib = '$RANLIB'
 strip = '$STRIP'
@@ -75,7 +81,7 @@ pkg-config = 'false'
 system = 'darwin'
 subsystem = 'ios'
 cpu_family = 'aarch64'
-cpu = 'arm64'
+cpu = '$ARCH'
 endian = 'little'
 
 [properties]
@@ -83,34 +89,35 @@ needs_exe_wrapper = true
 INI
 DRIVERS=${DRIVERS:-softpipe,freedreno}
 BUILD=build-${DRIVERS//,/-}
+[ $ARCH = arm64 ] || BUILD=$BUILD-$ARCH
 # panfrost travels in the image that goes into the first phone's 32 MB boot partition: built for size
 # (11 MB instead of 14.5), which costs the GPU nothing -- it is the GPU that draws
 OPT=
 case "$DRIVERS" in *panfrost*) OPT=-Doptimization=s ;; esac
-[ -f $BUILD/build.ninja ] || meson setup $BUILD mesa-$VERSION --cross-file cross.ini --wrap-mode=nofallback \
+[ -f $BUILD/build.ninja ] || meson setup $BUILD mesa-$VERSION --cross-file $CROSS --wrap-mode=nofallback \
 	--prefix=/hakios --libdir=lib --buildtype=release $OPT -Db_ndebug=true \
 	-Dplatforms= -Dgallium-drivers="$DRIVERS" -Dfreedreno-kmds=msm -Dvulkan-drivers= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
 	-Dosmesa=true -Dllvm=disabled -Dshared-glapi=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true \
 	-Dzstd=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
 	-Dlibunwind=disabled -Dglvnd=disabled -Dvideo-codecs= -Dtools= -Dgallium-vdpau=disabled -Dgallium-va=disabled \
 	-Dgallium-xa=disabled -Dlmsensors=disabled -Dbuild-tests=false > meson-setup.log
-ninja -C $BUILD > ninja.log
+ninja -C $BUILD > ninja-$ARCH.log
 # air_run draws with a translated Metal shader and reads the pixels back; it is
 # the only way to find out whether the Adreno takes work that did not come from
 # the window server. Built only when asked, since it is a test program.
 if [ "${AIR:-}" = 1 ]; then
 	# beside the driver it draws with: freedreno's directory for the Adreno, panfrost's for the Mali
 	case ",$DRIVERS," in *,panfrost,*) AIR_DIR=panfrost ;; *) AIR_DIR=freedreno ;; esac
-	ninja -C $BUILD src/gallium/drivers/$AIR_DIR/air_run >> ninja.log
-	cp $BUILD/src/gallium/drivers/$AIR_DIR/air_run out/air_run
-	echo "mk-mesa.sh: $B/out/air_run ($(wc -c < out/air_run) bytes)"
+	ninja -C $BUILD src/gallium/drivers/$AIR_DIR/air_run >> ninja-$ARCH.log
+	cp $BUILD/src/gallium/drivers/$AIR_DIR/air_run $OUT/air_run
+	echo "mk-mesa.sh: $B/$OUT/air_run ($(wc -c < $OUT/air_run) bytes)"
 fi
 
-$STRIP -x -o out/libOSMesa.8.dylib $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
-install_name_tool -id /hakios/lib/libOSMesa.8.dylib out/libOSMesa.8.dylib
-nm -gU out/libOSMesa.8.dylib | awk '$3 ~ /^_gl/ { print substr($3, 2) }' > out/exported-gl.txt
-cp mesa-$VERSION/src/mapi/glapi/registry/gl.xml out/gl.xml
+$STRIP -x -o $OUT/libOSMesa.8.dylib $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
+install_name_tool -id /hakios/lib/libOSMesa.8.dylib $OUT/libOSMesa.8.dylib
+nm -gU $OUT/libOSMesa.8.dylib | awk '$3 ~ /^_gl/ { print substr($3, 2) }' > $OUT/exported-gl.txt
+cp mesa-$VERSION/src/mapi/glapi/registry/gl.xml $OUT/gl.xml
 # (userland/build.sh comes here again when this no longer matches)
-cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/hakios-drm/* | sha256sum > out/built-from
-echo "mk-mesa.sh: Mesa $VERSION ($DRIVERS): $B/out/libOSMesa.8.dylib, $(wc -c < out/libOSMesa.8.dylib | tr -d " ") bytes," \
-	"$(wc -l < out/exported-gl.txt) gl* functions"
+cat "$ROOT"/tools/mesa/*.patch "$ROOT"/tools/mesa/hakios-drm/* | sha256sum > $OUT/built-from
+echo "mk-mesa.sh: Mesa $VERSION ($DRIVERS): $B/$OUT/libOSMesa.8.dylib, $(wc -c < $OUT/libOSMesa.8.dylib | tr -d " ") bytes," \
+	"$(wc -l < $OUT/exported-gl.txt) gl* functions"

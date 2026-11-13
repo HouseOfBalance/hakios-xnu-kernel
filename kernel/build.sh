@@ -29,6 +29,8 @@ if [ "$(uname -s)" = Darwin ]; then
 else
 	HOST_EXTRA="-include $XNUDEPS/hostinc/hostcompat.h -I$XNUDEPS/hostinc"
 fi
-exec make HAKIOS_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=${MACHINE:-BCM2837} KERNEL_CONFIGS=DEVELOPMENT \
+# xnu-12377's makefiles: DEFAULT_TARGET (the release's own build wants a target named), the version Apple's
+# build system would give (the kernel's version string and its headers come from it), and plutil by name
+exec make DEFAULT_TARGET=build RC_DARWIN_KERNEL_VERSION=${UPSTREAM_TAG#xnu-} PLUTIL=plutil HAKIOS_OBJECTS= SDKROOT=iphoneos ARCH_CONFIGS=ARM64 MACHINE_CONFIGS=${MACHINE:-BCM2837} KERNEL_CONFIGS=DEVELOPMENT \
   ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 BUILD_WERROR=0 BUILD_LTO=0 DO_CTFMERGE=0 \
   HOST_CC="clang $HOST_EXTRA -Wno-unused-command-line-argument -Wno-error=implicit-function-declaration" HOST_FLEX=flex HOST_BISON=bison HOST_GM4=m4 CC=xnu-clang CXX=xnu-clang++ LOGCOLORS=n "$@"
