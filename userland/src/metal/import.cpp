@@ -55,6 +55,44 @@ tell_kind(IOSurfaceRef s, unsigned plane, const struct rwa_texture_shape &shape,
 			 getprogname(), shape.usage, placed ? "in place" : "NOT in place");
 		say(line);
 	}
+	/*
+	 * Each of the first 40 surfaces a texture is made over, into the host's kept lines ("!!"): its number, size,
+	 * format, row and whether its memory holds anything -- 64 words read across it. The 27 release's home screen
+	 * with metal=1 shows its stripes and nothing of the layers other processes draw into surfaces (the icons, the
+	 * sky, the dock, the status bar), and whether those surfaces are empty or read wrongly is told here.
+	 */
+	{
+		static uint32_t ids[40];
+		static unsigned count;
+		const uint32_t id = IOSurfaceGetID(s);
+		unsigned k;
+
+		for (k = 0; k < count && ids[k] != id; k++) {
+		}
+		/* (the window server's own whole-display targets, made anew every frame, would fill the list alone) */
+		const bool whole = (IOSurfaceGetWidthOfPlane(s, plane) == 750 && IOSurfaceGetHeightOfPlane(s, plane) == 1624) ||
+				   (IOSurfaceGetWidthOfPlane(s, plane) == 1624 && IOSurfaceGetHeightOfPlane(s, plane) == 750);
+
+		if (k == count && count < 40 && !whole) {
+			const uint8_t *base = (const uint8_t *)IOSurfaceGetBaseAddressOfPlane(s, plane);
+			const size_t rows = IOSurfaceGetHeightOfPlane(s, plane), row = IOSurfaceGetBytesPerRowOfPlane(s, plane);
+			unsigned nonzero = 0;
+			char line[240];
+
+			ids[count++] = id;
+			for (unsigned n = 0; base != nullptr && rows != 0 && row >= 4 && n < 64; n++) {
+				const size_t y = rows * n / 64, x = (row / 4) * ((n * 37) % 64) / 64 * 4;
+
+				nonzero += *(const uint32_t *)(base + y * row + x) != 0;
+			}
+			snprintf(line, sizeof(line), "!!rwm surface %u in %s: %zux%zu '%c%c%c%c' plane %u, %zu a row, usage %#x, "
+				 "format %u, %s; %u of 64 words not zero", id, getprogname(), IOSurfaceGetWidthOfPlane(s, plane),
+				 rows, fourcc >> 24 & 0xff, fourcc >> 16 & 0xff, fourcc >> 8 & 0xff, fourcc & 0xff, plane, row,
+				 shape.usage, shape.pixel_format, placed ? "in place" : (why != nullptr && why[0] ? why : "not in place"),
+				 nonzero);
+			say(line);
+		}
+	}
 	if (i == seen_count && seen_count < 24) {
 		char line[240];
 

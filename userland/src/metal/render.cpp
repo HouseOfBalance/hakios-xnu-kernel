@@ -8,6 +8,8 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
+#include <sys/sysctl.h>
 
 namespace {
 
@@ -24,6 +26,8 @@ record_targets(const struct rwm_render_state *s, struct rwm_work *w, bool first_
 {
 	for (unsigned i = 0; i < s->color_count; i++) {
 		struct rwm_texture *core = s->color[i].core;
+
+		rwm_texture_note_filled(core);      /* (drawn into: what is in it is what is drawn) */
 
 		if (core != nullptr && (!first_only || i == 0)) {
 			w->targets[w->target_count++] = core;
@@ -356,6 +360,7 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 		struct rwm_texture *core = s->textures[i].core;
 
 		d->textures[i] = mesa_of(core);
+		rwm_texture_note_sampled(core);
 		if (core != nullptr) {
 			w->copy_in[w->copy_in_count++] = core;
 			if (rwm_texture_in_place(core) != 0) {
@@ -363,6 +368,31 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 			}
 		}
 		rwm_work_keep(w, s->textures[i].object);
+	}
+	/* boot-arg rwm_tdump=1: for twelve textured draws past the first 3000, what is bound at each texture slot -- the
+	 * 27 release's frames sample thousands of empty 1 x 1 textures and hardly any of its images (run 49) */
+	{
+		static int wanted = -1;
+		static unsigned long seen;
+		static unsigned said;
+
+		if (wanted < 0) {
+			wanted = strstr(rwm_boot_args(), "rwm_tdump=1") != nullptr;
+		}
+		if (wanted && s->texture_count != 0 && ++seen > 3000 && said < 12) {
+			char line[240];
+			int at = snprintf(line, sizeof(line), "!!rwm tdump %u: %s, %u slots:", ++said,
+					  rwm_area_label_of(s->render), s->texture_count);
+
+			for (unsigned i = 0; i < s->texture_count && at < (int)sizeof(line) - 24; i++) {
+				const struct rwm_texture *core = s->textures[i].core;
+				const struct rwa_texture_shape *sh = core != nullptr ? rwm_texture_shape(core) : nullptr;
+
+				at += snprintf(line + at, sizeof(line) - at, sh ? " %u:%ux%u/%u" : " %u:-", i,
+					       sh ? sh->width : 0, sh ? sh->height : 0, sh ? sh->pixel_format : 0);
+			}
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
 	}
 	d->sampler_count = s->sampler_count;
 	for (unsigned i = 0; i < s->sampler_count; i++) {

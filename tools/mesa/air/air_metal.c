@@ -229,7 +229,18 @@ struct rwa_texture {
     * the whole picture loaded into the tiles and written back out, dozens of times a
     * frame */
    struct pipe_surface *rt;
+
+   /* a view (rwa_texture_view_create): the format its samples and its render surface read the resource as;
+    * PIPE_FORMAT_NONE for a texture of its own, which is read as the resource's */
+   enum pipe_format view_format;
 };
+
+/* the format a texture is read and drawn as: a view's, or its resource's */
+static inline enum pipe_format
+texture_format(const struct rwa_texture *t)
+{
+   return t->view_format != PIPE_FORMAT_NONE ? t->view_format : t->res->format;
+}
 
 /* A sampler is a Gallium state object and nothing more. The state it was built from is
  * not kept: a refusal about a sampler happens while it is being created, where the
@@ -978,6 +989,38 @@ static const struct rwa_pixel_format rwa_pixel_formats[] = {
    { 124, "MTLPixelFormatRGBA32Sint",      PIPE_FORMAT_R32G32B32A32_SINT },
    { 125, "MTLPixelFormatRGBA32Float",     PIPE_FORMAT_R32G32B32A32_FLOAT },
 
+   /* ASTC, LDR and sRGB (MTLPixelFormat.h 186..200, 204..218): the 27 release's window server makes its images'
+    * textures in them (a 750 x 1624 ASTC_4x4_LDR from -newTextureWithBytesNoCopy:..., the home screen's sky, run
+    * 43), and the Mali-G52 samples them itself; is_format_supported below decides for each, as for every other */
+   { 186, "MTLPixelFormatASTC_4x4_sRGB", PIPE_FORMAT_ASTC_4x4_SRGB },
+   { 187, "MTLPixelFormatASTC_5x4_sRGB", PIPE_FORMAT_ASTC_5x4_SRGB },
+   { 188, "MTLPixelFormatASTC_5x5_sRGB", PIPE_FORMAT_ASTC_5x5_SRGB },
+   { 189, "MTLPixelFormatASTC_6x5_sRGB", PIPE_FORMAT_ASTC_6x5_SRGB },
+   { 190, "MTLPixelFormatASTC_6x6_sRGB", PIPE_FORMAT_ASTC_6x6_SRGB },
+   { 192, "MTLPixelFormatASTC_8x5_sRGB", PIPE_FORMAT_ASTC_8x5_SRGB },
+   { 193, "MTLPixelFormatASTC_8x6_sRGB", PIPE_FORMAT_ASTC_8x6_SRGB },
+   { 194, "MTLPixelFormatASTC_8x8_sRGB", PIPE_FORMAT_ASTC_8x8_SRGB },
+   { 195, "MTLPixelFormatASTC_10x5_sRGB", PIPE_FORMAT_ASTC_10x5_SRGB },
+   { 196, "MTLPixelFormatASTC_10x6_sRGB", PIPE_FORMAT_ASTC_10x6_SRGB },
+   { 197, "MTLPixelFormatASTC_10x8_sRGB", PIPE_FORMAT_ASTC_10x8_SRGB },
+   { 198, "MTLPixelFormatASTC_10x10_sRGB", PIPE_FORMAT_ASTC_10x10_SRGB },
+   { 199, "MTLPixelFormatASTC_12x10_sRGB", PIPE_FORMAT_ASTC_12x10_SRGB },
+   { 200, "MTLPixelFormatASTC_12x12_sRGB", PIPE_FORMAT_ASTC_12x12_SRGB },
+   { 204, "MTLPixelFormatASTC_4x4_LDR", PIPE_FORMAT_ASTC_4x4 },
+   { 205, "MTLPixelFormatASTC_5x4_LDR", PIPE_FORMAT_ASTC_5x4 },
+   { 206, "MTLPixelFormatASTC_5x5_LDR", PIPE_FORMAT_ASTC_5x5 },
+   { 207, "MTLPixelFormatASTC_6x5_LDR", PIPE_FORMAT_ASTC_6x5 },
+   { 208, "MTLPixelFormatASTC_6x6_LDR", PIPE_FORMAT_ASTC_6x6 },
+   { 210, "MTLPixelFormatASTC_8x5_LDR", PIPE_FORMAT_ASTC_8x5 },
+   { 211, "MTLPixelFormatASTC_8x6_LDR", PIPE_FORMAT_ASTC_8x6 },
+   { 212, "MTLPixelFormatASTC_8x8_LDR", PIPE_FORMAT_ASTC_8x8 },
+   { 213, "MTLPixelFormatASTC_10x5_LDR", PIPE_FORMAT_ASTC_10x5 },
+   { 214, "MTLPixelFormatASTC_10x6_LDR", PIPE_FORMAT_ASTC_10x6 },
+   { 215, "MTLPixelFormatASTC_10x8_LDR", PIPE_FORMAT_ASTC_10x8 },
+   { 216, "MTLPixelFormatASTC_10x10_LDR", PIPE_FORMAT_ASTC_10x10 },
+   { 217, "MTLPixelFormatASTC_12x10_LDR", PIPE_FORMAT_ASTC_12x10 },
+   { 218, "MTLPixelFormatASTC_12x12_LDR", PIPE_FORMAT_ASTC_12x12 },
+
    /* Depth and stencil. These are in the same table because a depth texture is a
     * texture (air_metal.h) and every caller asks for one the same way; what the format
     * changes is which binding it can have and how its texels are read, and both of
@@ -1114,8 +1157,8 @@ pixel_format_refusal(unsigned f)
       return "one of the EAC or ETC2 compressed formats, whose texels come in blocks this "
              "library cannot make";
    if (f >= 186 && f <= 236)
-      return "one of the ASTC compressed formats, whose texels come in blocks this library "
-             "cannot make";
+      return "one of the ASTC compressed formats this library does not take: the HDR ones (222 on), or one "
+             "this GPU said it does not sample";
    if (f == 240 || f == 241)
       return "one of Metal's packed 4:2:2 video formats (GBGR422, BGRG422), where one block "
              "holds two texels and a region in texels is not a region in bytes";
@@ -1621,6 +1664,50 @@ rwa_texture_create(struct rwa_device *device, const struct rwa_texture_shape *sh
    return texture_of_shape(device, shape, NULL, why, why_size);
 }
 
+/*
+ * A view: a second texture over the first one's resource, read and drawn as another format of the same size of
+ * texel -- what -newTextureViewWithPixelFormat: gives, and what the 27 release's window server asks for (an sRGB
+ * reading of a BGRA8 texture and the like; answered nil before, and the layers built on one were not drawn, run 46).
+ * It holds its own reference to the resource, so either may be destroyed first. Levels and slices are the parent's
+ * whole range: a part of one is refused by the caller.
+ */
+struct rwa_texture *
+rwa_texture_view_create(struct rwa_texture *parent, unsigned mtl_format, char *why, size_t why_size)
+{
+   const struct rwa_pixel_format *fmt = pixel_format(mtl_format);
+   struct rwa_texture *view;
+
+   if (!parent || !parent->res) {
+      say(why, why_size, "a view of no texture");
+      return NULL;
+   }
+   if (!fmt) {
+      say(why, why_size, "a view as MTLPixelFormat %u: %s", mtl_format, pixel_format_refusal(mtl_format));
+      return NULL;
+   }
+   if (util_format_get_blocksize(fmt->pipe) != util_format_get_blocksize(parent->res->format) ||
+       util_format_get_blockwidth(fmt->pipe) != util_format_get_blockwidth(parent->res->format) ||
+       util_format_get_blockheight(fmt->pipe) != util_format_get_blockheight(parent->res->format)) {
+      say(why, why_size, "a view of a %s as %s: their texels are not the same size, which Metal refuses too",
+          parent->format_name, fmt->name);
+      return NULL;
+   }
+   view = calloc(1, sizeof(*view));
+   if (!view) {
+      say(why, why_size, "out of memory for a texture view");
+      return NULL;
+   }
+   *view = *parent;
+   view->view = NULL;
+   view->rt = NULL;
+   view->res = NULL;
+   pipe_resource_reference(&view->res, parent->res);
+   view->view_format = fmt->pipe;
+   view->format_name = fmt->name;
+   view->shape.pixel_format = mtl_format;
+   return view;
+}
+
 struct rwa_texture *
 rwa_texture_from_surface(struct rwa_device *device, const struct rwa_texture_shape *shape,
                          int surface_id, unsigned offset, unsigned row_bytes, char *why,
@@ -1738,8 +1825,8 @@ static bool
 caller_stride(const struct rwa_texture *texture, const struct pipe_box *box, size_t stride,
               size_t *out, char *why, size_t why_size)
 {
-   unsigned texel = util_format_get_blocksize(texture->res->format);
-   size_t least = (size_t)box->width * texel;
+   /* a row is a row of blocks: of texels for most formats, of 4 x 4 and the like for the compressed ones */
+   size_t least = util_format_get_stride(texture->res->format, box->width);
    if (stride == 0) {
       *out = least;
       return true;
@@ -1821,7 +1908,7 @@ rwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,
     */
    texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level,
                                           PIPE_MAP_WRITE, &box, bytes, row,
-                                          row * box.height);
+                                          row * util_format_get_nblocksy(texture->res->format, box.height));
    return 0;
 }
 
@@ -4111,7 +4198,7 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
           */
          if (!t->view) {
             struct pipe_sampler_view tmpl = { 0 };
-            u_sampler_view_default_template(&tmpl, t->res, t->res->format);
+            u_sampler_view_default_template(&tmpl, t->res, texture_format(t));
             t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
             if (!t->view) {
                say(why, why_size, "%s would not make a sampler view of the %s bound at "
@@ -7470,7 +7557,7 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
       struct rwa_texture *t = (struct rwa_texture *)draw->color[i];
       if (!t->rt)
          t->rt = pipe->create_surface(pipe, t->res,
-            &(struct pipe_surface){ .format = t->res->format });
+            &(struct pipe_surface){ .format = texture_format(t) });
       surf[i] = t->rt;
       if (!surf[i]) {
          say(why, why_size, "%s would not make a render surface of colour attachment %u",

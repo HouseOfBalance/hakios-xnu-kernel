@@ -40,6 +40,7 @@ extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern vm_offset_t phystokv(uint64_t pa);
 extern void HakiosMaliStart(void);
 extern uint32_t gMaliClients, gMaliBuffers, gMaliSubmits, gMaliFailed, gMaliShown;   /* HakiosMali.cpp */
+extern uint64_t gMaliLiveMade, gMaliLiveSurfaces, gMaliLiveLate;                     /* (the same) */
 extern struct mali_made { uint64_t address, size; uint32_t asked, flags; } gMaliMade[32];
 
 #define TOPCKGEN_PHYS           ((vm_offset_t)hakios_board()->blocks.topckgen)
@@ -96,6 +97,41 @@ hakios_keep(const char *format, ...)
 	lck_mtx_unlock(&kept_lock);
 }
 
+void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
+
+/*
+ * The last lines the Metal driver said ("rwm ..." and the "!!" ones), for boot-arg fbtext=1: MiniIOMobileFramebuffer
+ * draws them over the top of every frame, so that what is on the screen and what the driver says of it are seen
+ * together, by whoever holds the phone.
+ */
+#define OVERLAY_LINES 8
+static char overlay_lines[OVERLAY_LINES][96];
+static uint32_t overlay_next;
+
+/* the lines, oldest first, into `out`: how many */
+unsigned hakios_overlay_copy(char out[][96], unsigned max);
+unsigned
+hakios_overlay_copy(char out[][96], unsigned max)
+{
+	unsigned count = 0;
+
+	lck_mtx_lock(&kept_lock);
+	for (uint32_t i = overlay_next > OVERLAY_LINES ? overlay_next - OVERLAY_LINES : 0; i < overlay_next && count < max; i++) {
+		strlcpy(out[count++], overlay_lines[i % OVERLAY_LINES], sizeof(out[0]));
+	}
+	lck_mtx_unlock(&kept_lock);
+	return count;
+}
+
+static void
+overlay_add(const char *line)
+{
+	lck_mtx_lock(&kept_lock);
+	strlcpy(overlay_lines[overlay_next % OVERLAY_LINES], line, sizeof(overlay_lines[0]));
+	overlay_next++;
+	lck_mtx_unlock(&kept_lock);
+}
+
 static int
 say_line(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg2, struct sysctl_req *req)
 {
@@ -113,7 +149,16 @@ say_line(__unused struct sysctl_oid *oidp, __unused void *arg1, __unused int arg
 	}
 	line[length] = 0;
 	printf("%s%s", line, length != 0 && line[length - 1] == '\n' ? "" : "\n");
-	if (line[0] == '!') {                   /* kept, and said again every minute (mali_thread) */
+	{
+		const char *text = line + (line[0] == '!') + (line[0] == '!' && line[1] == '!');
+
+		if (strncmp(text, "rwm ", 4) == 0) {
+			overlay_add(text + 4);
+		}
+	}
+	if (line[0] == '!' && line[1] == '!') {  /* "!!": into the host's kept lines, whole however long the run (host_keep) */
+		hakios_host_keep_add("%s", line + 2);
+	} else if (line[0] == '!') {            /* kept, and said again every minute (mali_thread) */
 		lck_mtx_lock(&kept_lock);
 		strlcpy(kept_lines[kept_next % KEPT_LINES], line + 1, sizeof(kept_lines[0]));
 		kept_next++;
@@ -424,7 +469,15 @@ as0_update(uint64_t transtab, uint32_t transcfg)
  * every five seconds in the window server (run 139, 26 October). Taking a buffer out still updates.
  */
 static int mali_fastmap = 1;
-#define TRANSCFG_AARCH64_4K (mali_fastmap ? TRANSCFG_WALK_NC : TRANSCFG_WALK_WB)
+/*
+ * Boot-arg mali_walk_wb=1: the walks cached all the same, with mali_fastmap's way of entering buffers. What makes
+ * that safe is that a new entry only ever replaces an empty one: the GPU's L2, which would hold the old table words,
+ * is cleaned and invalidated at the start of every job (JS_CONFIG), and a TLB keeps no translation that faulted.
+ * Every walk not cached is three reads of memory a TLB miss, and the 27 release's full-screen passes over 10 MB
+ * textures miss thousands of times a pass (fragment jobs of 185 ms, run 29): this is to measure that.
+ */
+static int mali_walk_wb = 0;
+#define TRANSCFG_AARCH64_4K ((mali_fastmap && !mali_walk_wb) ? TRANSCFG_WALK_NC : TRANSCFG_WALK_WB)
 
 static uint64_t *pt_top;
 static uint64_t pt_top_phys;
@@ -1360,9 +1413,11 @@ mali_worker(__unused void *parameter, __unused wait_result_t result)
 				absolutetime_to_nanoseconds(now - since, &ns);
 				if (ns >= 5ull * NSEC_PER_SEC) {
 					printf("mali: GPU busy %llu%% of %llu s: vertex and tiler %llu jobs %llu ms (%llu us each), "
-					    "fragment %llu jobs %llu ms (%llu us each)\n", (busy[0] + busy[1]) * 100 / ns,
+					    "fragment %llu jobs %llu ms (%llu us each); memory: %llu MB made, %llu MB of surfaces, %llu MB "
+					    "waiting for jobs\n", (busy[0] + busy[1]) * 100 / ns,
 					    ns / NSEC_PER_SEC, jobs[0], busy[0] / 1000000, jobs[0] ? busy[0] / 1000 / jobs[0] : 0,
-					    jobs[1], busy[1] / 1000000, jobs[1] ? busy[1] / 1000 / jobs[1] : 0);
+					    jobs[1], busy[1] / 1000000, jobs[1] ? busy[1] / 1000 / jobs[1] : 0, gMaliLiveMade >> 20,
+					    gMaliLiveSurfaces >> 20, gMaliLiveLate >> 20);
 					busy[0] = busy[1] = jobs[0] = jobs[1] = 0;
 					since = now;
 				}
@@ -1483,6 +1538,7 @@ mtk_mali_init(void)
 	thread_t thread;
 
 	(void)PE_parse_boot_argn("mali_fastmap", &mali_fastmap, sizeof(mali_fastmap));
+	(void)PE_parse_boot_argn("mali_walk_wb", &mali_walk_wb, sizeof(mali_walk_wb));
 	(void)PE_parse_boot_argn("mali_trace", &mali_trace, sizeof(mali_trace));
 	if (!PE_parse_boot_argn("mali", &on, sizeof(on)) || on == 0) {
 		return;

@@ -57,6 +57,18 @@ extern struct rwm_perf rwm_perf;
 uint64_t rwm_ns(void);
 uint64_t rwm_thread_cpu_ns(void);
 void rwm_perf_report(uint64_t now);
+/* what made textures and filled them, counted for rwm_perf_report's "rwm uploads" line: 0 textures made, 1 of them
+ * 512 x 512 or smaller, 2 -replaceRegion: calls, 3 their kilobytes, 4 of them refused, 5..12 blits by RWM_BLIT_ kind */
+extern unsigned long rwm_uploads[13];
+/* textures alive now and their megabytes as made (width x height x layers x 8 at most), command buffers alive, and
+ * textures freed in the last five seconds: what holds the GPU's memory (2.3 GB wired and backboardd ended by jetsam,
+ * run 50) */
+extern long rwm_live_textures, rwm_live_texture_kb, rwm_live_command_buffers;
+extern unsigned long rwm_textures_freed;
+/* the pipelines that cover the frame (src/metal/perf.cpp): a pipeline's label, and a draw of it with its scissor */
+void rwm_area_label(const struct rwa_render *render, const char *label);
+void rwm_area_draw(const struct rwa_render *render, const unsigned *scissor);
+const char *rwm_area_label_of(const struct rwa_render *render);
 
 /*
  * The compiler library's calls. Required: device_open, compute_create, dispatch, texture_create,
@@ -86,6 +98,7 @@ struct rwm_air {
 	__typeof__(&rwa_render_clear) render_clear;
 	__typeof__(&rwa_depth_read) depth_read;
 	__typeof__(&rwa_texture_destroy) texture_destroy;
+	__typeof__(&rwa_texture_view_create) texture_view_create;
 	__typeof__(&rwa_sampler_create) sampler_create;
 	__typeof__(&rwa_sampler_destroy) sampler_destroy;
 	__typeof__(&rwa_dispatch) dispatch;
@@ -150,6 +163,9 @@ void rwm_texture_free(struct rwm_texture *texture);
 struct rwa_texture *rwm_texture_mesa(const struct rwm_texture *texture);
 const struct rwa_texture_shape *rwm_texture_shape(const struct rwm_texture *texture);
 void rwm_texture_copy_in_from(struct rwm_texture *texture, IOSurfaceRef surface, bool two_planes);
+/* ... or the caller's memory (-newTextureWithBytesNoCopy:...): stride 0 is rows packed, as the library counts them */
+void rwm_texture_copy_in_from_memory(struct rwm_texture *texture, const void *bytes, size_t length, size_t stride,
+				     unsigned layers);
 int rwm_texture_copy_in(struct rwm_texture *texture, size_t *bytes, char *why, size_t why_size);
 void rwm_texture_copy_back_to(struct rwm_texture *texture, IOSurfaceRef surface);
 bool rwm_texture_has_surface(const struct rwm_texture *texture);
@@ -164,6 +180,11 @@ bool rwm_texture_read_depth(struct rwm_texture *texture, const unsigned origin[3
 /* the surface a texture laid over its memory lies over (src/metal/import.cpp), drawn in place; 0: none */
 uint32_t rwm_texture_in_place(const struct rwm_texture *texture);
 void rwm_texture_set_in_place(struct rwm_texture *texture, uint32_t surface);
+/* what the frames sample and which of it is empty (src/metal/texture.cpp, said by rwm_perf_report) */
+void rwm_texture_note_filled(struct rwm_texture *texture);
+void rwm_texture_note_view(struct rwm_texture *texture);
+void rwm_texture_note_sampled(struct rwm_texture *texture);
+void rwm_texture_sample_report(void (*say)(const char *));
 int rwm_texture_sync_surface(struct rwm_texture *texture, char *why, size_t why_size);
 
 /*

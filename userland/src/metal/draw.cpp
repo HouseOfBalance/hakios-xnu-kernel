@@ -5,6 +5,8 @@
 #include "rwm.h"
 
 #include <stdio.h>
+#include <string.h>
+#include <sys/sysctl.h>
 
 static_assert(RWM_MAX_BUFFERS <= 32, "the stream mask is 32 bits");
 
@@ -99,6 +101,47 @@ rwm_run_draw(const struct rwm_draw *d, char *why, size_t why_size)
 	draw.depth_range = d->depth_range;
 	draw.viewport = d->viewport;
 	draw.scissor = d->scissor;
+	rwm_area_draw(d->render, d->scissor);
+	/*
+	 * Boot-arg rwm_vdump=1: what a few draws of the 27 release's home screen are made of, into the host's kept lines --
+	 * the pipeline, the counts, the viewport, and the first floats of every bound vertex buffer. A hundred draws a
+	 * frame cost the Mali what a hundred full-screen fills would (run 35), and whether their quads are the layers'
+	 * own size is read here.
+	 */
+	{
+		static int wanted = -1;
+		static unsigned long seen;
+		static unsigned said;
+
+		if (wanted < 0) {
+			wanted = strstr(rwm_boot_args(), "rwm_vdump=1") != nullptr;
+		}
+		if (wanted && ++seen > 3000 && said < 12 && air->buffer_map != nullptr) {
+			char line[200];
+			int at;
+
+			said++;
+			snprintf(line, sizeof(line), "!!rwm vdump %u: %s, prim %u, %u vertices from %u, %u instances, viewport %s, "
+				 "scissor %s", said, rwm_area_label_of(d->render), d->primitive, d->vertex_count, d->vertex_start,
+				 d->instance_count, d->viewport ? "set" : "none", d->scissor ? "set" : "none");
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+			for (unsigned i = 0; i < vertex_count && i < 4; i++) {
+				const float *f;
+
+				if (!d->vertex_bound[i] || d->vertex[i] == nullptr ||
+				    (f = (const float *)air->buffer_map(d->vertex[i])) == nullptr) {
+					continue;
+				}
+				f = (const float *)((const char *)f + d->vertex_offset[i]);
+				at = snprintf(line, sizeof(line), "!!rwm vdump %u: vertex buffer %u%s:", said, i,
+					      (d->stream_mask >> i) & 1 ? " (stream)" : "");
+				for (unsigned k = 0; k < 24 && at < (int)sizeof(line) - 12; k++) {
+					at += snprintf(line + at, sizeof(line) - at, " %.4g", f[k]);
+				}
+				sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+			}
+		}
+	}
 	draw.vertex.buffers = vertex_buffers;
 	draw.vertex.buffer_count = vertex_count;
 	/* the streams the layout fetches from, at Metal's own indices with Metal's own offsets; the

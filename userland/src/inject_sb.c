@@ -179,6 +179,44 @@ replace_method(const char *class_name, const char *selector, uintptr_t expected,
 }
 
 /*
+ * -[SBApplicationSceneUpdateTransaction _notifyObserversOfClientConnection:] (the 27 release, 24B119: 0x227a03ab8)
+ * takes the connecting client's -legacyProcess, and when that is not an FBApplicationProcess it stops SpringBoard
+ * on an assertion (.cold.1, SIGTRAP): runs 24, 25 and 30, twice in 30, the screen black for the rest of the run.
+ * Here such a client is said into the kernel's kept lines -- what it is and what its process is -- and the
+ * observers are not told of it, instead of SpringBoard ending; any other goes on to SpringBoard's own.
+ */
+static void (*original_notify_client_connection)(id self, SEL selector, id client);
+
+static void
+notify_client_connection(id self, SEL selector, id client)
+{
+	Class application = objc_getClass("FBApplicationProcess");
+	SEL legacy = sel_registerName("legacyProcess");
+	id process = NULL;
+
+	if (client != NULL && class_respondsToSelector(object_getClass(client), legacy)) {
+		process = ((id (*)(id, SEL))objc_msgSend)(client, legacy);
+	}
+	if (client == NULL || process == NULL || application == NULL ||
+	    !((BOOL (*)(id, SEL, Class))objc_msgSend)(process, sel_registerName("isKindOfClass:"), application)) {
+		static unsigned said;
+
+		if (said++ < 6) {
+			char line[200];
+			id text = client ? ((id (*)(id, SEL))objc_msgSend)(client, sel_registerName("description")) : NULL;
+			const char *utf8 = text ? ((const char *(*)(id, SEL))objc_msgSend)(text, sel_registerName("UTF8String")) : NULL;
+
+			snprintf(line, sizeof(line), "!hakios: SpringBoard: a scene client not of an application (%s, process %s): %s",
+			    client ? object_getClassName(client) : "nil", process ? object_getClassName(process) : "nil",
+			    utf8 ? utf8 : "?");
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strnlen(line, sizeof(line)));
+		}
+		return;
+	}
+	original_notify_client_connection(self, selector, client);
+}
+
+/*
  * -[SBLockdownManager _setupActivationState] asks MobileActivation and keeps the answer in the
  * int at +8: 2 = activated, 1 = not, 3 = unknown; it stays 0 when there is no answer.
  */
@@ -1678,6 +1716,9 @@ hakios_springboard_init(void)
 	    0x1c507e0fcUL, (IMP)poster_switcher_allowed);
 	original_switcher_wallpaper_overlay = (void (*)(id, SEL))replace_method("SBAppSwitcherPageView",
 	    "_createOrDestroyWallpaperOverlayView", 0x1c4af7860UL, (IMP)switcher_wallpaper_overlay);
+	/* the 27 release's only (24B119); elsewhere the address differs and it is left alone */
+	original_notify_client_connection = (void (*)(id, SEL, id))replace_method("SBApplicationSceneUpdateTransaction",
+	    "_notifyObserversOfClientConnection:", 0x227a03ab8UL, (IMP)notify_client_connection);
 	/*
 	 * Battery hooks on UIDevice: these are the methods every app and SpringBoard itself calls, so
 	 * hooking them here in the SpringBoard process covers both the status bar and any app that

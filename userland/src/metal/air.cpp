@@ -4,6 +4,10 @@
  * Metal's whole discovery down with it (the comment at the top of src/hakiosmetal.m).
  */
 #include "rwm.h"
+#include <sys/sysctl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
 #include <dlfcn.h>
 #include <mutex>
@@ -59,6 +63,7 @@ load()
 		call("rwa_render_clear", &c.render_clear, false),
 		call("rwa_depth_read", &c.depth_read, false),
 		call("rwa_texture_destroy", &c.texture_destroy, false),
+		call("rwa_texture_view_create", &c.texture_view_create, false),
 		call("rwa_sampler_create", &c.sampler_create, true),
 		call("rwa_sampler_destroy", &c.sampler_destroy, false),
 		call("rwa_dispatch", &c.dispatch, true),
@@ -97,6 +102,19 @@ load()
 	}
 	c.handle = handle;
 	loaded = true;
+	/* where it lies in this process, into the host's kept lines: the kernel's stack samples (ustacks=) give bare
+	 * addresses, and this is what turns those in the library into its own functions (atos -l BASE) */
+	{
+		Dl_info info;
+
+		if (c.device_open != nullptr && dladdr(reinterpret_cast<const void *>(c.device_open), &info) != 0) {
+			char line[200];
+
+			snprintf(line, sizeof(line), "!rwm %s: the compiler library at %p (%s)", getprogname(), info.dli_fbase,
+				 info.dli_fname != nullptr ? info.dli_fname : "?");
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
 }
 
 std::once_flag once;

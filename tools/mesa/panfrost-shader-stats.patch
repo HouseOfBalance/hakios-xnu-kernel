@@ -1,0 +1,41 @@
+--- a/src/panfrost/compiler/bifrost_compile.c
++++ b/src/panfrost/compiler/bifrost_compile.c
+@@ -29,6 +29,10 @@
+ #include "compiler/glsl_types.h"
+ #include "compiler/nir/nir_builder.h"
+ #include "util/u_debug.h"
++#ifdef __APPLE__
++#include <string.h>
++#include <sys/sysctl.h>
++#endif
+ 
+ #include "bifrost/disassemble.h"
+ #include "panfrost/lib/pan_props.h"
+@@ -5735,7 +5739,27 @@
+          util_debug_message(inputs->debug, SHADER_INFO, "%s", shaderdb);
+ 
+       ralloc_free(shaderdb);
++   }
++
++#ifdef __APPLE__
++   /* Darwin on what a heavy fragment shader costs (the 27 release's window server, 185 ms a fragment job):
++    * its statistics into the host's kept lines, for one that spills, runs one thread, loops or is long */
++   if (!skip_internal && ctx->arch == 7 && ctx->stage == MESA_SHADER_FRAGMENT &&
++       (ctx->spills || ctx->fills || ctx->info.work_reg_count > 32 || ctx->loop_count ||
++        binary->size - offset > 1024)) {
++      static unsigned said;
++
++      if (said++ < 60) {
++         char *stats = bi_print_stats(ctx, binary->size - offset);
++         char line[400];
++
++         snprintf(line, sizeof(line), "!rwm shader %s: %s, %u registers",
++                  ctx->nir->info.name ? ctx->nir->info.name : "?", stats, ctx->info.work_reg_count);
++         sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
++         ralloc_free(stats);
++      }
+    }
++#endif
+ 
+    return ctx;
+ }

@@ -118,6 +118,18 @@ with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'LastSystemVersion': build, 'DMLastMigrationResults': {'success': True, 'buildVersion': build}}, f,
                   fmt=plistlib.FMT_BINARY)
 PY
+# REDUCE_TRANSPARENCY=1: Settings' Reduce Transparency already on (com.apple.Accessibility's
+# EnhancedBackgroundContrastEnabled, the key libAccessibility reads): the glass materials drawn without their
+# glass. On the Mali the home screen is one fragment job of 128 ms, and the glass shader (glass_background) is the
+# one the compiler named heavy -- 64 registers, one thread a core (run 30); this is to measure what it costs.
+if [ "${REDUCE_TRANSPARENCY:-0}" = 1 ]; then
+	python3 - "$T/var/mobile/Library/Preferences/com.apple.Accessibility.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump({'EnhancedBackgroundContrastEnabled': True}, f, fmt=plistlib.FMT_BINARY)
+PY
+	echo "  Reduce Transparency on"
+fi
 # The persona manifest. usermanagerd reads /private/var/keybags/persona.kb as it starts and aborts without
 # it ("Daemon failed to load persona manifest."), and every daemon that asks it for the user's personas
 # waits (runningboardd, so backboardd and SpringBoard). On an phone the file is left by the restore; this

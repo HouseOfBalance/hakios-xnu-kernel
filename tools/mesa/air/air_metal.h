@@ -139,6 +139,10 @@ struct rwa_texture *rwa_texture_create(struct rwa_device *device,
 				       const struct rwa_texture_shape *shape,
 				       char *why, size_t why_size);
 void rwa_texture_destroy(struct rwa_texture *texture);
+/* a second texture over `parent`'s resource read and drawn as `pixel_format` (MTLPixelFormat, the same texel size);
+ * rwa_texture_destroy gives it back, and its parent may go first */
+struct rwa_texture *rwa_texture_view_create(struct rwa_texture *parent, unsigned pixel_format, char *why,
+					    size_t why_size);
 
 /*
  * The same texture, over memory somebody else allocated: an IOSurface of CoreAnimation's.

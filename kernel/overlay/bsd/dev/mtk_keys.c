@@ -236,6 +236,8 @@ cluster_raise(vm_offset_t apmixed, const char *name, uint32_t con1_at, uint32_t 
 #define MT6358_VSRAM_CON3       0x1bf4          /* VSRAM_GPU's setting */
 
 extern bool mtk_mali_ready(void);
+/* the clock's lines whole into the host's: the kept lines' ring is filled by the Metal driver's before the end */
+extern void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
 
 static void
 gpu_raise(uint32_t mhz)
@@ -248,18 +250,18 @@ gpu_raise(uint32_t mhz)
 	}
 	if (!pmic_read(MT6358_VGPU_DBG0, &vgpu) || !pmic_read(MT6358_VSRAM_GPU_DBG0, &vsram) ||
 	    !pmic_read(MT6358_VGPU_ELR0, &elr) || !pmic_read(MT6358_VSRAM_CON3, &con)) {
-		hakios_keep("gpufreq: the PMIC does not answer; left as it is");
+		hakios_host_keep_add("gpufreq: the PMIC does not answer; left as it is");
 		return;
 	}
 	vgpu &= 0x7f;
 	vsram = vsram >> 8 & 0x7f;
 	uint32_t mux = rd(topckgen, CLK_CFG_1) & 3;
 
-	hakios_keep("gpufreq: mux %u, GPUPLL CON0 %#x CON1 %#x PWR %#x, VGPU step %u (%u mV), VSRAM_GPU step %u (%u mV)",
+	hakios_host_keep_add("gpufreq: mux %u, GPUPLL CON0 %#x CON1 %#x PWR %#x, VGPU step %u (%u mV), VSRAM_GPU step %u (%u mV)",
 	    mux, rd(apmixed, GPUPLL_CON0), rd(apmixed, GPUPLL_CON1), rd(apmixed, GPUPLL_PWR_CON0), vgpu,
 	    500 + vgpu * 25 / 4, vsram, 500 + vsram * 25 / 4);
 	if (mhz < 375 || mhz > 950 || mux != 2 || vgpu < 8 || vgpu > 56 || !mtk_mali_ready()) {
-		hakios_keep("gpufreq: not as mtk_mali.c leaves it, or no clock asked for; left as it is");
+		hakios_host_keep_add("gpufreq: not as mtk_mali.c leaves it, or no clock asked for; left as it is");
 		return;
 	}
 	/* MediaTek's voltages, two steps over: 0.78 V at 796 MHz, 0.90 at 950 */
@@ -270,13 +272,13 @@ gpu_raise(uint32_t mhz)
 		want_sram = 56;                 /* 0.85 V at least, MediaTek's floor */
 	}
 	if (!pmic_write(MT6358_VSRAM_CON3, (con & ~0x7fu) | want_sram) || !pmic_write(MT6358_VGPU_ELR0, (elr & ~0x7fu) | want)) {
-		hakios_keep("gpufreq: the voltages could not be set; left as it is");
+		hakios_host_keep_add("gpufreq: the voltages could not be set; left as it is");
 		return;
 	}
 	delay(1000);
 	(void)pmic_read(MT6358_VGPU_DBG0, &vgpu);
 	if ((vgpu & 0x7f) != want) {
-		hakios_keep("gpufreq: VGPU reads step %u, not %u; the clock left as it is", vgpu & 0x7f, want);
+		hakios_host_keep_add("gpufreq: VGPU reads step %u, not %u; the clock left as it is", vgpu & 0x7f, want);
 		return;
 	}
 	/* the PLL: on (as Linux's clk-mtk does), its frequency, then the mux to it */
@@ -297,7 +299,7 @@ gpu_raise(uint32_t mhz)
 	wr(topckgen, CLK_CFG_1 + 4, 1u);        /* SET: GPUPLL */
 	wr(topckgen, 0x004, 1u << 4);           /* CLK_CFG_UPDATE: mfg_sel's bit (clk-mt6768.c) */
 	(void)pmic_read(MT6358_VSRAM_GPU_DBG0, &vsram);
-	hakios_keep("gpufreq: the GPU at %u MHz (CON1 %#x, mux %u), VGPU step %u, VSRAM_GPU step %u", mhz,
+	hakios_host_keep_add("gpufreq: the GPU at %u MHz (CON1 %#x, mux %u), VGPU step %u, VSRAM_GPU step %u", mhz,
 	    rd(apmixed, GPUPLL_CON1), rd(topckgen, CLK_CFG_1) & 3, want, vsram >> 8 & 0x7f);
 }
 

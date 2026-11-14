@@ -3,6 +3,7 @@
  * when they were encoded, in the order they were encoded.
  */
 #include "rwm.h"
+#include <sys/sysctl.h>
 
 #include <string.h>
 
@@ -110,6 +111,24 @@ rwm_run_works(struct rwa_device *device, struct rwm_work *const *works, unsigned
 			failed = rwm_run_draw(&w->draw, why, why_size);
 			if (failed == -2) {
 				rwm_print("the draw failed: %s\n", why);
+			}
+			/* a failed draw's reason, the first eight different ones a process, into the host's kept lines: a draw
+			 * that fails ends its command buffer, and the 27 release's frames lost everything after the first one */
+			if (failed != 0) {
+				static char seen[8][48];
+				static unsigned seen_count;
+				unsigned k;
+
+				for (k = 0; k < seen_count && strncmp(seen[k], why, sizeof(seen[0]) - 1) != 0; k++) {
+				}
+				if (k == seen_count && seen_count < 8) {
+					char line[240];
+
+					strlcpy(seen[seen_count++], why, sizeof(seen[0]));
+					snprintf(line, sizeof(line), "!!rwm draw failed (%d) in %s: %s", failed,
+						 rwm_area_label_of(w->draw.render), why);
+					sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+				}
 			}
 			if (failed != 0) {
 				/*

@@ -7,9 +7,11 @@
 #include "rwm.h"
 
 #include <IOKit/IOReturn.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 
 #include <memory>
 #include <new>
@@ -22,6 +24,18 @@ struct rwm_texture {
 	uint32_t source_seed = 0;         /* the source's seed when it was last copied in */
 	bool source_two_planes = false;   /* ... and it is YCbCr 4:2:0 in two planes, packed into one */
 	uint32_t in_place = 0;            /* the surface it lies over, drawn in place (src/metal/import.cpp) */
+	/* the copy-in road from memory (-newTextureWithBytesNoCopy:...): the caller's bytes, re-copied before a use
+	 * whenever their signature has moved -- the caller fills them after it makes the texture */
+	const uint8_t *memory = nullptr;
+	size_t memory_length = 0, memory_stride = 0;
+	unsigned memory_layers = 1;
+	uint64_t memory_signature = 0;
+	bool memory_written = false;
+	/* for rwm_texture_sample_report: where it came from (0 made here, 1 over a surface in place, 2 copied in from a
+	 * surface, 3 copied in from memory, 4 a view) and whether anything ever went into it */
+	uint8_t origin = 0;
+	bool filled = false;
+	int8_t surface_empty = -1;        /* origin 1: its surface's memory all zeroes when first sampled (1), or not (0) */
 
 	~rwm_texture()
 	{
@@ -134,6 +148,20 @@ texel_bytes(unsigned format)
 
 } // namespace
 
+namespace {
+
+/* a texture's kilobytes as made, roughly: 8 bytes a texel for the 64-bit formats, 4 for the rest */
+long
+texture_kb(const struct rwa_texture_shape &sh)
+{
+	const long texel = sh.pixel_format == 115 || sh.pixel_format == 105 || sh.pixel_format == 125 ? 8 : 4;
+
+	return ((long)sh.width * (sh.height ? sh.height : 1) * (sh.depth ? sh.depth : 1) *
+		(sh.array_length ? sh.array_length : 1) * texel) >> 10;
+}
+
+} // namespace
+
 extern "C" struct rwm_texture *
 rwm_texture_new(struct rwa_texture *texture, const struct rwa_texture_shape *shape)
 {
@@ -145,12 +173,19 @@ rwm_texture_new(struct rwa_texture *texture, const struct rwa_texture_shape *sha
 	}
 	made->texture = texture;
 	made->shape = *shape;
+	__atomic_add_fetch(&rwm_live_textures, 1, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&rwm_live_texture_kb, texture_kb(*shape), __ATOMIC_RELAXED);
 	return made;
 }
 
 extern "C" void
 rwm_texture_free(struct rwm_texture *texture)
 {
+	if (texture != nullptr) {
+		__atomic_sub_fetch(&rwm_live_textures, 1, __ATOMIC_RELAXED);
+		__atomic_sub_fetch(&rwm_live_texture_kb, texture_kb(texture->shape), __ATOMIC_RELAXED);
+		__atomic_add_fetch(&rwm_textures_freed, 1, __ATOMIC_RELAXED);
+	}
 	delete texture;
 }
 
@@ -180,13 +215,91 @@ rwm_texture_copy_in_from(struct rwm_texture *texture, IOSurfaceRef surface, bool
 		CFRelease(texture->source);
 	}
 	texture->source = (IOSurfaceRef)CFRetain(surface);
+	texture->origin = 2;
 	texture->source_seed = IOSurfaceGetSeed(surface) - 1;
 	texture->source_two_planes = two_planes;
 }
 
+extern "C" void
+rwm_texture_copy_in_from_memory(struct rwm_texture *texture, const void *bytes, size_t length, size_t stride,
+				unsigned layers)
+{
+	texture->memory = (const uint8_t *)bytes;
+	texture->memory_length = length;
+	texture->memory_stride = stride;
+	texture->memory_layers = layers ? layers : 1;
+	texture->memory_written = false;
+	texture->origin = 3;
+}
+
+namespace {
+
+/* 256 words spread over the memory and its length: what changes when an image is drawn into it */
+uint64_t
+memory_signature(const uint8_t *m, size_t length)
+{
+	uint64_t h = 1469598103934665603ull ^ length;
+
+	for (unsigned i = 0; length >= 8 && i < 256; i++) {
+		uint64_t word;
+		const size_t at = (length - 8) * i / 255 & ~(size_t)7;
+
+		memcpy(&word, m + at, 8);
+		h = (h ^ word) * 1099511628211ull;
+	}
+	return h;
+}
+
+} // namespace
+
 extern "C" int
 rwm_texture_copy_in(struct rwm_texture *texture, size_t *bytes, char *why, size_t why_size)
 {
+	if (texture->memory != nullptr) {
+		const uint64_t signature = memory_signature(texture->memory, texture->memory_length);
+		const unsigned origin[3] = { 0, 0, 0 };
+		const unsigned size[3] = { texture->shape.width, texture->shape.height,
+					   texture->shape.depth ? texture->shape.depth : 1 };
+
+		*bytes = 0;
+		if (texture->memory_written && signature == texture->memory_signature) {
+			return 0;
+		}
+		for (unsigned layer = 0; layer < texture->memory_layers; layer++) {
+			if (!rwm_texture_write(texture, 0, layer, origin, size,
+					       texture->memory + layer * (texture->memory_length / texture->memory_layers),
+					       texture->memory_stride)) {
+				snprintf(why, why_size, "the caller's %zu bytes (%zu a row) would not go into the texture",
+					 texture->memory_length, texture->memory_stride);
+				return -1;
+			}
+		}
+		texture->memory_signature = signature;
+		texture->memory_written = true;
+		texture->filled = true;
+		*bytes = texture->memory_length;
+		{
+			static unsigned said;
+
+			if (said++ < 12) {
+				unsigned nonzero = 0;
+				char line[200];
+
+				for (unsigned i = 0; texture->memory_length >= 4 && i < 64; i++) {
+					uint32_t word;
+
+					memcpy(&word, texture->memory + ((texture->memory_length - 4) * i / 63 & ~(size_t)3), 4);
+					nonzero += word != 0;
+				}
+				snprintf(line, sizeof(line), "!!rwm image copied in: %ux%u format %u, %zu bytes, %u of 64 words not zero",
+					 texture->shape.width, texture->shape.height, texture->shape.pixel_format,
+					 texture->memory_length, nonzero);
+				sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+			}
+		}
+		return 0;
+	}
+
 	const struct rwm_air *air = rwm_air();
 	const unsigned width = texture->shape.width, height = texture->shape.height;
 	const unsigned origin[3] = { 0, 0, 0 }, size[3] = { width, height, 1 };
@@ -317,6 +430,7 @@ rwm_texture_write(struct rwm_texture *texture, unsigned level, unsigned slice, c
 		rwm_print("writing texels: %s\n", why);
 		return false;
 	}
+	texture->filled = true;
 	return true;
 }
 
@@ -366,6 +480,106 @@ extern "C" void
 rwm_texture_set_in_place(struct rwm_texture *texture, uint32_t surface)
 {
 	texture->in_place = surface;
+	texture->origin = 1;
+}
+
+/*
+ * What the frames sample, by where each texture came from, and the ones sampled with nothing ever put into them --
+ * a layer drawn as nothing (the 27 release's home screen: its stripes and none of its images). Counted per draw at
+ * recording, said every five seconds by rwm_perf_report ("rwm sampled"), the empty ones by their shape.
+ */
+namespace {
+
+struct sampled_counts {
+	unsigned long by_origin[5], empty_by_origin[5];
+	struct { const rwm_texture *t; unsigned w, h, f; uint8_t origin; } empty[8];
+	unsigned empty_count;
+} sampled;
+pthread_mutex_t sampled_lock = PTHREAD_MUTEX_INITIALIZER;
+
+} // namespace
+
+extern "C" void
+rwm_texture_note_filled(struct rwm_texture *texture)
+{
+	if (texture != nullptr) {
+		texture->filled = true;
+	}
+}
+
+extern "C" void
+rwm_texture_note_view(struct rwm_texture *texture)
+{
+	texture->origin = 4;
+	texture->filled = true;           /* (what is in it is its parent's) */
+}
+
+extern "C" void
+rwm_texture_note_sampled(struct rwm_texture *texture)
+{
+	bool empty;
+
+	if (texture == nullptr) {
+		return;
+	}
+	if (texture->origin == 1 && texture->surface_empty < 0) {
+		IOSurfaceRef s = IOSurfaceLookup(texture->in_place);
+		unsigned nonzero = 0;
+
+		if (s != nullptr) {
+			const uint8_t *base = (const uint8_t *)IOSurfaceGetBaseAddress(s);
+			const size_t size = IOSurfaceGetAllocSize(s);
+
+			for (unsigned i = 0; base != nullptr && size >= 4 && i < 64; i++) {
+				uint32_t word;
+
+				memcpy(&word, base + ((size - 4) * i / 63 & ~(size_t)3), 4);
+				nonzero += word != 0;
+			}
+			CFRelease(s);
+		}
+		texture->surface_empty = nonzero == 0;
+	}
+	empty = texture->origin == 1 ? texture->surface_empty == 1 : !texture->filled;
+	pthread_mutex_lock(&sampled_lock);
+	sampled.by_origin[texture->origin]++;
+	if (empty) {
+		unsigned k;
+
+		sampled.empty_by_origin[texture->origin]++;
+		for (k = 0; k < sampled.empty_count && sampled.empty[k].t != texture; k++) {
+		}
+		if (k == sampled.empty_count && k < 8) {
+			sampled.empty[k] = { texture, texture->shape.width, texture->shape.height, texture->shape.pixel_format,
+					     texture->origin };
+			sampled.empty_count++;
+		}
+	}
+	pthread_mutex_unlock(&sampled_lock);
+}
+
+extern "C" void
+rwm_texture_sample_report(void (*say)(const char *))
+{
+	static const char *const names[5] = { "made", "surface", "copied", "memory", "view" };
+	char line[240];
+	int at;
+
+	pthread_mutex_lock(&sampled_lock);
+	sampled_counts now = sampled;
+	memset(&sampled, 0, sizeof(sampled));
+	pthread_mutex_unlock(&sampled_lock);
+	at = snprintf(line, sizeof(line), "rwm sampled 5s:");
+	for (unsigned o = 0; o < 5; o++) {
+		at += snprintf(line + at, sizeof(line) - at, " %s %lu (%lu empty)", names[o], now.by_origin[o],
+			       now.empty_by_origin[o]);
+	}
+	say(line);
+	for (unsigned k = 0; k < now.empty_count; k++) {
+		snprintf(line, sizeof(line), "rwm sampled empty %u: %ux%u format %u, %s", k + 1, now.empty[k].w, now.empty[k].h,
+			 now.empty[k].f, names[now.empty[k].origin]);
+		say(line);
+	}
 }
 
 extern "C" int

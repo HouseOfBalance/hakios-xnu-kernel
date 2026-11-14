@@ -78,6 +78,7 @@ ml_io_map(vm_offset_t phys, vm_size_t size)
 #include "mtk_keys.c"
 #undef printf
 void hakios_keep(const char *format, ...) { (void)format; }
+void hakios_host_keep_add(const char *format, ...) { (void)format; }
 
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; fprintf(stderr, "FAIL %s:%d: %s: ", __FILE__, __LINE__, #cond); \

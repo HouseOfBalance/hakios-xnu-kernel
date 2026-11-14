@@ -191,7 +191,12 @@ static TUNABLE(uint32_t, gShot, "fbshot", 0);      /* a small picture of the fra
 static TUNABLE(uint32_t, gShotWidth, "fbshot_w", 0);      /* the picture's width (60 when not given) */
 static TUNABLE(uint32_t, gShotBand, "fbshot_band", 0);    /* 1, 2 or 3: only that third of the height (0: all of it; 4: each third in turn) */
 static TUNABLE(uint32_t, gShotEvery, "fbshot_every", 60);  /* seconds between pictures (a multiple of 5) */
-static TUNABLE(uint32_t, gShotPanel, "fbshot_panel", 0);    /* ... of a picture put on the panel from inside the kernel (MiniIOMobileFramebufferShow) */
+static TUNABLE(uint32_t, gShotPanel, "fbshot_panel", 0);
+/* boot-arg fbtext=1: the Metal driver's last lines (mtk_mali.c, hakios_overlay_copy) drawn over the top of every frame */
+static TUNABLE(uint32_t, gFBText, "fbtext", 0);
+extern "C" unsigned hakios_overlay_copy(char out[][96], unsigned max);
+extern "C" void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
+extern "C" unsigned char iso_font[256 * 16];    /* ... of a picture put on the panel from inside the kernel (MiniIOMobileFramebufferShow) */
 static TUNABLE(uint32_t, gRecStart, "rec_start", 0);
 static TUNABLE(uint32_t, gRecMegabytes, "rec_mb", 480);
 static TUNABLE(uint32_t, gRecRing, "rec_ring", 0);
@@ -1496,6 +1501,15 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 		memcpy(src, swap + SWAP_SOURCE(layer), sizeof(src));
 		memcpy(dst, swap + SWAP_DEST(layer), sizeof(dst));
 		s = surfaces[layer];
+		/* every 400th swap's layers, whole into the host's lines: which of them make the picture once the home screen
+		 * is up (the 27 release's showed its wallpaper's stripes and none of what the window server draws) */
+		if (fSwapsShown % 400 == 200) {
+			hakios_host_keep_add("swap %u layer %u: surface %u %ux%u '%c%c%c%c' from %d,%d %dx%d to %d,%d %dx%d, set 0x%x",
+			    swapWord(swap, SWAP_ID), layer, sid, s ? s->info.width : 0, s ? s->info.height : 0,
+			    s ? (int) (s->info.pixelFormat >> 24 & 0xff) : '?', s ? (int) (s->info.pixelFormat >> 16 & 0xff) : '?',
+			    s ? (int) (s->info.pixelFormat >> 8 & 0xff) : '?', s ? (int) (s->info.pixelFormat & 0xff) : '?',
+			    src[0], src[1], src[2], src[3], dst[0], dst[1], dst[2], dst[3], set);
+		}
 		if (report) {
 			IOLog("MiniIOMobileFramebuffer: swap %u layer %u: surface %u%s (%ux%u '%c%c%c%c') "
 			    "from %d,%d %dx%d to %d,%d %dx%d, layers set 0x%x\n", swapWord(swap, SWAP_ID), layer, sid,
@@ -1516,6 +1530,37 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			drawLayer(s, src, dst);
 			if (layer == 0) {
 				recorded = s;   /* (recorded once the frame is in the panel's memory: see below) */
+			}
+		}
+	}
+	if (gFBText) {
+		/*
+		 * The driver's lines, white on black, 8 x 16 (the console's own font, iso_font: its lowest bit the
+		 * leftmost pixel), over the top rows of the panel's picture. Word stores only: the panel's memory is
+		 * device memory (see the clearing above).
+		 */
+		char lines[8][96];
+		unsigned count = hakios_overlay_copy(lines, 8);
+		uint32_t columns = fPanelWidth / 8;
+
+		for (unsigned l = 0; l < count; l++) {
+			for (uint32_t r = 0; r < 16 && (l * 16 + r) < fPanelHeight; r++) {
+				volatile uint32_t *row = (volatile uint32_t *) (fBase + (size_t) (l * 16 + r) * fRowBytes);
+				bool ended = false;
+
+				for (uint32_t c = 0; c < columns; c++) {
+					unsigned char ch = ended ? ' ' : (unsigned char) lines[l][c];
+					unsigned char bits;
+
+					if (ch == 0) {
+						ended = true;
+						ch = ' ';
+					}
+					bits = ch < 128 ? iso_font[ch * 16 + r] : 0;
+					for (uint32_t b = 0; b < 8; b++) {
+						row[c * 8 + b] = (bits >> b) & 1 ? 0xffffffffu : 0xff000000u;
+					}
+				}
 			}
 		}
 	}

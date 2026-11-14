@@ -89,6 +89,7 @@
  * is half a refusal.
  */
 
+#include <Block.h>
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>          /* for MTLSize and the public enumerations, nothing private */
 #import <objc/message.h>
@@ -294,6 +295,24 @@ static void ensure_function_encoder(void);
  * that is now still missing was never reached. One flush per site per process costs nothing;
  * a diagnostic that has never once been seen costs the whole point of writing it.
  */
+/*
+ * A call this driver answers with nil, said into the host's kept lines ("!!") the first time in a process, with its
+ * name: the window server's standard error lands in the middle of a long run's log, which is the part the log loses,
+ * and which of these the 27 release asks for is what decides whether a layer is drawn at all.
+ */
+#define RW_NIL(name)							\
+	do {								\
+		static BOOL rw_nil_said_;				\
+									\
+		if (!rw_nil_said_) {					\
+			char rw_nil_line_[160];				\
+									\
+			rw_nil_said_ = YES;				\
+			snprintf(rw_nil_line_, sizeof(rw_nil_line_), "!!rwm %s: %s answered nil", getprogname(), name); \
+			sysctlbyname("kern.hakios.say", NULL, NULL, rw_nil_line_, strlen(rw_nil_line_)); \
+		}							\
+	} while (0)
+
 #define RW_ONCE(...)							\
 	do {								\
 		static BOOL rw_said_;					\
@@ -598,8 +617,13 @@ gpu_param(io_connect_t gpu, uint32_t which, uint64_t *value)
 	HakiosMetalDevice *_owner;
 	struct rwm_texture *_core; /* the texture, its shape, its surfaces: src/metal/texture.cpp */
 	int _responsibleProcess;   /* as on the buffer: accounting, not behaviour */
+	/* -newTextureWithBytesNoCopy:...: the caller's memory and what to call when this texture goes */
+	void (^_deallocator)(void *, NSUInteger);
+	void *_deallocatorBytes;
+	NSUInteger _deallocatorLength;
 }
 @property (readonly) struct rwa_texture *mesaTexture;
+- (void)hakiosTakeDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length;
 - (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device core:(struct rwm_texture *)core;
 - (struct rwm_texture *)hakiosCore;
 - (void)hakiosCopyIn;
@@ -895,6 +919,24 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	 */
 	if (strcmp(getprogname(), "chronod") == 0 || strstr(getprogname(), "Widget") != NULL) {
 		rw_print("no device for %s (RenderBox draws with the processor then)\n", getprogname());
+		return nil;
+	}
+	/*
+	 * Nor, in the 27 release, for the other two that draw with RenderBox: iconservicesagent, the icons' painter, which
+	 * with a device aborts in RB::Device::alloc_command_buffer ("command buffer allocation failed") every ten seconds
+	 * and leaves every icon an empty square; and the wallpaper's posters (PosterBoard, CollectionsPoster and the other
+	 * *Poster extensions). With the processor they draw the home screen as the run without metal=1 does: the icons,
+	 * the widgets and the stripes in their places. Boot-arg rbmtl=1 gives them the device again.
+	 */
+	if ((strcmp(getprogname(), "iconservicesagent") == 0 || strstr(getprogname(), "Poster") != NULL) &&
+	    !rwm_boot_arg("rbmtl=1")) {
+		static char told[256];
+
+		/* (said into the host's kept lines once a process: these have no standard error anywhere) */
+		if (told[0] == 0) {
+			snprintf(told, sizeof(told), "!rwm %s: no Metal device; RenderBox draws with the processor", getprogname());
+			sysctlbyname("kern.hakios.say", NULL, NULL, told, strlen(told));
+		}
 		return nil;
 	}
 	ensure_spi([self class]);
@@ -1499,6 +1541,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 - (id)newSharedTextureWithDescriptor:(MTLTextureDescriptor *)descriptor
 {
 	(void)descriptor;
+	RW_NIL("-newSharedTextureWithDescriptor:");
 	return nil;
 }
 
@@ -1519,15 +1562,45 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 		     descriptor:(MTLTextureDescriptor *)descriptor
 		    deallocator:(void (^)(void *, NSUInteger))deallocator
 {
-	(void)bytes;
-	(void)length;
-	(void)descriptor;
-	(void)deallocator;
-	RW_ONCE("hakiosmetal: a texture over the caller's own memory was asked for, and the "
-		"contract has no import for a bare pointer -- only for an IOSurface. Copying "
-		"instead would be worse than nil: the caller writes to its pages and expects the "
-		"texture to follow\n");
-	return nil;
+	/*
+	 * The 27 release's window server makes the textures of its layers' images with this (CA::Render::Image's memory,
+	 * shared with the program that drew it): answered nil, as it was, every image layer of the home screen was left
+	 * out -- the sky, the icons, the status bar, only flat fills and the wallpaper's stripes drawn (runs 36 to 42; run
+	 * 42's kept lines name this call). The contract has no texture over a bare pointer, so the texture is the
+	 * library's own and the bytes are copied into it before every use while they change (src/metal/texture.cpp's
+	 * copy-in road, as for another process's surface). The caller's memory is its own until this texture goes, when
+	 * the deallocator is called, as Metal's would be. Rows: the memory's length over the rows it holds.
+	 */
+	HakiosMetalTexture *made = [self newTextureWithDescriptor:descriptor];
+	const NSUInteger width = [descriptor width], height = MAX([descriptor height], (NSUInteger)1);
+	const NSUInteger depth = MAX([descriptor depth], (NSUInteger)1), layers = MAX([descriptor arrayLength], (NSUInteger)1);
+	const NSUInteger rows = height * depth * layers;
+	static unsigned said;
+
+	if (made == nil) {
+		RW_NIL("-newTextureWithBytesNoCopy:length:descriptor:deallocator: (no texture of that descriptor)");
+		return nil;
+	}
+	if (bytes != NULL && rows != 0 && length / rows != 0) {
+		/* ASTC (186..218): rows of blocks, packed -- the library works the stride out (0) */
+		const NSUInteger format = [descriptor pixelFormat];
+		const NSUInteger stride = format >= 186 && format <= 218 ? 0 : length / rows;
+
+		/* copied in before each use while the bytes change: the caller draws the image into them after this
+		 * returns (copied here at once, the sky was a black texture over the whole home screen, run 44) */
+		rwm_texture_copy_in_from_memory([made hakiosCore], bytes, length, stride, (unsigned)layers);
+		(void)width;
+		if (said++ < 8) {
+			char line[200];
+
+			snprintf(line, sizeof(line), "!!rwm %s: image texture %lux%lu format %lu usage %#lx, %lu bytes, %lu a row",
+				 getprogname(), (unsigned long)[descriptor width], (unsigned long)height, (unsigned long)format,
+				 (unsigned long)[descriptor usage], (unsigned long)length, (unsigned long)stride);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
+	[made hakiosTakeDeallocator:deallocator bytes:bytes length:length];
+	return made;
 }
 
 - (id)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor
@@ -1552,9 +1625,21 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	struct rwa_texture *texture = mesa.texture_create(_mesa, &shape, why, sizeof(why));
 
 	if (texture == NULL) {
+		static unsigned refused;
+
 		rw_print("%s\n", why);
+		/* the first few refusals with their reasons into the host's kept lines (see RW_NIL) */
+		if (refused++ < 6) {
+			char line[240];
+
+			snprintf(line, sizeof(line), "!!rwm %s: no texture %ux%u format %u usage %#x: %s", getprogname(),
+				 shape.width, shape.height, shape.pixel_format, shape.usage, why);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
 		return nil;
 	}
+	rwm_uploads[0]++;
+	rwm_uploads[1] += shape.width <= 512 && shape.height <= 512;
 	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self
 							 texture:texture
 							   shape:&shape];
@@ -1772,8 +1857,18 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	 * nil, one is made, because the base class validates it and refuses nil. */
 	id use = descriptor != nil ? [[descriptor retain] autorelease] :
 	    [[[MTLCommandQueueDescriptor alloc] init] autorelease];
+	id made = [[HakiosMetalCommandQueue alloc] initWithHakiosDevice:self descriptor:use];
+	static unsigned said;
 
-	return [[HakiosMetalCommandQueue alloc] initWithHakiosDevice:self descriptor:use];
+	/* which programs get a queue of this driver, and whether they got one: the window server says so on its
+	 * standard error, the others into nothing (the 27 release's iconservicesagent) */
+	if (said++ < 2 && strcmp(getprogname(), "backboardd") != 0) {
+		char line[160];
+
+		snprintf(line, sizeof(line), "!rwm %s: a command queue %p", getprogname(), (void *)made);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+	return made;
 }
 
 /*
@@ -2110,7 +2205,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	}
 	return made;
 }
-- (id)newBufferWithIOSurface:(void *)surface        { (void)surface; return nil; }
+- (id)newBufferWithIOSurface:(void *)surface        { (void)surface; RW_NIL("-newBufferWithIOSurface:"); return nil; }
 - (id)newBufferWithBytesNoCopy:(void *)bytes
 			length:(NSUInteger)length
 		       options:(NSUInteger)options
@@ -2467,6 +2562,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 		   bytesPerRow:(NSUInteger)bytesPerRow
 {
 	(void)descriptor; (void)offset; (void)bytesPerRow;
+	RW_NIL("-[buffer newTextureWithDescriptor:offset:bytesPerRow:]");
 	RW_ONCE("hakiosmetal: a texture over a buffer was asked for; the contract lays a texture "
 		"over an IOSurface and over memory of its own, but not over a buffer this driver "
 		"already holds\n");
@@ -2532,7 +2628,18 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	if (_core != NULL) {
 		rwm_texture_free(_core);
 	}
+	if (_deallocator != nil) {
+		_deallocator(_deallocatorBytes, _deallocatorLength);
+		Block_release(_deallocator);
+	}
 	[super dealloc];
+}
+
+- (void)hakiosTakeDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length
+{
+	_deallocator = deallocator != nil ? Block_copy(deallocator) : nil;
+	_deallocatorBytes = bytes;
+	_deallocatorLength = length;
 }
 
 - (struct rwa_texture *)mesaTexture { return rwm_texture_mesa(_core); }
@@ -2626,7 +2733,11 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 				   (unsigned)region.size.depth };
 
 	(void)image;
-	rwm_texture_write(_core, (unsigned)level, (unsigned)slice, origin, size, bytes, stride);
+	rwm_uploads[2]++;
+	rwm_uploads[3] += ((unsigned long)stride * size[1] * (size[2] ? size[2] : 1)) >> 10;
+	if (!rwm_texture_write(_core, (unsigned)level, (unsigned)slice, origin, size, bytes, stride)) {
+		rwm_uploads[4]++;
+	}
 }
 
 - (void)replaceRegion:(MTLRegion)region
@@ -2678,7 +2789,13 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 /* A view of a texture is another texture over the same memory, and the compiler library has
  * no call for that yet; nil is the honest answer, and it is better than a view that aliases
  * nothing. */
-- (id)newTextureViewWithPixelFormat:(NSUInteger)format { (void)format; return nil; }
+- (id)newTextureViewWithPixelFormat:(NSUInteger)format
+{
+	return [self newTextureViewWithPixelFormat:format textureType:[self textureType]
+					    levels:NSMakeRange(0, MAX([self mipmapLevelCount], (NSUInteger)1))
+					    slices:NSMakeRange(0, MAX([self arrayLength], (NSUInteger)1) *
+								  ([self textureType] == 5 || [self textureType] == 6 ? 6 : 1))];
+}
 
 /*
  * THE REST OF WHAT <MTLTexture>, <MTLTextureSPI>, <MTLResource> AND <MTLResourceSPI>
@@ -2694,10 +2811,54 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 			     levels:(NSRange)levels
 			     slices:(NSRange)slices
 {
-	(void)format; (void)type; (void)levels; (void)slices;
-	RW_ONCE("a texture view is not implemented (the compiler library has no "
-		"call that makes a second texture over the same memory); nil\n");
-	return nil;
+	/*
+	 * A second texture over this one's memory, read and drawn as `format` (the compiler library's
+	 * rwa_texture_view_create): the 27 release's window server asks for them, and the layers built on one were not
+	 * drawn while this answered nil (run 46). The whole of this texture only, as its own type: a view of some levels
+	 * or slices, or as another type, is still refused, by name.
+	 */
+	const struct rwa_texture_shape *shape = rwm_texture_shape(_core);
+	const struct rwm_air *air = rwm_air();
+	char why[256] = { 0 };
+
+	if (air->texture_view_create == NULL || type != shape->type || levels.location != 0 ||
+	    levels.length != MAX(shape->mip_levels, 1u) || slices.location != 0 ||
+	    slices.length < 1 || slices.length != [self arrayLength] * (type == 5 || type == 6 ? 6 : 1)) {
+		static unsigned said;
+
+		if (said++ < 4) {
+			char line[200];
+
+			snprintf(line, sizeof(line), "!!rwm %s: a view as %lu, type %lu of %u, levels %lu+%lu of %u, slices %lu+%lu: "
+				 "not the whole texture as its own type, nil", getprogname(), (unsigned long)format,
+				 (unsigned long)type, shape->type, (unsigned long)levels.location, (unsigned long)levels.length,
+				 shape->mip_levels, (unsigned long)slices.location, (unsigned long)slices.length);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+		return nil;
+	}
+	struct rwa_texture *view = air->texture_view_create(rwm_texture_mesa(_core), rw_known_format((unsigned)format), why,
+							    sizeof(why));
+	if (view == NULL) {
+		static unsigned said;
+
+		if (said++ < 4) {
+			char line[240];
+
+			snprintf(line, sizeof(line), "!!rwm %s: no view as %lu: %s", getprogname(), (unsigned long)format, why);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+		return nil;
+	}
+	struct rwa_texture_shape view_shape = *shape;
+
+	view_shape.pixel_format = rw_known_format((unsigned)format);
+	struct rwm_texture *view_core = rwm_texture_new(view, &view_shape);
+
+	if (view_core != NULL) {
+		rwm_texture_note_view(view_core);
+	}
+	return [[HakiosMetalTexture alloc] initWithHakiosDevice:_owner core:view_core];
 }
 - (id)newTextureViewWithPixelFormat:(NSUInteger)format
 			textureType:(NSUInteger)type
@@ -2709,7 +2870,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	return [self newTextureViewWithPixelFormat:format textureType:type levels:levels
 					    slices:slices];
 }
-- (id)newSharedTextureHandle { return nil; }   /* nothing here is shared between processes */
+- (id)newSharedTextureHandle { RW_NIL("-newSharedTextureHandle"); return nil; }   /* nothing here is shared between processes */
 
 /* Served out of the shape this texture was made with, which is the only place that
  * knowledge exists: a cube is six faces (MTLTextureTypeCube is 3, CubeArray is 4),
@@ -3218,7 +3379,66 @@ hakios_clear_semaphore_debt(id commandBuffer)
 
 - (id)commandBuffer
 {
-	return [[[HakiosMetalCommandBuffer alloc] initWithHakiosQueue:self] autorelease];
+	/*
+	 * Back-pressure, as a GPU driver's own: each command buffer holds what it draws with until it goes, and the 27
+	 * release's window server makes two new textures of 4 and 8 MB a frame. While this driver compiled its first
+	 * pipelines (73 in 12.7 s) it kept making command buffers at 24 a second: 91 alive, 300 textures, 1.7 GB, and
+	 * jetsam ended it for want of pages (run 52). So a new one waits while more than eight are alive -- half a second
+	 * at most, in case the caller is the one holding them.
+	 */
+	{
+		static unsigned long throttled;
+		unsigned waited = 0;
+
+		while (__atomic_load_n(&rwm_live_command_buffers, __ATOMIC_RELAXED) > 8 && waited < 500) {
+			usleep(1000);
+			waited++;
+		}
+		if (waited != 0 && ((++throttled & (throttled - 1)) == 0)) {
+			char line[160];
+
+			snprintf(line, sizeof(line), "rwm throttle: a command buffer waited %u ms for older ones to go (%lu times)",
+				 waited, throttled);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
+	id made = [[[HakiosMetalCommandBuffer alloc] initWithHakiosQueue:self] autorelease];
+
+	/* the 27 release's iconservicesagent aborts in RB::Device::alloc_command_buffer on a nil one ("command buffer
+	 * allocation failed"), and its standard error goes nowhere: said into the host's kept lines, a few a process */
+	if (made == nil) {
+		static unsigned said;
+
+		if (said++ < 3) {
+			char line[200];
+
+			snprintf(line, sizeof(line), "!rwm %s: no command buffer from queue %p (device %p, %s)", getprogname(),
+				 (void *)self, (void *)[self device], class_getName(object_getClass(self)));
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
+	return made;
+}
+
+/*
+ * What RenderBox asks when its device has error options set (RB::Device::alloc_command_buffer, 0x1b3add6c4 in the
+ * 27 release's cache: setErrorOptions: on a new MTLCommandBufferDescriptor, then this, and no other road). Metal's
+ * own -[_MTLCommandQueue commandBufferWithDescriptor:] sends -commandBuffer or -commandBufferWithUnretainedReferences
+ * by the descriptor's retainedReferences; this does the same and says once, into the host's kept lines, who asked.
+ */
+- (id)commandBufferWithDescriptor:(id)descriptor
+{
+	static unsigned said;
+	id made = [self commandBuffer];
+
+	if (said++ < 2) {
+		char line[200];
+
+		snprintf(line, sizeof(line), "!rwm %s: -commandBufferWithDescriptor: (%s) gave %p", getprogname(),
+			 descriptor != nil ? class_getName(object_getClass(descriptor)) : "nil", (void *)made);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+	return made;
 }
 
 - (id)commandBufferWithUnretainedReferences
@@ -3478,6 +3698,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
 		(unsigned)RWM_CB_COMPLETED, (unsigned)RWM_CB_ERROR);
 	_owesSlot = YES;
 	[queue hakiosTookSlot];
+	__atomic_add_fetch(&rwm_live_command_buffers, 1, __ATOMIC_RELAXED);
 	return self;
 }
 
@@ -3505,6 +3726,7 @@ hakios_clear_semaphore_debt(id commandBuffer)
 
 - (void)dealloc
 {
+	__atomic_sub_fetch(&rwm_live_command_buffers, 1, __ATOMIC_RELAXED);
 	[self hakiosReturnSlot];
 	[self hakiosReleaseSampled];
 	[_work release];
@@ -3706,6 +3928,9 @@ rw_say_blit(unsigned kind, const unsigned size[3], id from, id to)
 {
 	static int told;
 
+	if (kind < 8) {
+		rwm_uploads[5 + kind]++;
+	}
 	if (told++ < 12) {
 		char line[160];
 		struct rwm_texture *core = rw_core_of(to);

@@ -21,7 +21,11 @@
 
 #include "air_private.h"
 
+#include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 
 #include "nir_builtin_builder.h"
 #include "util/u_math.h"
@@ -1956,6 +1960,31 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    else if (want > nir_comps)
       return air_error(c, "intrinsic: air.%s gives %u components, the shader wants %u",
                        n->part[0], nir_comps, want);
+   /*
+    * RWA_TINT=1 or boot-arg rwa_tint=1: every texture sample of a colour texture answers opaque magenta,
+    * the texture not read -- where the 27 release's home screen has none of its images, magenta rectangles say the
+    * layers are drawn and their textures are what is wrong, and nothing says the layers are not drawn at all.
+    */
+   {
+      static int tint = -1;
+
+      if (tint < 0) {
+         const char *v = getenv("RWA_TINT");
+         tint = v && *v == '1';
+#ifdef __APPLE__
+         /* or boot-arg rwa_tint=1: an environment variable does not reach the window server reliably (run 54) */
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (!tint && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0)
+            tint = strstr(args, "rwa_tint=1") != NULL;
+#endif
+      }
+      if (tint && op == nir_texop_tex && res->num_components == 4) {
+         res = nir_vec4(&c->b, nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 0.0, res->bit_size),
+                        nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 1.0, res->bit_size));
+      }
+   }
    set_tex_result(c, in, res);
    return true;
 }

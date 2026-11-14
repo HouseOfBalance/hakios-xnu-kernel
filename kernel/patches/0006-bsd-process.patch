@@ -843,7 +843,7 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
  
  	KERNEL_DEBUG_CONSTANT(BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXITREASON_CREATE) | DBG_FUNC_NONE,
  	    proc_getpid(p), reason_namespace,
-@@ -1647,6 +1660,17 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+@@ -1647,6 +1660,26 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
  	int error = 0;
  	bool proc_exiting = false;
  
@@ -856,6 +856,15 @@ diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
 +		    proc_best_name(p), proc_getpid(p), WTERMSIG(rv), exit_reason->osr_namespace, exit_reason->osr_code,
 +		    (void *)VM_KERNEL_UNSLIDE(__builtin_return_address(0)));
 +		loader_log_line(line);
++	}
++	/* hakios: the window server's and SpringBoard's every end, whole into the host's lines: one that ends by
++	 * exit() leaves no other trace, and the screen is black for the rest of the run (run 48: backboardd 38, 246) */
++	if (strcmp(proc_best_name(p), "backboardd") == 0 || strcmp(proc_best_name(p), "SpringBoard") == 0) {
++		extern void hakios_host_keep_add(const char *format, ...) __printflike(1, 2);
++		hakios_host_keep_add("exit: %s[%d] %s %d, reason namespace %u code %#llx", proc_best_name(p), proc_getpid(p),
++		    WIFSIGNALED(rv) ? "signal" : "status", WIFSIGNALED(rv) ? WTERMSIG(rv) : WEXITSTATUS(rv),
++		    exit_reason != OS_REASON_NULL ? exit_reason->osr_namespace : 0,
++		    exit_reason != OS_REASON_NULL ? exit_reason->osr_code : 0ull);
 +	}
 +
  #if DEVELOPMENT || DEBUG

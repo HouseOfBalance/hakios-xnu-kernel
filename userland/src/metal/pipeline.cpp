@@ -59,6 +59,7 @@ rwm_render_prepare(const char *label, struct rwa_render_shape *shape, bool has_v
 	rwm_shape_say(label, shape, has_vertex_descriptor);
 	rwm_xm_blend_apply(label, shape);
 	if (coreanimation_draw(label) && rwm_warm_take(label, shape, render, info)) {
+		rwm_area_label(*render, label);
 		if (shape->color_count > 0) {
 			rwm_blend_result(info->blend_enabled_mask, info->color_write_masks);
 		}
@@ -102,5 +103,6 @@ rwm_render_compile(struct rwa_device *device, const char *label, const struct rw
 	if (shape->color_count > 0) {
 		rwm_blend_result(info->blend_enabled_mask, info->color_write_masks);
 	}
+	rwm_area_label(call.render, label);
 	return call.render;
 }

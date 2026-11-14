@@ -52,6 +52,9 @@ void MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_
 
 /* what programs have done with the GPU so far, for bsd/dev/mtk_mali.c to repeat in the log */
 uint32_t gMaliClients, gMaliBuffers, gMaliSubmits, gMaliFailed, gMaliShown;
+/* the GPU's memory now, in bytes: buffers made here (memory wired for them), surfaces' pages lent, and given back but
+ * waiting for a job (said in mtk_mali.c's "GPU busy" line; 2.3 GB wired and the window server ended by jetsam, run 50) */
+uint64_t gMaliLiveMade, gMaliLiveSurfaces, gMaliLiveLate;
 /* the first buffers ever made, for matching a GPU fault's address to one of them */
 struct mali_made { uint64_t address, size; uint32_t asked, flags; };
 struct mali_made gMaliMade[32];
@@ -287,6 +290,11 @@ static uint32_t gMaliLateCount, gMaliLateMost;
 static void
 maliRelease(struct mali_buffer * b)
 {
+	if (b->surface != NULL) {
+		OSAddAtomic64(-(SInt64) b->size, (volatile SInt64 *) &gMaliLiveSurfaces);
+	} else {
+		OSAddAtomic64(-(SInt64) b->size, (volatile SInt64 *) &gMaliLiveMade);
+	}
 	mtk_mali_unmap(b->address, b->size);
 	b->memory->release();
 	if (b->surface != NULL) {
@@ -301,6 +309,7 @@ maliReapLate(bool wait)
 {
 	for (uint32_t i = 0; i < gMaliLateCount;) {
 		if (mtk_mali_wait(gMaliLate[i].last_seq, wait && i == 0 ? 10ull * NSEC_PER_SEC : 0)) {
+			OSAddAtomic64(-(SInt64) gMaliLate[i].size, (volatile SInt64 *) &gMaliLiveLate);
 			maliRelease(&gMaliLate[i]);
 			gMaliLate[i] = gMaliLate[--gMaliLateCount];
 			bzero(&gMaliLate[gMaliLateCount], sizeof(gMaliLate[0]));
@@ -322,6 +331,7 @@ HakiosMaliUserClient::freeBuffer(struct mali_buffer * b)
 		}
 		if (gMaliLateCount < MALI_LATE) {
 			gMaliLate[gMaliLateCount++] = *b;
+			OSAddAtomic64((SInt64) b->size, (volatile SInt64 *) &gMaliLiveLate);
 			if (gMaliLateCount > gMaliLateMost) {
 				gMaliLateMost = gMaliLateCount;
 				if (gMaliLateMost % 64 == 1) {
@@ -397,32 +407,38 @@ HakiosMaliUserClient::createBO(struct drm_panfrost_create_bo * request)
 	if (size == 0 || size > MALI_BUFFER_MAX) {
 		return kIOReturnBadArgument;
 	}
-	memory = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionInOut | kIOMemoryKernelUserShared |
+	/*
+	 * The memory is no task's: pageable, wired here by prepare(), and mapped only into the client that asks for it --
+	 * as HakiosGPU.cpp makes its own, and for its reason. The kernel's own (kernel_task, kIOMemoryKernelUserShared)
+	 * comes from the kernel's shared data range, and the 27 release's window server, which makes and frees a dozen
+	 * 8 MB textures a second, filled it: "no memory for a buffer", panfrost refusing full-screen RGBA16Float and
+	 * R32Float textures (CoreAnimation's off-screen passes, whose layers were then not drawn: the home screen's sky,
+	 * icons and dock, run 40), and the system's own allocations failing with them -- launchd and SpringBoard ended
+	 * on code pages that could not come back in (run 37).
+	 */
+	memory = IOBufferMemoryDescriptor::inTaskWithOptions(NULL, kIODirectionInOut | kIOMemoryPageable |
 	    kIOMapWriteCombineCache, (vm_size_t) size, PAGE_SIZE);
+	if (memory != NULL && memory->prepare() != kIOReturnSuccess) {
+		memory->release();
+		memory = NULL;
+	}
 	if (memory == NULL) {
-		IOLog("HakiosMali: no memory for a buffer of %llu bytes\n", size);
+		static unsigned said;
+
+		if (said++ < 8) {
+			IOLog("HakiosMali: no memory for a buffer of %llu bytes\n", size);
+		}
 		return kIOReturnNoMemory;
 	}
 	/*
-	 * Zeroes, as Linux's GEM gives every new buffer and as HakiosGPU.cpp gives its own, pushed out of the processor's
-	 * cache to where the GPU reads. Without them a buffer came with whatever its pages last held, another program's
-	 * pixels and descriptors among it, and panfrost counts on a new buffer being zero.
+	 * New pages are zeroes, but the zeroes the processor wrote may still be in its cache, dirty: written back later
+	 * they would land over what the GPU drew there (MiniIOSurface.cpp says the same of surfaces). They are pushed out
+	 * to memory through a passing kernel mapping before the GPU gets the buffer.
 	 */
 	{
-		void * bytes = memory->getBytesNoCopy();
+		IOMemoryMap * passing = memory->map(kIOMapAnywhere | kIOMapDefaultCache);
 
-		if (bytes != NULL) {
-			bzero(bytes, (size_t) size);
-			FlushPoC_DcacheRegion((vm_offset_t) bytes, (size_t) size);
-		} else {
-			IOMemoryMap * passing = memory->map(kIOMapAnywhere | kIOMapDefaultCache);
-
-			if (passing == NULL) {
-				IOLog("HakiosMali: a buffer of %llu bytes could not be cleared\n", size);
-				memory->release();
-				return kIOReturnNoMemory;
-			}
-			bzero((void *) passing->getVirtualAddress(), (size_t) size);
+		if (passing != NULL) {
 			FlushPoC_DcacheRegion((vm_offset_t) passing->getVirtualAddress(), (size_t) size);
 			passing->release();
 		}
@@ -433,6 +449,7 @@ HakiosMaliUserClient::createBO(struct drm_panfrost_create_bo * request)
 		return kIOReturnNoMemory;
 	}
 	b->memory = memory;
+	OSAddAtomic64((SInt64) size, (volatile SInt64 *) &gMaliLiveMade);
 	request->offset = b->address;
 	mtk_mali_tag(b->address, 1, 0, 0, 0, 0, 0);
 	return kIOReturnSuccess;
@@ -499,6 +516,7 @@ HakiosMaliUserClient::surfaceBuffer(struct hakios_surface * request)
 	}
 	b->memory = memory;
 	b->surface = s;
+	OSAddAtomic64((SInt64) size, (volatile SInt64 *) &gMaliLiveSurfaces);
 	mtk_mali_tag(b->address, 2, s->info.width, s->info.height, s->info.bytesPerRow, s->info.pixelFormat,
 	    (uint32_t) s->info.offset);
 	return kIOReturnSuccess;
