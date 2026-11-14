@@ -28,6 +28,12 @@ record_targets(const struct rwm_render_state *s, struct rwm_work *w, bool first_
 		struct rwm_texture *core = s->color[i].core;
 
 		rwm_texture_note_filled(core);      /* (drawn into: what is in it is what is drawn) */
+		if (i == 0) {
+			rwm_target_counts[core != nullptr && rwm_texture_in_place(core) != 0 ? 1 : 0]++;
+			if (core != nullptr && rwm_texture_in_place(core) != 0) {
+				rwm_target_last_surface = rwm_texture_in_place(core);
+			}
+		}
 
 		if (core != nullptr && (!first_only || i == 0)) {
 			w->targets[w->target_count++] = core;
@@ -393,6 +399,14 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 			}
 			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 		}
+	}
+	{
+		const struct rwa_texture_shape *shapes[RWM_MAX_BUFFERS] = {};
+
+		for (unsigned i = 0; i < s->texture_count && i < RWM_MAX_BUFFERS; i++) {
+			shapes[i] = s->textures[i].core != nullptr ? rwm_texture_shape(s->textures[i].core) : nullptr;
+		}
+		rwm_capture_textures(s->render, shapes, s->texture_count < RWM_MAX_BUFFERS ? s->texture_count : RWM_MAX_BUFFERS);
 	}
 	d->sampler_count = s->sampler_count;
 	for (unsigned i = 0; i < s->sampler_count; i++) {

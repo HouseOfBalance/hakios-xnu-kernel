@@ -3853,6 +3853,21 @@ check_bindings(const struct air_shader_info *info, const struct rwa_slot *slots,
          struct rwa_buffer *b = mbuffer;
 
          if (!member) {
+            /*
+             * A `constant` buffer nothing was bound to reads zeros (bind_stage), as an empty
+             * texture slot does. Metal builds the two stages of a pipeline together and drops
+             * what the vertex stage computes for nobody: fixed_vert_lph_spc with
+             * fc_texcoord_count0 = 1 reads its texture matrix from [[buffer(3)]] for
+             * texture coordinates that fixed_frag_lph_cph, with fc_texcoord_count0 = 0 in
+             * the same pipeline, never reads -- so on Apple's GPU the read is gone and
+             * CoreAnimation binds nothing there (PBGRAXm_A2S1Xhfu, run 67: refused 15 times
+             * a boot). This library translates each stage alone, so the read is still in the
+             * vertex stage; what it reads goes nowhere. A `device` buffer may be written and
+             * is still refused.
+             */
+            if (r->kind == AIR_RESOURCE_CONSTANT_BUFFER &&
+                (r->index >= bindings->buffer_count || !bindings->buffers[r->index]))
+               break;
             if (r->index >= bindings->buffer_count || !bindings->buffers[r->index]) {
                say(why, why_size, "%s reads buffer %u and %u buffer%s bound", name,
                    r->index, bindings->buffer_count,
@@ -4088,7 +4103,8 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
          switch (r->kind) {
          case AIR_RESOURCE_DEVICE_BUFFER:
          case AIR_RESOURCE_CONSTANT_BUFFER:
-            b = bindings->buffers[r->index];
+            /* (NULL for a `constant` one nothing was bound to: check_bindings let it through) */
+            b = r->index < bindings->buffer_count ? bindings->buffers[r->index] : NULL;
             /* and Metal's own offset on it, which check_bindings has already judged */
             if (direct_buffer_offset(r, bindings, table, table_count, name, &boffset, why,
                                      why_size) != 0)
@@ -4135,6 +4151,16 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
                                "Gallium has slots for", name, r->index,
                 (unsigned)PIPE_MAX_CONSTANT_BUFFERS);
             return -1;
+         }
+         if (!b) {
+            /* nothing bound (check_bindings): zeros, of the size the shader declares */
+            static const uint8_t zeros[65536];
+            struct pipe_constant_buffer none = {
+               .user_buffer = zeros,
+               .buffer_size = r->size && r->size <= sizeof(zeros) ? r->size : 256,
+            };
+            pipe->set_constant_buffer(pipe, stage, r->index, false, &none);
+            break;
          }
          size_t left = b->size - MIN2(b->size, boffset);
          /*

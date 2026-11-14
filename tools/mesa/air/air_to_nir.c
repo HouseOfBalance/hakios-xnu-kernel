@@ -10,6 +10,11 @@
  * anything the table does not state.
  */
 
+#include <stdlib.h>
+#include <string.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #include "air_private.h"
 #include "nir_constant_expressions.h"
 
@@ -1174,10 +1179,47 @@ make_io_var(struct air_ctx *c, nir_variable_mode mode, const struct air_type *t,
    return var;
 }
 
+/*
+ * Boot-arg rwa_tint=2 (or RWA_TINT=2): every colour a fragment shader writes is opaque magenta. Whether what the
+ * GPU draws reaches the memory the display shows at all: with rwa_tint=1, every texture sample magenta, the 27
+ * release's frame did not change by a pixel (runs 55 and 58) although its draws go into the shown surfaces (run 59).
+ */
+static int
+tint_mode(void)
+{
+   static int mode = -1;
+
+   if (mode < 0) {
+      const char *v = getenv("RWA_TINT");
+      mode = v ? atoi(v) : 0;
+#ifdef __APPLE__
+      char args[1024] = "";
+      size_t size = sizeof(args) - 1;
+      const char *at;
+
+      if (!mode && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && (at = strstr(args, "rwa_tint=")))
+         mode = atoi(at + 9);
+#endif
+   }
+   return mode;
+}
+
 /* A value into an output whose variable may be wider than the value (a widened varying). */
 static void
 store_output(struct air_ctx *c, nir_variable *var, nir_def *v)
 {
+   if (tint_mode() == 2 && c->nir->info.stage == MESA_SHADER_FRAGMENT && var->data.location >= FRAG_RESULT_DATA0 &&
+       v->num_components == 4) {
+      v = nir_vec4(&c->b, nir_imm_floatN_t(&c->b, 1.0, v->bit_size), nir_imm_floatN_t(&c->b, 0.0, v->bit_size),
+                   nir_imm_floatN_t(&c->b, 1.0, v->bit_size), nir_imm_floatN_t(&c->b, 1.0, v->bit_size));
+   }
+   /* rwa_tint=3: the colour as the shader made it, its alpha 1 -- a layer whose colour came out multiplied by an
+    * opacity of 0 is then a black rectangle where it should be, and one that is not drawn at all stays away */
+   if (tint_mode() == 3 && c->nir->info.stage == MESA_SHADER_FRAGMENT && var->data.location >= FRAG_RESULT_DATA0 &&
+       v->num_components == 4 && glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_UINT &&
+       glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_INT) {
+      v = nir_vector_insert_imm(&c->b, v, nir_imm_floatN_t(&c->b, 1.0, v->bit_size), 3);
+   }
    unsigned want = glsl_get_bit_size(glsl_without_array(var->type));
    if (v->bit_size != want) {
       enum glsl_base_type base = glsl_get_base_type(glsl_without_array(var->type));
@@ -2276,7 +2318,45 @@ translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
    c->outputs[field].location = location;
    c->outputs[field].index = index;
    c->outputs[field].var = var;
+   /* `!{!"air.function_constant", !{ptr @__metal_implicit_fc_pred_16, !"bool",
+    * !"frg_has_color0"}, !"air.render_target", i32 0, i32 0, ...}`: emit_return */
+   const struct air_md *fc = md_key_node(node, "air.function_constant");
+   c->outputs[field].predicate =
+      fc && fc->num_ops && fc->ops[0] && fc->ops[0]->kind == AIR_MD_VALUE ? fc->ops[0]->value : NULL;
    return true;
+}
+
+/*
+ * Whether an output whose air.function_constant predicate the pipeline's constants make
+ * FALSE: such an output is not written at all, which is Metal's meaning of the predicate.
+ *
+ * The 27 release's uber shader returns three colours and writes one of them, the one at
+ * fc_dest_index (frg_has_color0 = dest_index == 0 and so on, when not generic): its
+ * window server draws into the screen and into a layer's own texture in ONE pass, one
+ * attachment a draw. Writing all three -- as everything was written until now -- put
+ * whatever the other two fields held into the other attachments: every draw into the
+ * screen wiped the icons' and widgets' textures, which came back empty, 0 of 8192
+ * pixels with any alpha (rwm_texshot, run 72), and the home screen had none of them.
+ *
+ * The predicate global is stored by the static initializer with constants only, so a
+ * load of it folds (init_stores); one that does not fold is written, as before.
+ */
+static bool
+output_switched_off(struct air_ctx *c, unsigned field)
+{
+   const struct air_value *pred = c->outputs[field].predicate;
+   if (!pred)
+      return false;
+   struct air_val *p = air_get(c, pred);
+   if (!p || p->kind != AIR_VAL_PTR || !p->ptr.pointee)
+      return false;
+   nir_def *v = air_load_ptr(c, p->ptr, p->ptr.pointee, 1);
+   bool known = v && v->num_components == 1 && nir_src_is_const(nir_src_for_ssa(v));
+   if (getenv("AIR_DEBUG_OUTPUTS"))
+      fprintf(stderr, "air: output %u: predicate %s, class %d\n", field,
+              !v ? "not loaded" : !known ? "not known" : nir_src_as_uint(nir_src_for_ssa(v)) ? "true" : "false",
+              (int)p->ptr.class);
+   return known && nir_src_as_uint(nir_src_for_ssa(v)) == 0;
 }
 
 /* -- instructions ------------------------------------------------------- */
@@ -3170,6 +3250,8 @@ emit_return(struct air_ctx *c, const struct air_inst *in)
             return air_error(c, "interface: field %u of the result has no output", i);
          if (!v->elems[i] || v->elems[i]->kind != AIR_VAL_SSA)
             continue; /* a field left undef is a target nothing writes */
+         if (output_switched_off(c, i))
+            continue; /* its predicate is false: Metal does not write it */
          store_output(c, c->outputs[i].var, v->elems[i]->def);
       }
       return true;
@@ -3903,13 +3985,45 @@ wrap_library_function(struct air_ctx *c, const struct air_md *out_md,
  * would accept a loop-carried pointer by ignoring the edge that changes it, so
  * a missing operand from a reachable block is a refusal and only an edge the
  * entry cannot reach at all is passed over.
+ *
+ * Nor is an edge this translation never TAKES, which is the other half of that
+ * rule: a branch on a function constant is decided while translating
+ * (scalar_known), and only its taken side is translated. An operand from a block
+ * EARLIER in the order (a forward edge, so that block's fate is settled) comes in
+ * over an edge that is never taken when that block was left out or when its
+ * branch, decided now, went elsewhere -- and that operand is skipped. This is the
+ * 27 release's uber shader: `fc_has_attachment_0 ? texture : get_null_texture_2d()`
+ * as a phi, and with the window server's real constants the null side's block is
+ * not translated at all (run 63: every PBGRABsovXmw_TimgA3Xhf_Isrg refused, and
+ * backboardd aborted on the pipeline it did not get). An operand from a LATER
+ * block comes in over a back edge and is refused as before.
  */
+#define AIR_BLOCK_NOT_TRANSLATED (-2)
+
+/* whether `from`, translated with `only` (-1: every target; k: only target k), goes to block `to` */
 static bool
-resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *reachable)
+edge_taken(const struct air_block *from, unsigned to, int only)
+{
+   const struct air_inst *term = from->num_insts ? from->insts[from->num_insts - 1] : NULL;
+
+   for (unsigned t = 0; term && t < term->num_targets; t++)
+      if (term->targets[t] && term->targets[t]->index == to && (only < 0 || only == (int)t))
+         return true;
+   return false;
+}
+
+static bool
+resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, unsigned here, const bool *reachable,
+                    const unsigned *position, const int *only_of)
 {
    struct air_val *first = NULL;
    for (unsigned k = 0; k < in->num_operands; k++) {
-      if (!in->targets[k] || !reachable[in->targets[k]->index])
+      const struct air_block *from = in->targets[k];
+      if (!from || !reachable[from->index])
+         continue;
+      if (position[from->index] < position[here] &&
+          (only_of[from->index] == AIR_BLOCK_NOT_TRANSLATED ||
+           !edge_taken(from, here, only_of[from->index])))
          continue;
       struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
       if (!e)
@@ -3998,6 +4112,17 @@ translate_body(struct air_ctx *c)
    bool *live = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_blocks, 1));
    live[0] = true;
 
+   /* where each block is in that order (unreachable ones last), and for a translated block which of
+    * its targets it went to (-1 all of them): resolve_pointer_phi tells a never-taken edge by them */
+   unsigned *position = ralloc_array(c->mem_ctx, unsigned, MAX2(f->num_blocks, 1));
+   int *only_of = ralloc_array(c->mem_ctx, int, MAX2(f->num_blocks, 1));
+   for (unsigned bi = 0; bi < f->num_blocks; bi++) {
+      position[bi] = UINT_MAX;
+      only_of[bi] = AIR_BLOCK_NOT_TRANSLATED;
+   }
+   for (unsigned oi = 0; oi < num_order; oi++)
+      position[order[oi]] = oi;
+
    for (unsigned oi = 0; oi < num_order; oi++) {
       unsigned bi = order[oi];
       if (!live[bi])
@@ -4012,7 +4137,7 @@ translate_body(struct air_ctx *c)
          if (in->op != AIR_OP_PHI)
             continue;
          if (in->base.type->kind == AIR_TYPE_POINTER) {
-            if (!resolve_pointer_phi(c, in, reachable))
+            if (!resolve_pointer_phi(c, in, bi, reachable, position, only_of))
                return false;
             continue;
          }
@@ -4135,6 +4260,7 @@ translate_body(struct air_ctx *c)
       for (unsigned k = 0; k < term->num_targets; k++)
          if (term->targets[k] && (only < 0 || (int)k == only))
             live[term->targets[k]->index] = true;
+      only_of[bi] = only;
    }
 
    /* the phi stores, now that every value exists */

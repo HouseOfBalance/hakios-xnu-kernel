@@ -671,6 +671,36 @@ constant_size(unsigned long type)
 	return type == 81 || type == 85 ? 8 : 0;        /* Long, ULong */
 }
 
+/*
+ * "!!fc ..." into the host's kept lines (kern.hakios.say), the first 12 of them in each process: which way the values came
+ * and whether they reached the function. The 27 release's window server built every pipeline of its
+ * uber shader with no constant at all (run 62: rwm_capture= of PBGRABsovXmw_TimgA3Xhf_Ialp had no
+ * "cap fconst" line), so every layer's image, count and blend were zero and no image was drawn.
+ */
+static void
+fc_note(const char *format, ...)
+{
+	static unsigned said;
+	char line[200] = "!!fc ";
+	va_list arguments;
+
+	if (said >= 12) {
+		return;
+	}
+	said++;
+	va_start(arguments, format);
+	vsnprintf(line + 5, sizeof(line) - 5, format, arguments);
+	va_end(arguments);
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+}
+
+/* what keep_constant kept on a values object, or on a descriptor its values were handed to, or nil */
+static id
+kept_of(id object)
+{
+	return object != nil ? objc_getAssociatedObject(object, sel_registerName("hakiosConstantValues")) : nil;
+}
+
 static void
 keep_constant(id values, id key, const void *value, unsigned long type)
 {
@@ -678,9 +708,13 @@ keep_constant(id values, id key, const void *value, unsigned long type)
 	id kept = objc_getAssociatedObject(values, slot);
 	uint64_t bits = 0;
 	size_t size = constant_size(type);
+	static unsigned seen;
 
 	if (value == NULL || size == 0) {
 		return;
+	}
+	if (seen++ == 0) {
+		fc_note("first value kept, on a %s", class_getName(object_getClass(values)));
 	}
 	memcpy(&bits, value, size < 8 ? size : 8);
 	if (kept == nil) {
@@ -739,20 +773,121 @@ my_set_constant_range(id values, SEL selector, const void *value, unsigned long 
 	orig_set_constant_range(values, selector, value, type, range);
 }
 
-/* the plain function, with the values CoreAnimation set kept on it by Metal's index */
+/*
+ * A copy of a values object carries what was kept on the original: an associated object is not copied
+ * with it, and MTLFunctionDescriptor's constantValues is a copying property, so values handed to a
+ * descriptor would arrive at -newFunctionWithDescriptor:error: with nothing kept on them. A mutable
+ * copy of the dictionary, since a value set on the copy afterwards must not change the original's.
+ */
+static id (*orig_values_copy)(id, SEL, void *);
+
 static id
-plain_function(id library, id name, id values)
+my_values_copy(id values, SEL selector, void *zone)
+{
+	id copy = orig_values_copy(values, selector, zone);
+	id kept = kept_of(values);
+
+	if (copy != nil && copy != values && kept != nil) {
+		id mine = ((id (*)(id, SEL))objc_msgSend)(kept, sel_registerName("mutableCopy"));
+
+		objc_setAssociatedObject(copy, sel_registerName("hakiosConstantValues"), mine, OBJC_ASSOCIATION_RETAIN);
+		((void (*)(id, SEL))objc_msgSend)(mine, sel_registerName("release"));
+	}
+	return copy;
+}
+
+/*
+ * -[MTLFunctionDescriptor setConstantValues:]: what is kept on the values is kept on the descriptor too,
+ * for a descriptor that stores the values in some form of its own and answers constantValues with
+ * another object. Every class with its own implementation is hooked, its original beside it.
+ */
+static struct { Class cls; IMP imp; } descriptor_setters[4];
+static unsigned descriptor_setter_count;
+
+static void
+my_descriptor_set_values(id descriptor, SEL selector, id values)
+{
+	/* the class whose original runs now on this thread: a subclass's original that calls super comes
+	   back here, and goes on from the class above it, as super would */
+	static __thread Class running;
+	Class saved = running;
+	id kept = kept_of(values);
+
+	objc_setAssociatedObject(descriptor, sel_registerName("hakiosConstantValues"), kept, OBJC_ASSOCIATION_RETAIN);
+	for (Class cls = saved != Nil ? class_getSuperclass(saved) : object_getClass(descriptor); cls != Nil;
+	     cls = class_getSuperclass(cls)) {
+		for (unsigned i = 0; i < descriptor_setter_count; i++) {
+			if (descriptor_setters[i].cls == cls) {
+				running = cls;
+				((void (*)(id, SEL, id))descriptor_setters[i].imp)(descriptor, selector, values);
+				running = saved;
+				return;
+			}
+		}
+	}
+}
+
+static int
+hook_descriptor_setters(void)
+{
+	static const char *const names[] = { "MTLFunctionDescriptor", "MTLFunctionDescriptorInternal",
+		"MTLIntersectionFunctionDescriptor" };
+	SEL selector = sel_registerName("setConstantValues:");
+	int hooked = 0;
+
+	for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]) && descriptor_setter_count < 4; i++) {
+		Class cls = objc_getClass(names[i]);
+		unsigned n = 0;
+		Method *methods = cls != Nil ? class_copyMethodList(cls, &n) : NULL;
+
+		for (unsigned k = 0; k < n; k++) {
+			if (method_getName(methods[k]) == selector) {
+				descriptor_setters[descriptor_setter_count].cls = cls;
+				descriptor_setters[descriptor_setter_count++].imp =
+				    method_setImplementation(methods[k], (IMP)my_descriptor_set_values);
+				hooked++;
+			}
+		}
+		free(methods);
+	}
+	return hooked;
+}
+
+/* the plain function, with the values CoreAnimation set (`kept`, keep_constant's) kept on it by Metal's index */
+static id
+plain_function(id library, id name, id kept, id values)
 {
 	id function = ((id (*)(id, SEL, id))objc_msgSend)(library, sel_registerName("newFunctionWithName:"), name);
-	id kept = values ? objc_getAssociatedObject(values, sel_registerName("hakiosConstantValues")) : nil;
+	const char *text = name != nil ? ((const char *(*)(id, SEL))objc_msgSend)(name, sel_registerName("UTF8String")) : "?";
 
 	if (function == nil || kept == nil) {
+		if (function != nil && values != nil) {
+			fc_note("%s: its values (a %s) carry nothing kept", text, class_getName(object_getClass(values)));
+		}
 		return function;
 	}
 	id by_index = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSMutableDictionary"), sel_registerName("new"));
 	id constants = ((id (*)(id, SEL))objc_msgSend)(function, sel_registerName("functionConstantsDictionary"));
 	id keys = ((id (*)(id, SEL))objc_msgSend)(kept, sel_registerName("allKeys"));
 	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(keys, sel_registerName("count"));
+	unsigned named = 0, unknown = 0;
+	/*
+	 * fc_generic: the 27 release's uber shaders (fixed_frag_lph_*) with it set turn every feature on and read
+	 * the layer's configuration while they run -- the pipeline CoreAnimation draws with at once while Apple's
+	 * compiler makes the specialized ones in the background. Here it is the whole shader: fixed_frag_lph_cpf
+	 * came to 31588 Mali instructions and took 138 s to build, twice, with nothing on the screen meanwhile
+	 * (run 64). So it is made 0: the pipeline is built from the constants it was given, as every pipeline was
+	 * while no constant arrived (run 62, under a second each). Boot-arg rwm_generic=1 keeps CoreAnimation's.
+	 */
+	static int keep_generic = -1;
+
+	if (keep_generic < 0) {
+		char arguments[1024] = "";
+		size_t size = sizeof(arguments) - 1;
+
+		keep_generic = sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
+		    strstr(arguments, "rwm_generic=1") != NULL;
+	}
 
 	for (unsigned long i = 0; i < n; i++) {
 		id key = ((id (*)(id, SEL, unsigned long))objc_msgSend)(keys, sel_registerName("objectAtIndex:"), i);
@@ -760,14 +895,29 @@ plain_function(id library, id name, id values)
 
 		if (((BOOL (*)(id, SEL, Class))objc_msgSend)(key, sel_registerName("isKindOfClass:"), objc_getClass("NSString"))) {
 			id constant = constants ? ((id (*)(id, SEL, id))objc_msgSend)(constants, sel_registerName("objectForKey:"), key) : nil;
+			const char *key_text = ((const char *(*)(id, SEL))objc_msgSend)(key, sel_registerName("UTF8String"));
 
+			if (!keep_generic && key_text != NULL && strcmp(key_text, "fc_generic") == 0 &&
+			    ((unsigned long long (*)(id, SEL))objc_msgSend)(value, sel_registerName("unsignedLongLongValue")) != 0) {
+				static unsigned said_generic;
+
+				value = ((id (*)(id, SEL, unsigned long long))objc_msgSend)((id)objc_getClass("NSNumber"),
+				    sel_registerName("numberWithUnsignedLongLong:"), 0ull);
+				if (said_generic++ < 4) {
+					fc_note("%s: fc_generic made 0 (rwm_generic=1 keeps it)", text);
+				}
+			}
+			named++;
 			if (constant == nil) {
+				unknown++;
 				continue;
 			}
 			key = constant_number(((unsigned long (*)(id, SEL))objc_msgSend)(constant, sel_registerName("index")));
 		}
 		((void (*)(id, SEL, id, id))objc_msgSend)(by_index, sel_registerName("setObject:forKey:"), value, key);
 	}
+	fc_note("%s: %lu values, %u by name, %u of those not in the function (%s)", text, n, named, unknown,
+	    constants != nil ? "it has a list" : "it has no list");
 	objc_setAssociatedObject(function, sel_registerName("hakiosFunctionConstants"), by_index, OBJC_ASSOCIATION_RETAIN);
 	((void (*)(id, SEL))objc_msgSend)(by_index, sel_registerName("release"));
 	return function;
@@ -777,7 +927,7 @@ static id
 my_new_function_values_error(id library, SEL selector, id name, id values, id *error)
 {
 	(void)selector;
-	id function = plain_function(library, name, values);
+	id function = plain_function(library, name, kept_of(values), values);
 
 	if (function == nil && error != NULL) {
 		*error = nil;
@@ -789,7 +939,7 @@ static void
 my_new_function_values_handler(id library, SEL selector, id name, id values, void (^handler)(id, id))
 {
 	(void)selector;
-	id function = plain_function(library, name, values);
+	id function = plain_function(library, name, kept_of(values), values);
 
 	handler(function, nil);
 	if (function != nil) {
@@ -808,10 +958,11 @@ my_new_function_descriptor(id library, SEL selector, id descriptor, id *error)
 {
 	id name = ((id (*)(id, SEL))objc_msgSend)(descriptor, sel_registerName("name"));
 	id values = ((id (*)(id, SEL))objc_msgSend)(descriptor, sel_registerName("constantValues"));
+	id kept = kept_of(values) != nil ? kept_of(values) : kept_of(descriptor);
 	Class cls = object_getClass(library);
 
-	if (name != nil && values != nil) {
-		id function = plain_function(library, name, values);
+	if (name != nil && (values != nil || kept != nil)) {
+		id function = plain_function(library, name, kept, values);
 
 		if (function != nil || error == NULL) {
 			return function;
@@ -886,6 +1037,12 @@ specialize_without_apple(void)
 		method_setImplementation(m, (IMP)my_set_constant_range);
 		done++;
 	}
+	if ((m = class_getInstanceMethod(values, sel_registerName("copyWithZone:"))) != NULL) {
+		orig_values_copy = (id (*)(id, SEL, void *))method_getImplementation(m);
+		method_setImplementation(m, (IMP)my_values_copy);
+		done++;
+	}
+	done += hook_descriptor_setters();
 	if (library != Nil &&
 	    (m = class_getInstanceMethod(library, sel_registerName("newFunctionWithName:constantValues:error:"))) != NULL) {
 		method_setImplementation(m, (IMP)my_new_function_values_error);

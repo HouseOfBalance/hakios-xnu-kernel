@@ -65,6 +65,10 @@ extern unsigned long rwm_uploads[13];
  * run 50) */
 extern long rwm_live_textures, rwm_live_texture_kb, rwm_live_command_buffers;
 extern unsigned long rwm_textures_freed;
+/* draws (their first colour target) into a texture of the library's own (0) and into a surface in place (1), and the
+ * last such surface: whether the window server's frames reach the surfaces the display shows */
+extern unsigned long rwm_target_counts[2];
+extern uint32_t rwm_target_last_surface;
 /* the pipelines that cover the frame (src/metal/perf.cpp): a pipeline's label, and a draw of it with its scissor */
 void rwm_area_label(const struct rwa_render *render, const char *label);
 void rwm_area_draw(const struct rwa_render *render, const unsigned *scissor);
@@ -656,6 +660,12 @@ bool rwm_render_prepare(const char *label, struct rwa_render_shape *shape, bool 
 struct rwa_render *rwm_render_compile(struct rwa_device *device, const char *label,
 				      const struct rwm_render_request *request, struct rwa_render_shape *shape,
 				      struct rwa_render_info *info, char *why, size_t why_size);
+/* boot-arg rwm_capture=TEXT (src/metal/capture.cpp): a pipeline and one of its draws, whole, for the Mac to draw again */
+void rwm_capture_pipeline(const char *label, const struct rwm_render_request *r, const struct rwa_render_shape *shape,
+			  const struct rwa_render *render);
+struct rwm_draw;
+void rwm_capture_draw(const struct rwm_draw *d);
+void rwm_capture_textures(const struct rwa_render *render, const struct rwa_texture_shape *const *shapes, unsigned count);
 
 /*
  * QuartzCore's pipeline library (src/metal/plib.cpp): the firmware's two specialized modules (AIR bitcode, in the

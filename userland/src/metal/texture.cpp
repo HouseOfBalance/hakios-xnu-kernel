@@ -36,6 +36,8 @@ struct rwm_texture {
 	uint8_t origin = 0;
 	bool filled = false;
 	int8_t surface_empty = -1;        /* origin 1: its surface's memory all zeroes when first sampled (1), or not (0) */
+	unsigned samples = 0;             /* draws that sampled it (texshot) */
+	uint8_t fill_kind = 0;            /* what filled it (texshot): 1 drawn into, 2 written, 4 copied in from memory, 8 a view */
 
 	~rwm_texture()
 	{
@@ -277,6 +279,7 @@ rwm_texture_copy_in(struct rwm_texture *texture, size_t *bytes, char *why, size_
 		texture->memory_signature = signature;
 		texture->memory_written = true;
 		texture->filled = true;
+		texture->fill_kind |= 4;
 		*bytes = texture->memory_length;
 		{
 			static unsigned said;
@@ -431,6 +434,7 @@ rwm_texture_write(struct rwm_texture *texture, unsigned level, unsigned slice, c
 		return false;
 	}
 	texture->filled = true;
+	texture->fill_kind |= 2;
 	return true;
 }
 
@@ -504,6 +508,7 @@ rwm_texture_note_filled(struct rwm_texture *texture)
 {
 	if (texture != nullptr) {
 		texture->filled = true;
+		texture->fill_kind |= 1;
 	}
 }
 
@@ -512,7 +517,120 @@ rwm_texture_note_view(struct rwm_texture *texture)
 {
 	texture->origin = 4;
 	texture->filled = true;           /* (what is in it is its parent's) */
+	texture->fill_kind |= 8;
 }
+
+/*
+ * Boot-arg rwm_texshot=WxH: the first texture of that size in format 80 (BGRA8Unorm) that is sampled 30 times is read
+ * back from the GPU and written into the host's kept lines as a small picture (48 pixels wide, red green blue alpha,
+ * base64: "!!texshot k: ..."; tools/texshot.py makes a PNG of it), with how many of its pixels have any alpha. With
+ * rwa_tint=1 the 27 release's icons and widgets came on the screen as magenta rounded rectangles and without it as
+ * nothing (run 70): the draws that put them on the screen work and what they sample -- a texture the window server
+ * drew them into first, 129 x 158 for an icon and its name (rwm_capture, run 66) -- holds nothing to see. This says
+ * what it holds. The 30th sample and not the first, so that the pass that draws it has been run.
+ */
+namespace {
+
+/*
+ * ... and rwm_texshot=N (no "x"): N different textures, any size from 32 x 32 in a four-byte format (RGBA8 70/71,
+ * BGRA8 80/81), that reach their 30th sample once 100 s have passed since the first draw of this process -- the home
+ * screen's and not the boot logo's (the 129 x 158 of run 71 was the Apple logo, whole) -- 32 pixels wide each, as
+ * "texshot#k" so that tools/texshot.py can tell them apart. Each one's header says what filled it (fill_kind).
+ */
+void
+texshot(struct rwm_texture *texture, unsigned samples)
+{
+	static unsigned want_w, want_h, want_n, shots;
+	static int read = 0;
+	static uint64_t first_ns;
+	char line[240];
+
+	if (!read) {
+		const char *at = strstr(rwm_boot_args(), "rwm_texshot=");
+
+		read = 1;
+		first_ns = rwm_ns();
+		if (at == nullptr || sscanf(at + 12, "%ux%u", &want_w, &want_h) != 2) {
+			want_w = want_h = 0;
+			if (at == nullptr || sscanf(at + 12, "%u", &want_n) != 1) {
+				want_n = 0;
+			}
+		}
+	}
+	if (samples != 30) {
+		return;
+	}
+	const unsigned f = texture->shape.pixel_format;
+	if (want_w != 0) {
+		if (shots != 0 || texture->shape.width != want_w || texture->shape.height != want_h || f != 80) {
+			return;
+		}
+	} else if (shots >= want_n || texture->shape.width < 32 || texture->shape.height < 32 ||
+		   (f != 70 && f != 71 && f != 80 && f != 81) || rwm_ns() - first_ns < 100000000000ull) {
+		return;
+	}
+	const unsigned shot = shots++;
+	const bool bgra = f == 80 || f == 81;
+
+	const unsigned w = texture->shape.width, h = texture->shape.height, cap = want_w != 0 ? 48 : 32;
+	const unsigned ow = w < cap ? w : cap, oh = (h * ow + w - 1) / w;
+	uint8_t *pixels = (uint8_t *)calloc((size_t)w * h, 4);
+	unsigned origin[3] = { 0, 0, 0 }, size[3] = { w, h, 1 };
+	unsigned long lit = 0, sum[4] = { 0, 0, 0, 0 };
+
+	if (pixels == nullptr || !rwm_texture_read(texture, 0, 0, origin, size, pixels, (size_t)w * 4)) {
+		free(pixels);
+		return;
+	}
+	for (size_t i = 0; i < (size_t)w * h; i++) {
+		lit += pixels[i * 4 + 3] != 0;
+		for (unsigned c = 0; c < 4; c++) {
+			sum[c] += pixels[i * 4 + c];
+		}
+	}
+	snprintf(line, sizeof(line), "!!texshot#%u begin %u %u (of %ux%u format %u, origin %u, filled by %#x): %lu of %u "
+		 "pixels with alpha, average %lu %lu %lu a %lu", shot, ow, oh, w, h, f, texture->origin, texture->fill_kind, lit,
+		 w * h, sum[0] / (w * h), sum[1] / (w * h), sum[2] / (w * h), sum[3] / (w * h));
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+
+	/* nearest pixel, as R G B A, 30 pixels (120 bytes) a line */
+	static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	uint8_t *small = (uint8_t *)malloc((size_t)ow * oh * 4);
+
+	for (unsigned y = 0; small != nullptr && y < oh; y++) {
+		for (unsigned x = 0; x < ow; x++) {
+			const uint8_t *p = pixels + (((size_t)(y * h / oh) * w + x * w / ow) * 4);
+			uint8_t *q = small + ((size_t)y * ow + x) * 4;
+
+			q[0] = bgra ? p[2] : p[0];
+			q[1] = p[1];
+			q[2] = bgra ? p[0] : p[2];
+			q[3] = p[3];
+		}
+	}
+	for (size_t at = 0, k = 0; small != nullptr && at < (size_t)ow * oh * 4; at += 120, k++) {
+		const size_t end = at + 120 < (size_t)ow * oh * 4 ? at + 120 : (size_t)ow * oh * 4;
+		int n = snprintf(line, sizeof(line), "!!texshot#%u %zu: ", shot, k);
+
+		for (size_t i = at; i < end; i += 3) {
+			const uint32_t v = (uint32_t)small[i] << 16 | (i + 1 < end ? (uint32_t)small[i + 1] << 8 : 0) |
+					   (i + 2 < end ? small[i + 2] : 0);
+
+			line[n++] = digits[v >> 18 & 63];
+			line[n++] = digits[v >> 12 & 63];
+			line[n++] = i + 1 < end ? digits[v >> 6 & 63] : '=';
+			line[n++] = i + 2 < end ? digits[v & 63] : '=';
+		}
+		line[n] = 0;
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+	snprintf(line, sizeof(line), "!!texshot#%u end", shot);
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	free(small);
+	free(pixels);
+}
+
+} // namespace
 
 extern "C" void
 rwm_texture_note_sampled(struct rwm_texture *texture)
@@ -522,6 +640,7 @@ rwm_texture_note_sampled(struct rwm_texture *texture)
 	if (texture == nullptr) {
 		return;
 	}
+	texshot(texture, ++texture->samples);
 	if (texture->origin == 1 && texture->surface_empty < 0) {
 		IOSurfaceRef s = IOSurfaceLookup(texture->in_place);
 		unsigned nonzero = 0;

@@ -95,6 +95,7 @@ rwm_render_compile(struct rwa_device *device, const char *label, const struct rw
 				rwm_print("  ... and that is the %lu'th time\n", refused);
 			}
 		}
+		rwm_capture_pipeline(label, r, shape, nullptr);   /* (a refused one too: its constants, for the Mac) */
 		return nullptr;
 	}
 	/* what the library made of it, in GALLIUM's bits: for any mask but All, None, green|blue and red|alpha these
@@ -104,5 +105,6 @@ rwm_render_compile(struct rwa_device *device, const char *label, const struct rw
 		rwm_blend_result(info->blend_enabled_mask, info->color_write_masks);
 	}
 	rwm_area_label(call.render, label);
+	rwm_capture_pipeline(label, r, shape, call.render);
 	return call.render;
 }

@@ -102,6 +102,7 @@ rwm_run_draw(const struct rwm_draw *d, char *why, size_t why_size)
 	draw.viewport = d->viewport;
 	draw.scissor = d->scissor;
 	rwm_area_draw(d->render, d->scissor);
+	rwm_capture_draw(d);
 	/*
 	 * Boot-arg rwm_vdump=1: what a few draws of the 27 release's home screen are made of, into the host's kept lines --
 	 * the pipeline, the counts, the viewport, and the first floats of every bound vertex buffer. A hundred draws a

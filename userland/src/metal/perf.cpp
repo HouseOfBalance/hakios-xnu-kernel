@@ -225,6 +225,10 @@ rwm_perf_report(uint64_t now)
 			 rwm_live_texture_kb >> 10, rwm_textures_freed, rwm_live_command_buffers);
 		say(up);
 		rwm_textures_freed = 0;
+		snprintf(up, sizeof(up), "rwm targets 5s: %lu passes into textures, %lu into surfaces (the last surface %u)",
+			 rwm_target_counts[0], rwm_target_counts[1], rwm_target_last_surface);
+		say(up);
+		rwm_target_counts[0] = rwm_target_counts[1] = 0;
 	}
 	memset(&p, 0, sizeof(p));
 	p.since = now;
@@ -276,3 +280,5 @@ unsigned long rwm_uploads[13];
 
 long rwm_live_textures, rwm_live_texture_kb, rwm_live_command_buffers;
 unsigned long rwm_textures_freed;
+unsigned long rwm_target_counts[2];
+uint32_t rwm_target_last_surface;

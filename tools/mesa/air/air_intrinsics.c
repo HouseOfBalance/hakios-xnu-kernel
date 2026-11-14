@@ -1595,6 +1595,29 @@ null_texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_n
    return true;
 }
 
+/* zeros of `t`, for what an access to the null texture gives (texture_op): a sample's
+ * result is a struct as often as a vector (the value and its residency byte), so the
+ * aggregate is built member by member; NULL for a type with a pointer in it */
+static struct air_val *
+null_texture_zero(struct air_ctx *c, const struct air_type *t)
+{
+   if (t->kind == AIR_TYPE_STRUCT || t->kind == AIR_TYPE_ARRAY) {
+      unsigned n = t->kind == AIR_TYPE_STRUCT ? t->num_members : t->count;
+      struct air_val *v = rzalloc(c->mem_ctx, struct air_val);
+      v->kind = AIR_VAL_AGG;
+      v->num_elems = n;
+      v->elems = rzalloc_array(c->mem_ctx, struct air_val *, MAX2(n, 1));
+      for (unsigned i = 0; i < n; i++)
+         if (!(v->elems[i] = null_texture_zero(c, t->kind == AIR_TYPE_STRUCT ? t->members[i]
+                                                                              : t->elem)))
+            return NULL;
+      return v;
+   }
+   if (t->kind == AIR_TYPE_POINTER || t->kind == AIR_TYPE_VOID)
+      return NULL;
+   return air_val_ssa(c, nir_imm_zero(&c->b, air_nir_components(t), air_nir_bit_size(c, t)));
+}
+
 static bool
 texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
 {
@@ -1631,9 +1654,31 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    struct air_ptr tex;
    if (!tex_handle(c, in, 1, AIR_PTR_TEXTURE, &tex))
       return false;
-   if (tex.binding == AIR_NULL_TEXTURE_BINDING)
-      return air_error(c, "intrinsic: air.%s of a null texture (texture2d<T>()) that the "
-                          "pipeline's constants did not choose away", n->part[0]);
+   /* An access to the null texture (texture2d<T>()) gives zeros and a write to it nothing.
+    *
+    * It was refused, and that stood while every one sat behind a branch the constants
+    * decide here. The 27 release's uber shader has one that is not: apply_color_opcode is
+    * a switch over the colour program's opcode, translated once as a function whose opcode
+    * is a parameter, and its 3D look-up case samples `fc_has_lut_tex ? lut : null` -- the
+    * case dies only when the call is inlined with the constant opcode and NIR folds the
+    * switch, after this. Refused, it cost every plain colour fill (PBGRAXmw_A3Xhf) and
+    * backboardd aborted on the pipeline it did not get (run 65). What a sample left in the
+    * folded shader would read is zeros, and the pipeline says so in its log.
+    */
+   if (tex.binding == AIR_NULL_TEXTURE_BINDING) {
+      const struct air_type *rt = in->base.type;
+      if (!rt || rt->kind == AIR_TYPE_VOID)
+         return true;
+      struct air_val *zero = null_texture_zero(c, rt);
+      if (!zero)
+         return air_error(c, "intrinsic: air.%s of a null texture (texture2d<T>()) that the "
+                             "pipeline's constants did not choose away, whose result has a "
+                             "pointer in it", n->part[0]);
+      air_note(c, "air.%s of the null texture is zeros: its branch dies when the "
+                  "constants fold, or it reads nothing", n->part[0]);
+      air_set(c, &in->base, zero);
+      return true;
+   }
 
    unsigned arg = 2;   /* operands[0] is the callee, [1] the texture */
    struct air_ptr samp = { 0 };
@@ -1906,6 +1951,27 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       nir_def *which = air_get_ssa(c, in->operands[arg++]);
       if (!which)
          return false;
+      /* AIR 2.9, the 27 release's QuartzCore: a VECTOR after the coordinate and two
+       * words after it --
+       *   { <4 x half>, i8 } air.read_texture_2d.v4f16(ptr as(1), ptr as(2), <2 x i32>,
+       *                                                <2 x i32>, i32, i32)
+       * -- where 2.8 had the level alone. Taken as the level it made a txf whose lod has
+       * two components, which NIR's validation refuses after inlining. Which of the two
+       * words is the level, and what the vector does when it is not zero, nothing here
+       * shows: every call in fixed_frag_lph_* passes zeroinitializer, 0, 0. So all
+       * three zero is a read of level 0, and anything else is refused by name.
+       */
+      if (which->num_components > 1 && !t.is_ms) {
+         nir_def *w0 = in->num_operands > arg ? air_get_ssa(c, in->operands[arg]) : NULL;
+         nir_def *w1 = in->num_operands > arg + 1 ? air_get_ssa(c, in->operands[arg + 1]) : NULL;
+         if (!all_zero(which) || !w0 || !w1 || !all_zero(w0) || !all_zero(w1))
+            return air_error(c, "intrinsic: air.%s with a %u-component argument after the "
+                                "coordinate and two words after it, not all zero (AIR 2.9's "
+                                "form, understood only for zeros)", n->part[0],
+                             which->num_components);
+         arg += 2;
+         which = nir_imm_int(&c->b, 0);
+      }
       which = nir_u2u32(&c->b, which);
       op = t.is_ms ? nir_texop_txf_ms : nir_texop_txf;
       srcs[nsrc++] = (nir_tex_src){
@@ -1980,7 +2046,17 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
             tint = strstr(args, "rwa_tint=1") != NULL;
 #endif
       }
-      if (tint && op == nir_texop_tex && res->num_components == 4) {
+      if (tint && (op == nir_texop_tex || op == nir_texop_txb || op == nir_texop_txl || op == nir_texop_txd) &&
+          res->num_components == 4) {
+#ifdef __APPLE__
+         static int said;
+
+         if (!said++) {
+            const char *line = "!!rwa tint: a sample made magenta";
+
+            sysctlbyname("kern.hakios.say", NULL, NULL, (void *)line, strlen(line));
+         }
+#endif
          res = nir_vec4(&c->b, nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 0.0, res->bit_size),
                         nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 1.0, res->bit_size));
       }

@@ -21,7 +21,7 @@ O=${OBJ:-$RN/userland/obj26}/metal
 mkdir -p $O
 DYN="xnu-clang -arch arm64e -isysroot $THEOS/sdks/iPhoneOS16.5.sdk -O1 -mios-version-min=16.0"
 cd $U
-for f in air buffer log texture blit draw command recipes import perf plib shape argenc run worker surfaces render compute cmdbuf pipeline drawable; do
+for f in air buffer log texture blit draw command recipes import perf plib shape argenc run worker surfaces render compute cmdbuf pipeline drawable capture; do
 	${DYN/xnu-clang/xnu-clang++} -Os -std=c++20 -fno-exceptions -fno-rtti -I../tools/mesa/air -c src/metal/$f.cpp -o $O/$f.o
 done
 $DYN -Os -bundle -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc -lc++ \

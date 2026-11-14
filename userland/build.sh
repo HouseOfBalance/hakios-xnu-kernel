@@ -215,7 +215,7 @@ if [ -d $SYSFILES/rootfs/usr/lib ]; then
 			# tools/mesa/air/air_metal.h itself, buffers, what the driver says), the plug-in over
 			# it Metal's classes in Objective-C (src/metal/rwm.h is the line between them)
 			mkdir -p obj/metal
-			for f in air buffer log texture blit draw command recipes import perf plib shape argenc run worker surfaces render compute cmdbuf pipeline drawable; do
+			for f in air buffer log texture blit draw command recipes import perf plib shape argenc run worker surfaces render compute cmdbuf pipeline drawable capture; do
 				${DYN/xnu-clang/xnu-clang++} -Os -std=c++20 -fno-exceptions -fno-rtti -I../tools/mesa/air \
 					-c src/metal/$f.cpp -o obj/metal/$f.o
 			done
