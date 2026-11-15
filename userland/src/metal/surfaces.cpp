@@ -13,6 +13,52 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
+/*
+ * A surface's memory as the processors left it, for the GPU to read and for a processor to read what the GPU drew:
+ * every line of it cleaned and invalidated (dc civac reaches the point of coherency, every core's cache). A surface
+ * is mapped CACHED in every process (MiniIOSurface.cpp), the Mali is not coherent with the processors' caches, and
+ * a picture another process drew with the processor -- an icon, a label, a layer's backing store -- may still be in
+ * a cache when the GPU samples the surface in place: it then reads what memory held before, zeros. Boot-arg
+ * rwm_clean=0: not done. Counted in rwm_surface_clean_report's line.
+ */
+static unsigned long cleaned_surfaces, cleaned_bytes;
+static uint64_t cleaned_ns;
+
+extern "C" void
+rwm_surface_to_memory(IOSurfaceRef surface)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		on = strstr(rwm_boot_args(), "rwm_clean=0") == nullptr;
+	}
+	if (!on || surface == nullptr) {
+		return;
+	}
+	const uint8_t *base = (const uint8_t *)IOSurfaceGetBaseAddress(surface);
+	const size_t size = IOSurfaceGetAllocSize(surface);
+
+	if (base == nullptr || size == 0) {
+		return;
+	}
+	const uint64_t began = rwm_ns();
+
+	for (uintptr_t line = (uintptr_t)base & ~(uintptr_t)63; line < (uintptr_t)base + size; line += 64) {
+		__asm__ volatile("dc civac, %0" : : "r"(line) : "memory");
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+	cleaned_surfaces++;
+	cleaned_bytes += size;
+	cleaned_ns += rwm_ns() - began;
+	if (cleaned_surfaces == 1 || (cleaned_surfaces & 4095) == 0) {
+		char line[160];
+
+		snprintf(line, sizeof(line), "!!rwm surfaces cleaned for the GPU: %lu, %lu MB, %llu ms", cleaned_surfaces,
+			 cleaned_bytes >> 20, (unsigned long long)(cleaned_ns / 1000000));
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+}
+
 extern "C" void
 rwm_sampled_add(struct rwm_sampled *s, uint32_t surface)
 {
@@ -35,6 +81,7 @@ rwm_sampled_add(struct rwm_sampled *s, uint32_t surface)
 		return;
 	}
 	IOSurfaceIncrementUseCount(found);
+	rwm_surface_to_memory(found);
 	s->at[s->count++] = found;
 }
 

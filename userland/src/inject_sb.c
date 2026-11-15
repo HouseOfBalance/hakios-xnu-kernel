@@ -568,6 +568,39 @@ unlock(void)
 		BOOL done = ((BOOL (*)(id, SEL, long, id))objc_msgSend)(manager, unlock_ui, UNLOCK_SOURCE_COVER_SHEET, NULL);
 
 		say("hakios: unlock: asked, answer %d\n", done);
+		/*
+		 * The 27 release answers NO here (run 77) and the lock screen stays: what the lock screen calls once its
+		 * own checks have passed is called instead, _finishUIUnlockFromSource:withOptions: -- there is no passcode
+		 * here to check.
+		 */
+		SEL finish = sel_registerName("_finishUIUnlockFromSource:withOptions:");
+
+		if (!done && class_getInstanceMethod(cls, finish) != NULL) {
+			((void (*)(id, SEL, long, id))objc_msgSend)(manager, finish, UNLOCK_SOURCE_COVER_SHEET, NULL);
+			say("hakios: unlock: _finishUIUnlockFromSource:withOptions: called, locked now %d\n",
+			    ((BOOL (*)(id, SEL))objc_msgSend)(manager, locked));
+		}
+	}
+}
+
+/* unlock() until the lock screen is gone, every 15 s, 20 times at most: on the 27 release SpringBoard comes up
+ * minutes into the boot and an unlock asked too early is refused. Its lines are kept for the host. */
+static void
+unlock_until_open(unsigned left)
+{
+	Class cls = objc_getClass("SBLockScreenManager");
+	SEL shared = sel_registerName("sharedInstance"), locked = sel_registerName("isUILocked");
+	id manager = cls != NULL && class_getClassMethod(cls, shared) != NULL ?
+	    ((id (*)(Class, SEL))objc_msgSend)(cls, shared) : nil;
+
+	say_kept = 1;
+	unlock();
+	say_kept = 0;
+	if (left > 1 && manager != nil && class_getInstanceMethod(cls, locked) != NULL &&
+	    ((BOOL (*)(id, SEL))objc_msgSend)(manager, locked)) {
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+			unlock_until_open(left - 1);
+		});
 	}
 }
 
@@ -1847,6 +1880,6 @@ hakios_springboard_init(void)
 		}
 	}
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-		unlock();
+		unlock_until_open(20);
 	});
 }

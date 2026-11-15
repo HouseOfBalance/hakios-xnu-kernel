@@ -74,6 +74,10 @@ const char *rwa_device_name(struct rwa_device *device);
 struct rwa_buffer *rwa_buffer_create(struct rwa_device *device, size_t size,
 				     char *why, size_t why_size);
 void *rwa_buffer_map(struct rwa_buffer *buffer);
+/* MTLTextureSwizzleChannels (red, green, blue, alpha: Zero 0, One 1, Red 2 .. Alpha 5) for every sample of a
+ * texture; 0, or -1 for a channel that is none of these */
+struct rwa_texture;
+int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char channels[4]);
 size_t rwa_buffer_size(struct rwa_buffer *buffer);
 void rwa_buffer_destroy(struct rwa_buffer *buffer);
 
@@ -1125,6 +1129,9 @@ struct rwa_constant {
 };
 void rwa_render_constants(const struct rwa_constant *vertex, unsigned vertex_count,
 			  const struct rwa_constant *fragment, unsigned fragment_count);
+/* buffer 0 of each stage as the next rwa_render_create on this thread is to take it, known: a
+ * generic pipeline's configuration, folded into the shader (NULL or 0: not known) */
+void rwa_render_config(const void *vertex, unsigned vertex_size, const void *fragment, unsigned fragment_size);
 
 struct rwa_render *rwa_render_create(struct rwa_device *device,
 				     const void *vertex_bitcode, size_t vertex_size,
@@ -1134,6 +1141,8 @@ struct rwa_render *rwa_render_create(struct rwa_device *device,
 				     const struct rwa_render_shape *shape,
 				     struct rwa_render_info *info, char *why, size_t why_size);
 void rwa_render_destroy(struct rwa_render *render);
+/* the [[color(n)]] outputs the fragment shader stores to and the targets it fetches, a bit each */
+void rwa_render_outputs(const struct rwa_render *render, unsigned *writes, unsigned *fetches);
 
 /*
  * One draw into one render pass, which is what MTLRenderPassDescriptor plus one

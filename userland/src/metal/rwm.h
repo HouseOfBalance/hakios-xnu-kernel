@@ -88,6 +88,7 @@ struct rwm_air {
 	__typeof__(&rwa_device_name) device_name;
 	__typeof__(&rwa_buffer_create) buffer_create;
 	__typeof__(&rwa_buffer_map) buffer_map;
+	__typeof__(&rwa_texture_set_swizzle) texture_set_swizzle;
 	__typeof__(&rwa_buffer_size) buffer_size;
 	__typeof__(&rwa_buffer_destroy) buffer_destroy;
 	__typeof__(&rwa_compute_create) compute_create;
@@ -113,8 +114,10 @@ struct rwm_air {
 	__typeof__(&rwa_argbuf_encode_sampler) argbuf_encode_sampler;
 	__typeof__(&rwa_argbuf_encoded_members) argbuf_encoded_members;
 	__typeof__(&rwa_render_constants) render_constants;
+	__typeof__(&rwa_render_config) render_config;
 	__typeof__(&rwa_render_create) render_create;
 	__typeof__(&rwa_render_destroy) render_destroy;
+	__typeof__(&rwa_render_outputs) render_outputs;
 	__typeof__(&rwa_render_draw) render_draw;
 	__typeof__(&rwa_depth_stencil_create) depth_stencil_create;
 	__typeof__(&rwa_depth_stencil_destroy) depth_stencil_destroy;
@@ -186,6 +189,9 @@ uint32_t rwm_texture_in_place(const struct rwm_texture *texture);
 void rwm_texture_set_in_place(struct rwm_texture *texture, uint32_t surface);
 /* what the frames sample and which of it is empty (src/metal/texture.cpp, said by rwm_perf_report) */
 void rwm_texture_note_filled(struct rwm_texture *texture);
+/* boot-arg rwm_texshot=WxH: whether sizes were asked for, and a finished command buffer's target looked at */
+bool rwm_texshot_sizes(void);
+void rwm_texshot_after(struct rwm_texture *texture);
 void rwm_texture_note_view(struct rwm_texture *texture);
 void rwm_texture_note_sampled(struct rwm_texture *texture);
 void rwm_texture_sample_report(void (*say)(const char *));
@@ -484,6 +490,8 @@ struct rwm_drawn {
 	uint32_t at[8];
 	unsigned count;
 };
+/* a surface's lines cleaned and invalidated, for the GPU to read it and a processor to read what the GPU drew */
+void rwm_surface_to_memory(IOSurfaceRef surface);
 void rwm_sampled_add(struct rwm_sampled *sampled, uint32_t surface);
 void rwm_sampled_release(struct rwm_sampled *sampled);
 void rwm_drawn_add(struct rwm_drawn *drawn, uint32_t surface);
@@ -661,6 +669,12 @@ struct rwa_render *rwm_render_compile(struct rwa_device *device, const char *lab
 				      const struct rwm_render_request *request, struct rwa_render_shape *shape,
 				      struct rwa_render_info *info, char *why, size_t why_size);
 /* boot-arg rwm_capture=TEXT (src/metal/capture.cpp): a pipeline and one of its draws, whole, for the Mac to draw again */
+/* a generic pipeline's variant for the configuration in buffer 0 of each stage (src/metal/pipeline.cpp); NULL: draw
+ * with the pipeline as it is */
+/* the number of the variant the last rwm_generic_variant on this thread gave, as its "rwm variant" line says it */
+unsigned rwm_generic_last_variant(void);
+struct rwa_render *rwm_generic_variant(struct rwa_render *base, struct rwa_buffer *vertex, size_t vertex_offset,
+				       struct rwa_buffer *fragment, size_t fragment_offset);
 void rwm_capture_pipeline(const char *label, const struct rwm_render_request *r, const struct rwa_render_shape *shape,
 			  const struct rwa_render *render);
 struct rwm_draw;

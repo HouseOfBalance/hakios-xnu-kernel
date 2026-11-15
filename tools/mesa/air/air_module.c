@@ -103,6 +103,9 @@ enum {
    CST_CODE_CE_INBOUNDS_GEP = 20,
    CST_CODE_DATA = 22,
    CST_CODE_CE_GEP_WITH_INRANGE_INDEX = 24,
+   /* LLVM 19's form, [source type, flags, (type, value)...], bit 0 of flags inbounds: what llvm-as of this machine
+    * writes when a module is edited and put back together (tools/air: the Mac's bisections of the uber shaders) */
+   CST_CODE_CE_GEP = 32,
    CST_CODE_CE_UNOP = 25,
    CST_CODE_POISON = 26,
 };
@@ -530,13 +533,14 @@ read_constants_block(struct reader *r)
          break;
       case CST_CODE_CE_GEP_OLD:
       case CST_CODE_CE_INBOUNDS_GEP:
-      case CST_CODE_CE_GEP_WITH_INRANGE_INDEX: {
+      case CST_CODE_CE_GEP_WITH_INRANGE_INDEX:
+      case CST_CODE_CE_GEP: {
          unsigned i = 0;
          c = new_constant(r, cur, AIR_CONST_EXPR);
          c->expr_op = AIR_OP_GEP;
-         if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX || (e.num_ops & 1))
+         if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX || e.id == CST_CODE_CE_GEP || (e.num_ops & 1))
             c->src_type = type_by_id(r, e.ops[i++]);
-         if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX)
+         if (e.id == CST_CODE_CE_GEP_WITH_INRANGE_INDEX || e.id == CST_CODE_CE_GEP)
             c->inbounds = e.ops[i++] & 1;
          else
             c->inbounds = e.id == CST_CODE_CE_INBOUNDS_GEP;

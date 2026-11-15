@@ -37,6 +37,7 @@ struct rwm_texture {
 	bool filled = false;
 	int8_t surface_empty = -1;        /* origin 1: its surface's memory all zeroes when first sampled (1), or not (0) */
 	unsigned samples = 0;             /* draws that sampled it (texshot) */
+	unsigned fills = 0;               /* passes that drew into it (texshot of RGBA16Float / R32Float targets) */
 	uint8_t fill_kind = 0;            /* what filled it (texshot): 1 drawn into, 2 written, 4 copied in from memory, 8 a view */
 
 	~rwm_texture()
@@ -323,6 +324,7 @@ rwm_texture_copy_in(struct rwm_texture *texture, size_t *bytes, char *why, size_
 	if (!lock.held()) {
 		return 0;
 	}
+	rwm_surface_to_memory(texture->source);     /* (what the GPU drew into it, not what this cache held) */
 
 	const plane first = plane_of(texture->source, 0);
 	const void *texels = first.base;
@@ -435,6 +437,50 @@ rwm_texture_write(struct rwm_texture *texture, unsigned level, unsigned slice, c
 	}
 	texture->filled = true;
 	texture->fill_kind |= 2;
+	/*
+	 * A texture over another process's surface (the copy-in road) shares that surface's memory in Metal, so
+	 * -replaceRegion: is a write into the surface. Here the texture is a copy, refreshed from the surface before
+	 * every draw that samples it once the surface's seed has moved -- and the first time always. Written only into
+	 * the copy, the texels were overwritten by the surface's own (empty) memory at the first draw: every image
+	 * CoreAnimation 27 uploads that way came out transparent (15 November). So the rows go into the surface as
+	 * well, and the copy is marked as holding what the surface now holds.
+	 */
+	if (texture->source != nullptr && !texture->source_two_planes && level == 0 && slice == 0 && size[0] != 0 &&
+	    size[1] != 0) {
+		const size_t texel = texel_bytes(texture->shape.pixel_format);
+		bool wrote = false;
+
+		if (texel != 0) {
+			surface_lock lock(texture->source, 0);
+
+			if (lock.held()) {
+				const plane first = plane_of(texture->source, 0);
+				const size_t bytes_row = (size_t)size[0] * texel;
+
+				if (origin[0] + size[0] <= texture->shape.width && origin[1] + size[1] <= texture->shape.height &&
+				    covers(texture->source, first, (size_t)(origin[0] + size[0]) * texel, origin[1] + size[1])) {
+					for (unsigned y = 0; y < size[1]; y++) {
+						memcpy((uint8_t *)first.base + (size_t)(origin[1] + y) * first.row + (size_t)origin[0] * texel,
+						       (const uint8_t *)bytes + (size_t)y * stride, bytes_row);
+					}
+					wrote = true;
+				}
+			}
+		}
+		if (wrote) {
+			texture->source_seed = IOSurfaceGetSeed(texture->source);
+		}
+		static unsigned said;
+
+		if (said++ < 8) {
+			char line[160];
+
+			snprintf(line, sizeof(line), "!!rwm replaceRegion %ux%u into a surface's texture %ux%u format %u: %s",
+				 size[0], size[1], texture->shape.width, texture->shape.height, texture->shape.pixel_format,
+				 wrote ? "written into the surface too" : "NOT written into the surface");
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
 	return true;
 }
 
@@ -503,12 +549,20 @@ pthread_mutex_t sampled_lock = PTHREAD_MUTEX_INITIALIZER;
 
 } // namespace
 
+namespace {
+void texshot(struct rwm_texture *texture, unsigned samples, bool by_fill = false, bool after = false);
+} // namespace
+
 extern "C" void
 rwm_texture_note_filled(struct rwm_texture *texture)
 {
 	if (texture != nullptr) {
 		texture->filled = true;
 		texture->fill_kind |= 1;
+		const unsigned f = texture->shape.pixel_format;
+		/* by the passes drawing into it: RGBA16Float / R32Float attachments, and a size asked for (rwm_texshot=WxH),
+		 * which is how a surface drawn in place and made anew for each frame is ever taken */
+		texshot(texture, ++texture->fills, true);
 	}
 }
 
@@ -538,9 +592,10 @@ namespace {
  * "texshot#k" so that tools/texshot.py can tell them apart. Each one's header says what filled it (fill_kind).
  */
 void
-texshot(struct rwm_texture *texture, unsigned samples)
+texshot(struct rwm_texture *texture, unsigned samples, bool by_fill, bool after)
 {
 	static unsigned want_w, want_h, want_n, shots;
+	static unsigned sizes[4][2], nsizes;
 	static int read = 0;
 	static uint64_t first_ns;
 	char line[240];
@@ -550,37 +605,119 @@ texshot(struct rwm_texture *texture, unsigned samples)
 
 		read = 1;
 		first_ns = rwm_ns();
-		if (at == nullptr || sscanf(at + 12, "%ux%u", &want_w, &want_h) != 2) {
+		/* WxH, or several joined by '+': 750x1624+128x64 */
+		for (const char *p = at != nullptr ? at + 12 : nullptr; p != nullptr && nsizes < 4 &&
+		     sscanf(p, "%ux%u", &sizes[nsizes][0], &sizes[nsizes][1]) == 2;) {
+			nsizes++;
+			p = strchr(p, '+');
+			p = p != nullptr && p[1] >= '0' && p[1] <= '9' ? p + 1 : nullptr;
+		}
+		if (nsizes != 0) {
+			want_w = sizes[0][0];
+			want_h = sizes[0][1];
+		} else {
 			want_w = want_h = 0;
 			if (at == nullptr || sscanf(at + 12, "%u", &want_n) != 1) {
 				want_n = 0;
 			}
 		}
 	}
-	if (samples != 30) {
+	const unsigned f = texture->shape.pixel_format;
+	/* sizes asked for are taken after the GPU drew them (rwm_texshot_after, from src/metal/run.cpp): read while the
+	 * draws are recorded, a target holds what it held before them -- zeros for a surface made anew (runs 81 to 86) */
+	if (want_w != 0 && (!after || samples < 3)) {
 		return;
 	}
-	const unsigned f = texture->shape.pixel_format;
+	/* a drawn RGBA16Float / R32Float attachment is often made anew each frame: its third pass */
+	if (want_w == 0 && (by_fill ? samples != 3 || (f != 115 && f != 55) : samples != 30)) {
+		return;
+	}
 	if (want_w != 0) {
-		if (shots != 0 || texture->shape.width != want_w || texture->shape.height != want_h || f != 80) {
+		/* one of BGRA8 (by its samples) and one of RGBA16Float (by the passes drawing into it) */
+		static bool took[4][2];
+		unsigned k = 0;
+
+		while (k < nsizes && (texture->shape.width != sizes[k][0] || texture->shape.height != sizes[k][1])) {
+			k++;
+		}
+		if (k == nsizes || (f != 80 && f != 115) || took[k][f == 115] || rwm_ns() - first_ns < 100000000000ull) {
 			return;
 		}
+		took[k][f == 115] = true;
 	} else if (shots >= want_n || texture->shape.width < 32 || texture->shape.height < 32 ||
-		   (f != 70 && f != 71 && f != 80 && f != 81) || rwm_ns() - first_ns < 100000000000ull) {
+		   (f != 70 && f != 71 && f != 80 && f != 81 && f != 115 && f != 55) ||
+		   rwm_ns() - first_ns < 100000000000ull) {
 		return;
 	}
 	const unsigned shot = shots++;
 	const bool bgra = f == 80 || f == 81;
+	/* RGBA16Float (8 bytes) and R32Float (4) -- the second and third attachments of the 27 release's layer passes --
+	 * are read whole and made RGBA8 here: half clamped to 0..1, the float as grey with alpha 255 where it is not 0 */
+	const unsigned bpp = f == 115 ? 8 : 4;
 
 	const unsigned w = texture->shape.width, h = texture->shape.height, cap = want_w != 0 ? 48 : 32;
 	const unsigned ow = w < cap ? w : cap, oh = (h * ow + w - 1) / w;
-	uint8_t *pixels = (uint8_t *)calloc((size_t)w * h, 4);
+	uint8_t *pixels = (uint8_t *)calloc((size_t)w * h, bpp);
 	unsigned origin[3] = { 0, 0, 0 }, size[3] = { w, h, 1 };
 	unsigned long lit = 0, sum[4] = { 0, 0, 0, 0 };
 
-	if (pixels == nullptr || !rwm_texture_read(texture, 0, 0, origin, size, pixels, (size_t)w * 4)) {
+	/* a texture lying over a surface is read from the surface's own memory: what the library reads back of one is
+	 * zeros while the display shows its picture (run 85) */
+	bool from_surface = false;
+
+	if (pixels != nullptr && texture->in_place != 0) {
+		IOSurfaceRef sf = IOSurfaceLookup(texture->in_place);
+
+		if (sf != nullptr) {
+			if (IOSurfaceLock(sf, kIOSurfaceLockReadOnly, nullptr) == 0) {
+				const uint8_t *base = (const uint8_t *)IOSurfaceGetBaseAddress(sf);
+				const size_t row = IOSurfaceGetBytesPerRow(sf);
+
+				if (base != nullptr && row >= (size_t)w * bpp && IOSurfaceGetHeight(sf) >= h) {
+					/* the GPU's picture is in memory and this mapping is cached: lines read before would give the
+					 * old pixels (zeros), so they are cleaned and invalidated first -- the processor does not write
+					 * these surfaces, so nothing old is written back */
+					for (uintptr_t line = (uintptr_t)base & ~(uintptr_t)63; line < (uintptr_t)base + (size_t)h * row;
+					     line += 64) {
+						__asm__ volatile("dc civac, %0" : : "r"(line) : "memory");
+					}
+					__asm__ volatile("dsb sy" ::: "memory");
+					for (unsigned y = 0; y < h; y++) {
+						memcpy(pixels + (size_t)y * w * bpp, base + (size_t)y * row, (size_t)w * bpp);
+					}
+					from_surface = true;
+				}
+				IOSurfaceUnlock(sf, kIOSurfaceLockReadOnly, nullptr);
+			}
+			CFRelease(sf);
+		}
+	}
+	if (pixels == nullptr || (!from_surface && !rwm_texture_read(texture, 0, 0, origin, size, pixels, (size_t)w * bpp))) {
 		free(pixels);
 		return;
+	}
+	if (f == 115 || f == 55) {
+		for (size_t i = 0; i < (size_t)w * h; i++) {
+			uint8_t out[4];
+
+			for (unsigned c = 0; c < 4; c++) {
+				float v;
+
+				if (f == 115) {
+					uint16_t hv;
+
+					memcpy(&hv, pixels + i * 8 + c * 2, 2);
+					v = (float)*(const __fp16 *)&hv;
+				} else {
+					memcpy(&v, pixels + i * 4, 4);
+					if (c == 3) {
+						v = v != 0.0f ? 1.0f : 0.0f;
+					}
+				}
+				out[c] = (uint8_t)(v != v || v <= 0.0f ? 0 : v >= 1.0f ? 255 : v * 255.0f + 0.5f);
+			}
+			memcpy(pixels + i * 4, out, 4);
+		}
 	}
 	for (size_t i = 0; i < (size_t)w * h; i++) {
 		lit += pixels[i * 4 + 3] != 0;
@@ -588,8 +725,8 @@ texshot(struct rwm_texture *texture, unsigned samples)
 			sum[c] += pixels[i * 4 + c];
 		}
 	}
-	snprintf(line, sizeof(line), "!!texshot#%u begin %u %u (of %ux%u format %u, origin %u, filled by %#x): %lu of %u "
-		 "pixels with alpha, average %lu %lu %lu a %lu", shot, ow, oh, w, h, f, texture->origin, texture->fill_kind, lit,
+	snprintf(line, sizeof(line), "!!texshot#%u begin %u %u (of %ux%u format %u, origin %u, filled by %#x%s): %lu of %u "
+		 "pixels with alpha, average %lu %lu %lu a %lu", shot, ow, oh, w, h, f, texture->origin, texture->fill_kind, from_surface ? ", read from its surface" : "", lit,
 		 w * h, sum[0] / (w * h), sum[1] / (w * h), sum[2] / (w * h), sum[3] / (w * h));
 	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 
@@ -631,6 +768,30 @@ texshot(struct rwm_texture *texture, unsigned samples)
 }
 
 } // namespace
+
+/* boot-arg rwm_texshot=WxH[+WxH...]: true, and the command buffer is then waited for so that its targets can be read */
+extern "C" bool
+rwm_texshot_sizes(void)
+{
+	static int on = -1;
+
+	if (on < 0) {
+		const char *at = strstr(rwm_boot_args(), "rwm_texshot=");
+		unsigned w, h;
+
+		on = at != nullptr && sscanf(at + 12, "%ux%u", &w, &h) == 2;
+	}
+	return on == 1;
+}
+
+/* a target of a command buffer the GPU has finished */
+extern "C" void
+rwm_texshot_after(struct rwm_texture *texture)
+{
+	if (texture != nullptr) {
+		texshot(texture, texture->fills, true, true);
+	}
+}
 
 extern "C" void
 rwm_texture_note_sampled(struct rwm_texture *texture)
@@ -742,5 +903,6 @@ rwm_texture_sync_surface(struct rwm_texture *texture, char *why, size_t why_size
 	     y * pitch + copy <= alloc; y++) {
 		memcpy(base + y * pitch, scratch.get() + y * row, copy);
 	}
+	rwm_surface_to_memory(surface);     /* (out of this cache into memory, where the display and the GPU read) */
 	return 0;
 }

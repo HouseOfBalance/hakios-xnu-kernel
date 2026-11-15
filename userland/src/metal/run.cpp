@@ -166,10 +166,17 @@ rwm_run_works(struct rwa_device *device, struct rwm_work *const *works, unsigned
 	 */
 	const uint64_t began = rwm_ns();
 
-	if (rwm_submit(device, ndrawn != 0 || finish, seq, why, why_size) != 0) {
+	const bool shots = rwm_texshot_sizes();
+
+	if (rwm_submit(device, ndrawn != 0 || finish || shots, seq, why, why_size) != 0) {
 		rwm_print("THE GPU DID NOT FINISH the command buffer: %s\n", why);
 	}
 	*waited_ns = rwm_ns() - began;
+	for (unsigned n = 0; shots && n < count; n++) {
+		for (unsigned i = 0; i < works[n]->target_count; i++) {
+			rwm_texshot_after(works[n]->targets[i]);
+		}
+	}
 	for (unsigned k = 0; k < ndrawn; k++) {
 		static unsigned long times;
 		char reason[256] = { 0 };

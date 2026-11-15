@@ -97,6 +97,40 @@ val_is_pointerish(const struct air_val *v)
 
 /* The local a pointer is stored into or loaded from, by its byte offset in
  * scratch, or -1: a local at a place known now, and nothing else. */
+/* A byte offset known exactly while translating, and only through operations whose
+ * result this works out (offset_known below answers true for others without a value). */
+static bool
+exact_offset(nir_def *d, uint64_t *out, unsigned depth)
+{
+   if (depth > 16 || d->num_components != 1)
+      return false;
+   if (nir_src_is_const(nir_src_for_ssa(d))) {
+      *out = nir_src_as_uint(nir_src_for_ssa(d));
+      return true;
+   }
+   if (d->parent_instr->type != nir_instr_type_alu)
+      return false;
+   nir_alu_instr *alu = nir_instr_as_alu(d->parent_instr);
+   uint64_t a = 0, b = 0;
+   unsigned n = nir_op_infos[alu->op].num_inputs;
+
+   if (n < 1 || n > 2)
+      return false;
+   if (alu->src[0].swizzle[0] != 0 || !exact_offset(alu->src[0].src.ssa, &a, depth + 1))
+      return false;
+   if (n == 2 && (alu->src[1].swizzle[0] != 0 || !exact_offset(alu->src[1].src.ssa, &b, depth + 1)))
+      return false;
+   uint64_t mask = d->bit_size >= 64 ? ~0ull : (1ull << d->bit_size) - 1;
+   switch (alu->op) {
+   case nir_op_iadd: *out = (a + b) & mask; return true;
+   case nir_op_imul: *out = (a * b) & mask; return true;
+   case nir_op_ishl: *out = (a << (b & 63)) & mask; return true;
+   case nir_op_u2u32: case nir_op_u2u64: case nir_op_i2i32: case nir_op_i2i64:
+      *out = a & mask; return true;
+   default: return false;
+   }
+}
+
 /* A byte offset known while translating, through the arithmetic a getelementptr
  * leaves on it (an add of two constants is an iadd here, not a constant). */
 static bool
@@ -645,6 +679,30 @@ air_load_ptr(struct air_ctx *c, struct air_ptr ptr, const struct air_type *type,
    nir_def *res = NULL;
    switch (ptr.class) {
    case AIR_PTR_UBO:
+      /* a buffer whose bytes the caller handed over (air_to_nir_options.const_buffers): the value itself */
+      if (c->options && c->options->num_const_buffers) {
+         uint64_t at = 0;
+         bool known = ptr.offset == NULL || exact_offset(ptr.offset, &at, 0);
+         const struct air_const_buffer *cb = NULL;
+
+         for (unsigned i = 0; i < c->options->num_const_buffers; i++)
+            if (c->options->const_buffers[i].index == ptr.binding)
+               cb = &c->options->const_buffers[i];
+         if (cb && known && at + (uint64_t)comps * (bits / 8) <= cb->size) {
+            nir_const_value v[NIR_MAX_VEC_COMPONENTS];
+            const uint8_t *from = (const uint8_t *)cb->data + at;
+
+            memset(v, 0, sizeof(v));
+            for (unsigned k = 0; k < comps; k++) {
+               uint64_t raw = 0;
+
+               memcpy(&raw, from + k * (bits / 8), bits / 8);
+               v[k] = nir_const_value_for_raw_uint(raw, bits);
+            }
+            res = nir_build_imm(&c->b, comps, bits, v);
+            break;
+         }
+      }
       res = nir_load_ubo(&c->b, comps, bits, nir_imm_int(&c->b, ptr.binding), off,
                          .align_mul = align, .align_offset = 0, .range_base = 0, .range = ~0);
       break;
@@ -1208,7 +1266,16 @@ tint_mode(void)
 static void
 store_output(struct air_ctx *c, nir_variable *var, nir_def *v)
 {
-   if (tint_mode() == 2 && c->nir->info.stage == MESA_SHADER_FRAGMENT && var->data.location >= FRAG_RESULT_DATA0 &&
+   /* rwa_tint=12: a vertex stage's position replaced by (x / 1000, y / 1000, 0, 1) of what it computed -- whether a
+    * draw that writes no pixel has a position that puts it off the screen (15 November) */
+   if (tint_mode() == 12 && c->nir->info.stage == MESA_SHADER_VERTEX && var->data.location == VARYING_SLOT_POS &&
+       v->num_components == 4 && v->bit_size == 32) {
+      v = nir_vec4(&c->b, nir_fmul_imm(&c->b, nir_channel(&c->b, v, 0), 0.001),
+                   nir_fmul_imm(&c->b, nir_channel(&c->b, v, 1), 0.001), nir_imm_float(&c->b, 0.0f),
+                   nir_imm_float(&c->b, 1.0f));
+   }
+   if ((tint_mode() == 2 || tint_mode() == 12 || (tint_mode() == 6 && c->samples_image3 && var->data.location == FRAG_RESULT_DATA0)) &&
+       c->nir->info.stage == MESA_SHADER_FRAGMENT && var->data.location >= FRAG_RESULT_DATA0 &&
        v->num_components == 4) {
       v = nir_vec4(&c->b, nir_imm_floatN_t(&c->b, 1.0, v->bit_size), nir_imm_floatN_t(&c->b, 0.0, v->bit_size),
                    nir_imm_floatN_t(&c->b, 1.0, v->bit_size), nir_imm_floatN_t(&c->b, 1.0, v->bit_size));
@@ -1219,6 +1286,29 @@ store_output(struct air_ctx *c, nir_variable *var, nir_def *v)
        v->num_components == 4 && glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_UINT &&
        glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_INT) {
       v = nir_vector_insert_imm(&c->b, v, nir_imm_floatN_t(&c->b, 1.0, v->bit_size), 3);
+   }
+   /* rwa_tint=4, a test of the framebuffer fetch itself: colour 0 becomes half of what the target holds under the
+    * pixel, read in the shader, plus half red -- (0.5 + 0.5 r, 0.5 g, 0.5 b, 0.5 + 0.5 a). Over a cleared target each
+    * draw that covers a pixel moves its red from 0.5 towards 1 (0.5, 0.75, 0.875...) when the read works; when it
+    * reads 0, every covered pixel is the same 0.5 red whatever lies under it */
+   if (tint_mode() == 4 && c->nir->info.stage == MESA_SHADER_FRAGMENT && var->data.location == FRAG_RESULT_DATA0 &&
+       v->num_components == 4 && glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_UINT &&
+       glsl_get_base_type(glsl_without_array(var->type)) != GLSL_TYPE_INT) {
+      nir_io_semantics sem = {
+         .location = FRAG_RESULT_DATA0,
+         .num_slots = 1,
+         .fb_fetch_output = true,
+         .fb_fetch_output_coherent = true,
+      };
+      nir_def *dst = nir_load_output(&c->b, 4, 32, nir_imm_int(&c->b, 0), .dest_type = nir_type_float32,
+                                     .io_semantics = sem);
+      nir_def *t = nir_fadd(&c->b, nir_fmul_imm(&c->b, dst, 0.5), nir_imm_vec4(&c->b, 0.5, 0.0, 0.0, 0.5));
+
+      v = v->bit_size == 16 ? nir_f2f16(&c->b, t) : t;
+      c->nir->info.outputs_read |= BITFIELD64_BIT(FRAG_RESULT_DATA0);
+      c->nir->info.fs.uses_fbfetch_output = true;
+      c->nir->info.fs.fbfetch_coherent = true;
+      c->info->fbfetch_targets |= 1u;
    }
    unsigned want = glsl_get_bit_size(glsl_without_array(var->type));
    if (v->bit_size != want) {
@@ -2139,6 +2229,10 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
       nir_def *fetched = nir_load_output(&c->b, 4, 32, nir_imm_int(&c->b, 0),
                                          .dest_type = nir_type_float32,
                                          .io_semantics = sem);
+      /* rwa_tint=8: what is read of colour attachment 1 is magenta -- where the 27 release's window server carries a
+       * group drawn into attachment 1 over onto the screen, the screen shows it (15 November) */
+      if (tint_mode() == 8 && n == 1)
+         fetched = nir_imm_vec4(&c->b, 1.0, 0.0, 1.0, 1.0);
       unsigned want = air_nir_components(t);
       if (want < 4)
          fetched = nir_trim_vector(&c->b, fetched, want);

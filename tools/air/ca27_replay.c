@@ -33,7 +33,7 @@ static unsigned long long vhash, fhash;
 static unsigned prim, vstart, vcount, instances, scissor[4], have_scissor, colors = 1;
 static float viewport[4];
 static int have_viewport;
-static struct { int bound, stream; size_t offset, size, take, have; uint8_t data[512]; } vbuf[MAXB], fbuf[MAXB];
+static struct { int bound, stream; size_t offset, size, take, have; uint8_t data[2048]; } vbuf[MAXB], fbuf[MAXB];
 static struct { unsigned w, h, f, t, u; int bound; } slot[MAXB];
 static unsigned nslots;
 
@@ -147,11 +147,11 @@ parse(const char *path)
 			continue;
 		}
 		if (sscanf(p, "vbuf%u %u:", &i, &k) == 2 && i < MAXB) {
-			vbuf[i].have += decode(strchr(p, ':') + 1, vbuf[i].data + k * 120, 512 - k * 120);
+			vbuf[i].have += decode(strchr(p, ':') + 1, vbuf[i].data + k * 120, 2048 - k * 120);
 			continue;
 		}
 		if (sscanf(p, "fbuf%u %u:", &i, &k) == 2 && i < MAXB) {
-			fbuf[i].have += decode(strchr(p, ':') + 1, fbuf[i].data + k * 120, 512 - k * 120);
+			fbuf[i].have += decode(strchr(p, ':') + 1, fbuf[i].data + k * 120, 2048 - k * 120);
 			continue;
 		}
 		if (sscanf(p, "slots %u:", &nslots) == 1) {
@@ -212,6 +212,16 @@ main(int argc, char **argv)
 					.mip_levels = 1, .sample_count = 1, .type = 2, .usage = 0x5 };
 	struct rwa_texture *target = rwa_texture_create(dev, &ts, why, sizeof(why));
 	if (!target) { fprintf(stderr, "target: %s\n", why); return 1; }
+	/* and the pipeline's other colour attachments (the 27 release's passes have 2 or 3: RGBA16Float, R32Float), of
+	 * the formats its shape names, as the draw's "colors" says how many there were */
+	struct rwa_texture *targets[8] = { target };
+	unsigned ntargets = colors >= 1 && colors <= 8 ? colors : 1;
+	for (unsigned i = 1; i < ntargets; i++) {
+		struct rwa_texture_shape ti = ts;
+		ti.pixel_format = shape.color_format[i];
+		targets[i] = rwa_texture_create(dev, &ti, why, sizeof(why));
+		if (!targets[i]) { fprintf(stderr, "colour attachment %u (format %u): %s\n", i, ti.pixel_format, why); return 1; }
+	}
 
 	struct rwa_buffer *vb[MAXB] = { 0 }, *fb[MAXB] = { 0 };
 	struct rwa_vertex_stream streams[MAXB] = { 0 };
@@ -252,13 +262,16 @@ main(int argc, char **argv)
 		if (rwa_texture_write(tex[i], 0, 0, o, z, white, 0, why, sizeof(why)) != 0)
 			fprintf(stderr, "texture %u write: %s\n", i, why);
 		free(white);
-		samp[i] = rwa_sampler_create(dev, &ss, why, sizeof(why));
 	}
+	/* a sampler in every slot: CoreAnimation's shaders take their textures and samplers at different indices
+	 * (fixed_frag_lph_*: texture 3, img_samp_0 at sampler 0), and an empty sampler slot reads garbage on llvmpipe */
+	for (unsigned i = 0; i < nslots && i < MAXB; i++)
+		samp[i] = rwa_sampler_create(dev, &ss, why, sizeof(why));
 
 	float clear[4] = { 0, 0, 0, 0 };
 	struct rwa_draw d = { 0 };
-	d.color = &target;
-	d.color_count = 1;
+	d.color = targets;
+	d.color_count = ntargets;
 	d.clear_color = clear;
 	d.vertex.buffers = vb;
 	d.vertex.buffer_count = nv;
@@ -298,6 +311,21 @@ main(int argc, char **argv)
 		}
 	printf("under the scissor (%u,%u %ux%u): %lu of %lu pixels not zero, average r %lu g %lu b %lu a %lu\n", x0, y0, x1 - x0,
 	       y1 - y0, lit, n, n ? sum[0] / n : 0, n ? sum[1] / n : 0, n ? sum[2] / n : 0, n ? sum[3] / n : 0);
+	/* the commonest values that are not zero, as r g b a: what the shader made of the white image */
+	{
+		uint32_t val[8] = { 0 };
+		unsigned long cnt[8] = { 0 };
+		for (unsigned i = 0; i < 750u * 1624u; i++) {
+			uint32_t p = px[i];
+			unsigned k;
+			if (p == 0) continue;
+			for (k = 0; k < 8 && cnt[k] && val[k] != p; k++) {}
+			if (k < 8) { val[k] = p; cnt[k]++; }
+		}
+		for (unsigned k = 0; k < 8 && cnt[k]; k++)
+			printf("  %lu pixels of r %u g %u b %u a %u\n", cnt[k], val[k] >> 16 & 255, val[k] >> 8 & 255, val[k] & 255,
+			       val[k] >> 24);
+	}
 	if (argc > 4) {
 		FILE *o2 = fopen(argv[4], "wb");
 		fprintf(o2, "P6 750 1624 255\n");

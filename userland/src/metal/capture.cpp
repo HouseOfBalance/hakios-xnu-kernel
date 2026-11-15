@@ -165,7 +165,7 @@ rwm_capture_draw(const struct rwm_draw *d)
 		size_t size = air->buffer_size != nullptr ? air->buffer_size(d->vertex[i]) : 0;
 		size_t take = size > d->vertex_offset[i] ? size - d->vertex_offset[i] : 0;
 
-		take = take > 512 ? 512 : take;
+		take = take > 2048 ? 2048 : take;
 		snprintf(line, sizeof(line), "!!cap vbuf %u offset %zu size %zu stream %u take %zu", i, d->vertex_offset[i], size,
 			 (d->stream_mask >> i) & 1, take);
 		say(line);
@@ -183,7 +183,7 @@ rwm_capture_draw(const struct rwm_draw *d)
 		size_t size = air->buffer_size != nullptr ? air->buffer_size(d->fragment[i]) : 0;
 		size_t take = size > d->fragment_offset[i] ? size - d->fragment_offset[i] : 0;
 
-		take = take > 512 ? 512 : take;
+		take = take > 2048 ? 2048 : take;
 		snprintf(line, sizeof(line), "!!cap fbuf %u offset %zu size %zu take %zu", i, d->fragment_offset[i], size, take);
 		say(line);
 		snprintf(name, sizeof(name), "fbuf%u", i);

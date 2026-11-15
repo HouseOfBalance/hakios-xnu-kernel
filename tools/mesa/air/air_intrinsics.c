@@ -650,9 +650,16 @@ fc_defined_op(struct air_ctx *c, const struct air_inst *in)
       return air_error(c, "intrinsic: air.is_function_constant_defined of something "
                           "that is not a function constant");
    bool defined = false;
-   for (unsigned i = 0; c->options && i < c->options->num_constants; i++)
-      if (c->options->constants[i].index == p->ptr.binding)
-         defined = true;
+   if (c->options && c->options->defined) {
+      /* Metal's meaning: given by the pipeline, not merely declared by the module */
+      for (unsigned i = 0; i < c->options->num_defined; i++)
+         if (c->options->defined[i] == p->ptr.binding)
+            defined = true;
+   } else {
+      for (unsigned i = 0; c->options && i < c->options->num_constants; i++)
+         if (c->options->constants[i].index == p->ptr.binding)
+            defined = true;
+   }
    air_set(c, &in->base, air_val_ssa(c, nir_imm_bool(&c->b, defined)));
    return true;
 }
@@ -1833,6 +1840,25 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
     */
    nir_tex_src srcs[7];
    unsigned nsrc = 0;
+   /* rwa_tint=9: a 2D sample at the middle of its texture, (0.5, 0.5), whatever its coordinate -- an image that
+    * comes out a square of one colour there had a texture and a sampler and wrong coordinates (15 November) */
+   {
+      static int middle = -1;
+
+      if (middle < 0) {
+         const char *v = getenv("RWA_TINT");
+         middle = v && !strcmp(v, "9");
+#ifdef __APPLE__
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (!middle && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0)
+            middle = strstr(args, "rwa_tint=9") != NULL;
+#endif
+      }
+      if (middle && coord->num_components == 2 && coord->bit_size == 32)
+         coord = nir_imm_vec2(&c->b, 0.5f, 0.5f);
+   }
    srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_coord,
                                  .src = nir_src_for_ssa(coord) };
    if (compare)
@@ -1910,6 +1936,25 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_ddy,
                                        .src = nir_src_for_ssa(ddy) };
       } else {
+         /* A bias of NaN is "no bias". CoreAnimation 27's uber shaders say so on purpose: without
+          * fc_has_lod_bias the bias is read from `unused_lod_bias`, a constant pair of NaNs, and every
+          * image sample goes through sample(s, uv, bias(NaN)). Apple's GPU reads the base level for
+          * it (the icons are there on Apple's own hardware); a Mali takes the NaN into its LOD and returns
+          * zeros, which was every icon and label of the 27 home screen empty (15 November: the same
+          * draw with the sample replaced, rwa_tint=1, is there). So a NaN bias is 0 here: as a
+          * constant the sample is a plain one, and otherwise it is chosen away in the shader. The
+          * test is on the bits, which no fast-math folding takes for "x != x is false".
+          */
+         if (!is_level && level->bit_size == 32) {
+            if (nir_src_is_const(nir_src_for_ssa(level))) {
+               if (isnan(nir_src_as_float(nir_src_for_ssa(level))))
+                  level = nir_imm_float(&c->b, 0.0f);
+            } else {
+               nir_def *nan = nir_ult(&c->b, nir_imm_int(&c->b, 0x7f800000),
+                                      nir_iand_imm(&c->b, level, 0x7fffffff));
+               level = nir_bcsel(&c->b, nan, nir_imm_float(&c->b, 0.0f), level);
+            }
+         }
          bool level_is_zero = nir_src_is_const(nir_src_for_ssa(level)) &&
                               nir_src_as_float(nir_src_for_ssa(level)) == 0.0;
          if (is_level) {
@@ -1996,6 +2041,8 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
    tex_instr->dest_type = dest_type;
    tex_instr->coord_components = ncoord;
    tex_instr->texture_index = tex.binding;
+   if (tex.binding == 3)
+      c->samples_image3 = true;
    tex_instr->sampler_index = have_sampler ? samp.binding : 0;
    if (op == nir_texop_tg4) {
       uint64_t component;
@@ -2059,6 +2106,58 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
 #endif
          res = nir_vec4(&c->b, nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 0.0, res->bit_size),
                         nir_imm_floatN_t(&c->b, 1.0, res->bit_size), nir_imm_floatN_t(&c->b, 1.0, res->bit_size));
+      }
+   }
+   /* rwa_tint=7: a 2D sample gives its own coordinate, (fract(u), fract(v), 0, 1) -- an image drawn with the right
+    * coordinates comes out a red-green gradient across it, one drawn with wrong ones a flat colour (15 November:
+    * every image of the 27 release's home screen came out empty, and a sample made magenta came out on the screen) */
+   {
+      static int coords = -1;
+
+      if (coords < 0) {
+         const char *v = getenv("RWA_TINT");
+         coords = v && !strcmp(v, "7");
+#ifdef __APPLE__
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (!coords && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0)
+            coords = strstr(args, "rwa_tint=7") != NULL;
+#endif
+      }
+      if (coords && (op == nir_texop_tex || op == nir_texop_txb || op == nir_texop_txl || op == nir_texop_txd) &&
+          res->num_components == 4 && coord->num_components >= 2) {
+         nir_def *uv = nir_ffract(&c->b, nir_channels(&c->b, coord, 0x3));
+
+         uv = nir_f2fN(&c->b, uv, res->bit_size);
+         res = nir_vec4(&c->b, nir_channel(&c->b, uv, 0), nir_channel(&c->b, uv, 1),
+                        nir_imm_floatN_t(&c->b, 0.0, res->bit_size), nir_imm_floatN_t(&c->b, 1.0, res->bit_size));
+      }
+   }
+   /* rwa_tint=5: what a sample read, made visible whatever its alpha -- (alpha, (r+g+b)/3, 0.5, 1): a sample that
+    * reads zeros is dark blue, one that reads the icon shows its alpha in red and its picture in green (15 November) */
+   {
+      static int show = -1;
+
+      if (show < 0) {
+         const char *v = getenv("RWA_TINT");
+         show = v && !strcmp(v, "5");
+#ifdef __APPLE__
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (!show && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0)
+            show = strstr(args, "rwa_tint=5") != NULL;
+#endif
+      }
+      if (show && (op == nir_texop_tex || op == nir_texop_txb || op == nir_texop_txl || op == nir_texop_txd) &&
+          res->num_components == 4) {
+         unsigned bits = res->bit_size;
+         nir_def *sum = nir_fadd(&c->b, nir_fadd(&c->b, nir_channel(&c->b, res, 0), nir_channel(&c->b, res, 1)),
+                                 nir_channel(&c->b, res, 2));
+         res = nir_vec4(&c->b, nir_fsat(&c->b, nir_channel(&c->b, res, 3)),
+                        nir_fsat(&c->b, nir_fmul_imm(&c->b, sum, 1.0 / 3.0)),
+                        nir_imm_floatN_t(&c->b, 0.5, bits), nir_imm_floatN_t(&c->b, 1.0, bits));
       }
    }
    set_tex_result(c, in, res);

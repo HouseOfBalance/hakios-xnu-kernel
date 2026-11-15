@@ -7,6 +7,11 @@ import base64, re, struct, sys, zlib
 
 text = open(sys.argv[1], 'rb').read().decode('latin-1')
 out = sys.argv[2] if len(sys.argv) > 2 else 'fbshot.png'
+# a picture taken with fbshot_keep= is in the log twice: its lines as they were printed, with times, among the rest,
+# and the host's kept copy, without times, whole -- that copy is read when there is one
+kept = '\n'.join(l for l in text.split('\n') if l.startswith('fbshot '))
+if re.search(r'^fbshot \d+: end', kept, re.M):
+    text = kept
 shots = {}
 for m in re.finditer(r'fbshot (\d+): (\S+)(?: (\d+) (\d+))?', text):
     n, word = int(m.group(1)), m.group(2)

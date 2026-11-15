@@ -192,6 +192,14 @@ static TUNABLE(uint32_t, gShotWidth, "fbshot_w", 0);      /* the picture's width
 static TUNABLE(uint32_t, gShotBand, "fbshot_band", 0);    /* 1, 2 or 3: only that third of the height (0: all of it; 4: each third in turn) */
 static TUNABLE(uint32_t, gShotEvery, "fbshot_every", 60);  /* seconds between pictures (a multiple of 5) */
 static TUNABLE(uint32_t, gShotPanel, "fbshot_panel", 0);
+/* fbshot_keep=SECONDS: one picture, 60 pixels wide, at the first frame after that much uptime, into the host's kept
+ * lines as well as the log -- the log keeps only its last few hundred kilobytes, and runs 93 and 94 lost theirs */
+static TUNABLE(uint32_t, gShotKeep, "fbshot_keep", 0);
+/* fbshot_cx/cy/cw/ch: the fbshot_keep picture of that rectangle of the panel only (panel pixels), 60 wide */
+static TUNABLE(uint32_t, gShotCX, "fbshot_cx", 0);
+static TUNABLE(uint32_t, gShotCY, "fbshot_cy", 0);
+static TUNABLE(uint32_t, gShotCW, "fbshot_cw", 0);
+static TUNABLE(uint32_t, gShotCH, "fbshot_ch", 0);
 /* boot-arg fbtext=1: the Metal driver's last lines (mtk_mali.c, hakios_overlay_copy) drawn over the top of every frame */
 static TUNABLE(uint32_t, gFBText, "fbtext", 0);
 extern "C" unsigned hakios_overlay_copy(char out[][96], unsigned max);
@@ -386,8 +394,10 @@ public:
 	MiniIOSurface * defaultSurface(void);
 	void present(const uint8_t * swap);
 	void shot(MiniIOSurface * s);
+	void keepShot(void);
 	bool grab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride);
 	uint32_t        fShotStats;
+	bool            fShotKept;      /* the fbshot_keep picture taken */
 	void show(const uint8_t * swap, MiniIOSurface ** surfaces);
 	void presenter(void);
 	static void presenterMain(void * self, wait_result_t result);
@@ -1155,6 +1165,8 @@ IOMobileFramebuffer::reportFrameTimes(void)
  * "fbshot N:" (tools/fbshot.py makes a picture of them): what the screen shows, for a run nobody
  * watches. Every minute from SECONDS of frames on, so that the end of the log has one.
  */
+static bool shot_keep;          /* (set around one shot_pixels: its lines go to the host's kept lines too) */
+
 static void
 shot_pixels(const uint8_t * base, uint32_t full_width, uint32_t full_height, uint32_t row_bytes, uint32_t across,
     uint32_t band, uint32_t bands)
@@ -1175,6 +1187,9 @@ shot_pixels(const uint8_t * base, uint32_t full_width, uint32_t full_height, uin
 	uint32_t first = bands > 1 ? height * band / bands : 0, last = bands > 1 ? height * (band + 1) / bands : height;
 	shots++;
 	IOLog("fbshot %u: begin %u %u (rows %u to %u of %u)\n", shots, width, last - first, first, last, height);
+	if (shot_keep) {
+		hakios_host_keep_add("fbshot %u: begin %u %u (rows %u to %u of %u)", shots, width, last - first, first, last, height);
+	}
 	for (uint32_t y = first; y < last; y++) {
 		const uint32_t * row = (const uint32_t *) (base + (size_t) (y * step + step / 2) * row_bytes);
 
@@ -1184,7 +1199,8 @@ shot_pixels(const uint8_t * base, uint32_t full_width, uint32_t full_height, uin
 			chunk[used++] = (pixel >> 16) & 0xff;
 			chunk[used++] = (pixel >> 8) & 0xff;
 			chunk[used++] = pixel & 0xff;
-			if (used == sizeof(chunk) || (y == last - 1 && x == width - 1)) {
+			/* (a kept line is cut at about 200 characters: 96 bytes, 128 of them, for those) */
+			if (used == (shot_keep ? 96u : sizeof(chunk)) || (y == last - 1 && x == width - 1)) {
 				unsigned n = 0;
 
 				for (unsigned i = 0; i < used; i += 3) {
@@ -1198,11 +1214,17 @@ shot_pixels(const uint8_t * base, uint32_t full_width, uint32_t full_height, uin
 				}
 				line[n] = 0;
 				IOLog("fbshot %u: %s\n", shots, line);
+				if (shot_keep) {
+					hakios_host_keep_add("fbshot %u: %s", shots, line);
+				}
 				used = 0;
 			}
 		}
 	}
 	IOLog("fbshot %u: end\n", shots);
+	if (shot_keep) {
+		hakios_host_keep_add("fbshot %u: end", shots);
+	}
 }
 
 #define FLICKER_W       40
@@ -1282,11 +1304,31 @@ flicker(MiniIOSurface * s)
 	}
 }
 
+/*
+ * What the GPU drew into a surface, as memory holds it, for the processor to read: its lines of the surface are
+ * cleaned and invalidated first. Shown in place (fb_flip=1) a frame is never copied, so nothing else does it, and a read
+ * through the kernel's cached mapping gave lines the processor had read frames before -- fbshot's pictures were of an
+ * old frame (run 70's had none of the magenta on the panel, run 77's was black). The surface's lines are clean (the
+ * processor does not write a frame, and its zeroes were written back when it was made), so nothing old is written back.
+ */
+static void
+surface_from_memory(MiniIOSurface * s)
+{
+	const uint8_t * from = s->pixels();
+	size_t bytes = (size_t) s->info.bytesPerRow * s->info.height;
+
+	for (uintptr_t line = (uintptr_t) from & ~(uintptr_t) 63; line < (uintptr_t) from + bytes; line += 64) {
+		__asm__ volatile ("dc civac, %0" : : "r" (line) : "memory");
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
+}
+
 void
 IOMobileFramebuffer::shot(MiniIOSurface * s)
 {
 	static uint32_t taken;
 
+	surface_from_memory(s);
 	shot_pixels(s->pixels(), s->info.width, s->info.height, s->info.bytesPerRow, gShotWidth ? gShotWidth : 60,
 	    gShotBand == 4 ? taken++ % 3 : gShotBand ? gShotBand - 1 : 0, gShotBand ? 3 : 1);
 }
@@ -1318,6 +1360,43 @@ IOMobileFramebuffer::grab(uint8_t * out, uint32_t max, uint32_t * width, uint32_
 	return true;
 }
 
+/*
+ * Boot-arg fbshot_keep=SECONDS: the picture on the panel at that much uptime, 60 pixels wide, into the host's kept lines
+ * as well as the log. On a timer and not at a frame: a home screen with nothing moving presents no frames at all, and
+ * run 95's went still at 198 s, before its picture was due.
+ */
+void
+IOMobileFramebuffer::keepShot(void)
+{
+	const uint8_t * from = fFlip ? fFlipVA[fFront] : fBase;
+
+	if (from == NULL || fPanelWidth == 0 || fPanelHeight == 0) {
+		hakios_host_keep_add("fbshot_keep: no picture on the panel to take");
+		return;
+	}
+	uint32_t w = fPanelWidth, h = fPanelHeight;
+
+	if (gShotCW != 0 && gShotCH != 0 && gShotCX + gShotCW <= fPanelWidth && gShotCY + gShotCH <= fPanelHeight) {
+		from += (size_t) gShotCY * fRowBytes + (size_t) gShotCX * 4;
+		w = gShotCW;
+		h = gShotCH;
+		hakios_host_keep_add("fbshot_keep: the rectangle %u,%u %ux%u of the panel's %ux%u", gShotCX, gShotCY, w, h,
+		    fPanelWidth, fPanelHeight);
+	}
+	IOLockLock(fLock);
+	shot_keep = true;
+	shot_pixels(from, w, h, fRowBytes, 60, 0, 1);
+	shot_keep = false;
+	IOLockUnlock(fLock);
+}
+
+static void
+keepShotFired(thread_call_param_t fb, thread_call_param_t unused)
+{
+	(void) unused;
+	((IOMobileFramebuffer *) fb)->keepShot();
+}
+
 extern "C" bool
 HakiosFramebufferGrab(uint8_t * out, uint32_t max, uint32_t * width, uint32_t * height, uint32_t * stride)
 {
@@ -1333,6 +1412,16 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 	uint64_t now = mach_absolute_time(), period, pause;
 
 	gLiveFB = this;
+	if (gShotKeep != 0 && !fShotKept) {
+		thread_call_t call = thread_call_allocate(keepShotFired, this);
+		uint64_t when;
+
+		fShotKept = true;
+		nanoseconds_to_absolutetime((uint64_t) gShotKeep * NSEC_PER_SEC, &when);
+		if (call != NULL) {
+			thread_call_enter_delayed(call, when);
+		}
+	}
 
 	/* (a frame that is late on the panel was late here already, or it was not: for telling whose it is) */
 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz() * 5 / 4, &period);
@@ -1635,6 +1724,7 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			uint64_t sum[3] = { 0, 0, 0 };
 			uint32_t lit = 0, samples = 0;
 
+			surface_from_memory(recorded);
 			for (uint32_t y = recorded->info.height / 64; y < recorded->info.height; y += recorded->info.height / 32) {
 				const uint32_t * row = (const uint32_t *) (recorded->pixels() + (size_t) y * recorded->info.bytesPerRow);
 

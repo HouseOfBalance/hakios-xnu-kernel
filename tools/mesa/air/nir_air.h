@@ -350,6 +350,31 @@ struct air_to_nir_options {
     * entry point of the corpus and is counted separately.
     */
    bool library_wrapper;
+
+   /* Constant buffers whose contents are known while translating: a load from
+    * [[buffer(index)]] at an offset known here, inside `size` bytes, is the value
+    * those bytes hold. It is how a generic pipeline is specialized for one
+    * configuration -- CoreAnimation's uber shaders with fc_generic read their
+    * configuration from buffer 0 (FragmentShaderConfig, VertexShaderConfig), and
+    * with it known NIR folds away every feature that configuration does not use.
+    */
+   const struct air_const_buffer *const_buffers;
+   unsigned num_const_buffers;
+
+   /* The constants the pipeline was GIVEN, by index, which is what
+    * air.is_function_constant_defined answers: one of the module's left out
+    * of this list is undefined -- the shader takes its own default for it --
+    * though `constants` still carries a value (zero) for any load of it.
+    * NULL: every constant in `constants` is defined, as before.
+    */
+   const unsigned *defined;
+   unsigned num_defined;
+};
+
+struct air_const_buffer {
+   unsigned index;      /* Metal's [[buffer(n)]] */
+   const void *data;
+   unsigned size;
 };
 
 /* Translates one AIR module (one function of a .metallib). entry_point may

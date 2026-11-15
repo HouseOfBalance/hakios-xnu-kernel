@@ -233,6 +233,10 @@ struct rwa_texture {
    /* a view (rwa_texture_view_create): the format its samples and its render surface read the resource as;
     * PIPE_FORMAT_NONE for a texture of its own, which is read as the resource's */
    enum pipe_format view_format;
+
+   /* MTLTextureSwizzleChannels, as Gallium swizzles (rwa_texture_set_swizzle): applied to the sampler view */
+   unsigned char swizzle[4];
+   bool swizzled;
 };
 
 /* the format a texture is read and drawn as: a view's, or its resource's */
@@ -401,7 +405,9 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
    return glsl_count_attribute_slots(type, false);
 }
 
-/* A driver that takes shader I/O as variables and lowers it itself: panfrost. */
+/* A driver that takes shader I/O as variables and lowers it itself: panfrost, and llvmpipe (the Mac's
+ * replays of the 27 release's 16-bit shaders, tools/air/mk-host-mac-llvm.sh), which knows no
+ * load_barycentric_pixel. */
 static bool
 screen_lowers_io(struct pipe_screen *screen)
 {
@@ -409,9 +415,57 @@ screen_lowers_io(struct pipe_screen *screen)
    return name && strstr(name, "Panfrost") != NULL;
 }
 
+static void shrink_decided(nir_shader *nir);
+
+/* [[point_coord]] read as (0, 0) -- for llvmpipe only, the Mac's replays of triangle draws, where it means nothing and
+ * the driver knows no load_point_coord */
+static bool
+point_coord_zero(nir_builder *b, nir_intrinsic_instr *in, void *data)
+{
+   (void)data;
+   /* ... and a framebuffer fetch, which llvmpipe does not take as load_output either: a replay draws once into
+    * attachments cleared to zero, so zero is what the fetch would read */
+   bool fetch = in->intrinsic == nir_intrinsic_load_output && nir_intrinsic_io_semantics(in).fb_fetch_output;
+   if (in->intrinsic != nir_intrinsic_load_point_coord && !fetch)
+      return false;
+   b->cursor = nir_before_instr(&in->instr);
+   nir_def_replace(&in->def, nir_imm_zero(b, in->def.num_components, in->def.bit_size));
+   return true;
+}
+
+/* an ALU instruction on 8-bit numbers done in 32 bits -- llvmpipe has no 8-bit compare, and the 27 release's
+ * uber shaders compare their i8 function constants everywhere */
+static unsigned
+widen_8bit(const nir_instr *instr, void *data)
+{
+   (void)data;
+   if (instr->type != nir_instr_type_alu)
+      return 0;
+   const nir_alu_instr *alu = nir_instr_as_alu(instr);
+   if (alu->def.bit_size == 8)
+      return 32;
+   for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++)
+      if (alu->src[i].src.ssa->bit_size == 8)
+         return 32;
+   return 0;
+}
+
 static void
 finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
 {
+   {
+      const char *name = screen->get_name(screen);
+
+      if (name && strstr(name, "llvmpipe")) {
+         /* the uber shaders nest their ifs past what llvmpipe takes (LP_MAX_TGSI_NESTING) until the decided
+          * branches are gone */
+         NIR_PASS(_, nir, nir_lower_returns);   /* (a return inside control flow, which llvmpipe does not take) */
+         shrink_decided(nir);
+         if (nir->info.stage == MESA_SHADER_FRAGMENT)
+            NIR_PASS(_, nir, nir_shader_intrinsics_pass, point_coord_zero, nir_metadata_control_flow, NULL);
+         NIR_PASS(_, nir, nir_lower_bit_size, widen_8bit, NULL);
+      }
+   }
    /* A fragment shader's [[position]]: the frontend hands it over as a system-value
     * variable, because that is the one form both of the drivers behind this library can
     * be served from (the long version is beside air.position in air_to_nir.c and in
@@ -471,15 +525,32 @@ finalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)
     * pixels, a quad that covers the pixels around (0, 0) and nothing else.
     * On the Mali only target 0 at pixel (0, 0) ever drew (tools/mesa/air-panfrost.patch).
     */
-   if (!screen_lowers_io(screen))
+   if (!screen_lowers_io(screen)) {
+      /* llvmpipe (the Mac's replays) takes plain load_input, as Mesa's GL state tracker hands it: it has no
+       * load_barycentric_pixel, and interpolates from the input variables */
+      const char *sname = screen->get_name(screen);
+      bool llvmpipe = sname && strstr(sname, "llvmpipe");
+
       NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
-               type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);
+               type_size_vec4, llvmpipe ? 0 : nir_lower_io_use_interpolated_input_intrinsics);
+   }
    /* What the shader reads and writes, in nir->info. softpipe and ir3 work it
     * out for themselves; panfrost takes inputs_read and outputs_written as they
     * come (pan_shader.c), and with them zero the vertex shader fetched no
     * position and nothing reached a pixel on the Mali (tools/mesa/air-panfrost.patch).
     */
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+   /* llvmpipe's own lowering (booleans to 32 bits and the rest, lp_build_opt_nir), which Mesa's GL state tracker
+    * would have called: the Mac's replays only */
+   {
+      const char *name = screen->get_name(screen);
+
+      if (name && strstr(name, "llvmpipe") && screen->finalize_nir)
+         screen->finalize_nir(screen, nir);
+   }
+   /* RWA_PRINT_NIR=1 (the Mac's replays): the stage as the driver gets it, on stderr */
+   if (debug_get_bool_option("RWA_PRINT_NIR", false))
+      nir_print_shader(nir, stderr);
 }
 
 /*
@@ -586,6 +657,19 @@ rwa_device_open(char *why, size_t why_size)
     * reason freedreno's is above.
     */
    if (!software) {
+      /* boot-arg rwa_noafbc=1: panfrost without AFBC (PAN_MESA_DEBUG=noafbc), set before its screen reads it. A
+       * sampled texture over 16 x 16 is made AFBC, and a picture the processor hands over (-replaceRegion:) reaches
+       * it by panfrost's own blit from a staging texture: the 27 release's icons and labels arrive whole and are
+       * drawn empty (15 November) */
+#ifdef __APPLE__
+      {
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "rwa_noafbc=1"))
+            setenv("PAN_MESA_DEBUG", "noafbc", 1);
+      }
+#endif
       int fd = drmOpenWithType("panfrost", NULL, DRM_NODE_RENDER);
       if (fd < 0) {
          say(why, why_size, "there is no GPU here: no panfrost device to open, which is "
@@ -1730,6 +1814,33 @@ rwa_texture_from_surface(struct rwa_device *device, const struct rwa_texture_sha
       .id = surface_id, .offset = offset, .row_bytes = row_bytes };
 
    return texture_of_shape(device, shape, &import, why, why_size);
+}
+
+
+/*
+ * MTLTextureSwizzleChannels -- red, green, blue, alpha, each Zero 0, One 1, Red 2, Green 3, Blue 4, Alpha 5 -- for
+ * every sample of this texture. It was dropped (15 November): CoreAnimation keeps an opaque image as BGRX with
+ * alpha swizzled to One, and read without it the alpha was the X byte, the image transparent and the home screen
+ * without its icons. 0, or -1 for a channel that is none of the six.
+ */
+int
+rwa_texture_set_swizzle(struct rwa_texture *t, const unsigned char channels[4])
+{
+   RWA_GUARD();
+   static const unsigned char map[6] = { PIPE_SWIZZLE_0, PIPE_SWIZZLE_1, PIPE_SWIZZLE_X,
+                                         PIPE_SWIZZLE_Y, PIPE_SWIZZLE_Z, PIPE_SWIZZLE_W };
+   if (!t)
+      return -1;
+   for (unsigned i = 0; i < 4; i++)
+      if (channels[i] > 5)
+         return -1;
+   for (unsigned i = 0; i < 4; i++)
+      t->swizzle[i] = map[channels[i]];
+   t->swizzled = !(channels[0] == 2 && channels[1] == 3 && channels[2] == 4 && channels[3] == 5);
+   /* a view made before is made again at the next sample, with this */
+   if (t->view)
+      pipe_sampler_view_reference(&t->view, NULL);
+   return 0;
 }
 
 void
@@ -4225,6 +4336,12 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
          if (!t->view) {
             struct pipe_sampler_view tmpl = { 0 };
             u_sampler_view_default_template(&tmpl, t->res, texture_format(t));
+            if (t->swizzled) {
+               tmpl.swizzle_r = t->swizzle[0];
+               tmpl.swizzle_g = t->swizzle[1];
+               tmpl.swizzle_b = t->swizzle[2];
+               tmpl.swizzle_a = t->swizzle[3];
+            }
             t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
             if (!t->view) {
                say(why, why_size, "%s would not make a sampler view of the %s bound at "
@@ -5749,7 +5866,44 @@ struct rwa_render {
     * the draw binds the streams it names instead of the quad.
     */
    struct rwa_vertex_state vstate;
+
+   /* the colour outputs the translated fragment shader stores to, one bit per [[color(n)]]
+    * (rwa_render_outputs): after air.function_constant predicates, before the driver's passes */
+   unsigned fs_writes;
 };
+
+/* The [[color(n)]] outputs a translated fragment shader stores to, one bit each. */
+static unsigned
+fs_written_targets(nir_shader *fs)
+{
+   unsigned mask = 0;
+
+   nir_foreach_function_impl(impl, fs) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+            nir_intrinsic_instr *in = nir_instr_as_intrinsic(instr);
+            unsigned location = 0;
+
+            if (in->intrinsic == nir_intrinsic_store_deref) {
+               nir_variable *var = nir_deref_instr_get_variable(nir_src_as_deref(in->src[0]));
+
+               if (var == NULL || var->data.mode != nir_var_shader_out)
+                  continue;
+               location = var->data.location;
+            } else if (in->intrinsic == nir_intrinsic_store_output) {
+               location = nir_intrinsic_io_semantics(in).location;
+            } else {
+               continue;
+            }
+            if (location >= FRAG_RESULT_DATA0 && location < FRAG_RESULT_DATA0 + 8)
+               mask |= 1u << (location - FRAG_RESULT_DATA0);
+         }
+      }
+   }
+   return mask;
+}
 
 /* Clone, finalise and compile one stage, handing the driver a copy it may steal. The
  * clone is not freed on failure, for compute_state_for's reason: a driver that refused
@@ -6638,6 +6792,46 @@ rwa_render_constants(const struct rwa_constant *vertex, unsigned vertex_count,
       memcpy(next_fragment_constants, fragment, next_fragment_count * sizeof(*fragment));
 }
 
+/* A stage whose configuration was folded in (rwa_render_config) is an uber shader with most of
+ * its branches now decided: this takes them away before the driver gets it, which keeps its
+ * copy of the shader (panfrost keeps the NIR for the pipeline's life) the size of what runs. */
+static void
+shrink_decided(nir_shader *nir)
+{
+   bool progress;
+   unsigned rounds = 0;
+
+   do {
+      progress = false;
+      NIR_PASS(progress, nir, nir_copy_prop);
+      NIR_PASS(progress, nir, nir_opt_constant_folding);
+      NIR_PASS(progress, nir, nir_opt_dead_cf);
+      NIR_PASS(progress, nir, nir_opt_if, 0);
+      NIR_PASS(progress, nir, nir_opt_remove_phis);
+      NIR_PASS(progress, nir, nir_opt_dce);
+      NIR_PASS(progress, nir, nir_opt_cse);
+   } while (progress && ++rounds < 24);
+}
+
+/* rwa_render_config: buffer 0 of each stage as the next rwa_render_create on this thread
+ * knows it (air_to_nir_options.const_buffers): a generic pipeline specialized for one
+ * configuration. Taken once, as the constants are. */
+#define RWA_MAX_CONFIG 256
+static _Thread_local uint8_t next_vertex_config[RWA_MAX_CONFIG], next_fragment_config[RWA_MAX_CONFIG];
+static _Thread_local unsigned next_vertex_config_size, next_fragment_config_size;
+
+void
+rwa_render_config(const void *vertex, unsigned vertex_size, const void *fragment, unsigned fragment_size)
+{
+   RWA_GUARD();
+   next_vertex_config_size = vertex ? MIN2(vertex_size, RWA_MAX_CONFIG) : 0;
+   next_fragment_config_size = fragment ? MIN2(fragment_size, RWA_MAX_CONFIG) : 0;
+   if (next_vertex_config_size)
+      memcpy(next_vertex_config, vertex, next_vertex_config_size);
+   if (next_fragment_config_size)
+      memcpy(next_fragment_config, fragment, next_fragment_config_size);
+}
+
 /* the values a runtime handed over, laid on the zeros air_module_function_constants made */
 static void
 take_constants(struct air_constant_value *values, unsigned count,
@@ -6660,6 +6854,9 @@ rwa_render_create(struct rwa_device *device,
 {
    RWA_GUARD();
    int64_t made_began = os_time_get_nano();
+   /* the configuration rwa_render_config gave, for this pipeline only */
+   const unsigned vertex_config_size = next_vertex_config_size, fragment_config_size = next_fragment_config_size;
+   next_vertex_config_size = next_fragment_config_size = 0;
    if (!shape) {
       say(why, why_size, "a render pipeline with no attachment description");
       return NULL;
@@ -6831,8 +7028,20 @@ rwa_render_create(struct rwa_device *device,
    unsigned num_ffc =
       air_module_function_constants(render->mem_ctx, fragment_bitcode, fragment_size, &ffc);
    take_constants(ffc, num_ffc, next_fragment_constants, next_fragment_count);
+   /* which of them were given: the rest are undefined for air.is_function_constant_defined, and the
+    * shader takes its own default -- fixed_frag_lph_cph's fc_blend_function is 63 when not given and was
+    * read as 0, every one of CoreAnimation's constants it leaves out was (15 November) */
+   unsigned fdefined[RWA_MAX_CONSTANTS];
+   for (unsigned i = 0; i < next_fragment_count; i++)
+      fdefined[i] = next_fragment_constants[i].index;
+   const unsigned num_fdefined = next_fragment_count;
    next_fragment_count = 0;
-   const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc };
+   const struct air_const_buffer fcb = { .index = 0, .data = next_fragment_config,
+                                         .size = fragment_config_size };
+   const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
+                                             .const_buffers = &fcb,
+                                             .num_const_buffers = fragment_config_size ? 1 : 0,
+                                             .defined = fdefined, .num_defined = num_fdefined };
    const char *error;
    nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
                                fragment_entry, &fopts, device->nir_options, &render->finfo,
@@ -6850,6 +7059,7 @@ rwa_render_create(struct rwa_device *device,
              ? _mesa_shader_stage_to_string(render->finfo.stage) : "non-fragment");
       goto fail;
    }
+   render->fs_writes = fs_written_targets(fs);
    slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);
    count_resources(&render->finfo, render->frag_slots, &out.fragment_buffers,
                    &out.fragment_textures, &out.fragment_samplers);
@@ -6888,7 +7098,15 @@ rwa_render_create(struct rwa_device *device,
       unsigned num_vfc =
          air_module_function_constants(render->mem_ctx, vertex_bitcode, vertex_size, &vfc);
       take_constants(vfc, num_vfc, next_vertex_constants, next_vertex_count);
-      const struct air_to_nir_options vopts = { .constants = vfc, .num_constants = num_vfc };
+      unsigned vdefined[RWA_MAX_CONSTANTS];
+      for (unsigned i = 0; i < next_vertex_count; i++)
+         vdefined[i] = next_vertex_constants[i].index;
+      const struct air_const_buffer vcb = { .index = 0, .data = next_vertex_config,
+                                            .size = vertex_config_size };
+      const struct air_to_nir_options vopts = { .constants = vfc, .num_constants = num_vfc,
+                                                .const_buffers = &vcb,
+                                                .num_const_buffers = vertex_config_size ? 1 : 0,
+                                                .defined = vdefined, .num_defined = next_vertex_count };
       vs = air_to_nir(render->mem_ctx, vertex_bitcode, vertex_size, vertex_entry, &vopts,
                       device->nir_options, &render->vinfo, &error);
       if (!vs) {
@@ -6983,6 +7201,10 @@ rwa_render_create(struct rwa_device *device,
       pthread_mutex_lock(&rwa_lock);
       unlocked = false;
    }
+   if (fragment_config_size)
+      shrink_decided(fs);
+   if (vertex_config_size && !render->generated_vertex)
+      shrink_decided(vs);
    render->fs_cso = make_stage_cso(device, fs, &render->finfo, why, why_size);
    if (!render->fs_cso)
       goto fail;
@@ -6995,6 +7217,13 @@ rwa_render_create(struct rwa_device *device,
       ralloc_free(vs);
    if (!render->vs_cso)
       goto fail;
+   /* ... and the translated stages under mem_ctx too, which nothing reads after this (the
+    * shader info's arrays are copies of their own, air_to_nir.c): a pipeline kept them for
+    * its whole life, and a generic pipeline's variants are an uber shader's translation each
+    * -- run 94 ran the system out of compressor space and jetsam took PosterBoard */
+   ralloc_free(fs);
+   if (!render->generated_vertex)
+      ralloc_free(vs);
    rwa_pipelines_made++;
    rwa_pipelines_translate_ns += made_translated - made_began;
    rwa_pipelines_compile_ns += os_time_get_nano() - made_translated;
@@ -7023,6 +7252,27 @@ rwa_render_create(struct rwa_device *device,
    if (!blend_state_from_metal(shape, device->screen, &blend, &out.blend_enabled_mask,
                                &out.color_write_masks, why, why_size))
       goto fail;
+   /* boot-arg rwa_noblendfetch=1: a pipeline whose shader reads the framebuffer gets no hardware blend -- a test
+    * of whether a Mali loses what a shader both fetches and has blended (15 November: CoreAnimation 27's icon and
+    * label pipelines are the ones with both, and the only ones that never reach the screen) */
+   {
+      static int noblend = -1;
+
+      if (noblend < 0) {
+         noblend = getenv("RWA_NOBLENDFETCH") != NULL;
+#ifdef __APPLE__
+         char args[1024] = "";
+         size_t size = sizeof(args) - 1;
+
+         if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0)
+            noblend = strstr(args, "rwa_noblendfetch=1") != NULL;
+#endif
+      }
+      if (noblend && render->finfo.fbfetch_targets) {
+         for (unsigned i = 0; i < PIPE_MAX_COLOR_BUFS; i++)
+            blend.rt[i].blend_enable = 0;
+      }
+   }
    render->blend = device->pipe->create_blend_state(device->pipe, &blend);
    /* The pipeline's own depth/stencil state, and it is the ZEROED one on purpose: it is
     * what a draw gets when the caller passes no rwa_depth_stencil, which is Metal's
@@ -7173,6 +7423,15 @@ fail:
       pthread_mutex_lock(&rwa_lock);   /* (the guard lets go of it on the way out) */
    rwa_render_destroy(render);
    return NULL;
+}
+
+/* What a pipeline's fragment shader writes and reads of its colour attachments, one bit
+ * per [[color(n)]] each: the outputs it stores to and the targets it fetches. */
+void
+rwa_render_outputs(const struct rwa_render *render, unsigned *writes, unsigned *fetches)
+{
+   *writes = render ? render->fs_writes : 0;
+   *fetches = render ? render->finfo.fbfetch_targets : 0;
 }
 
 void

@@ -10,6 +10,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/sysctl.h>
+#include <stdarg.h>
+#include <stdlib.h>
 
 namespace {
 
@@ -69,11 +71,128 @@ rwm_work_keep(struct rwm_work *w, void *object)
 	}
 }
 
+namespace {
+
+/*
+ * Boot-arg rwm_passlog=S: the window server's passes in order, from S seconds after its first pass and for as many as
+ * fit in 700 lines ("!!P" lines into the host's kept buffer). "b N" a pass begins; "c I ID WxH F L" its attachment I,
+ * the texture's id, size, format, L 1 when it clears (MTLLoadActionClear) and its store action; "d LABEL c:IDS t:IDS"
+ * a draw, its pipeline and the textures it samples; "e N" the pass ends after N draws. A texture's id is the low 16
+ * bits of its address, so a pass that samples what an earlier one drew shows it by the same id.
+ */
+unsigned passlog_pass;
+unsigned passlog_draws;
+char passlog_buf[3000], passlog_prev[3000];
+size_t passlog_len;
+unsigned passlog_repeat;
+unsigned passlog_lines;
+
+/* on from S seconds after the window server's first pass, until 1100 lines were said */
+bool
+passlog_on(void)
+{
+	static int state = -1;
+	static uint64_t start_ns;
+
+	if (state < 0) {
+		const char *at = strstr(rwm_boot_args(), "rwm_passlog=");
+		unsigned sec = 0;
+
+		state = at != nullptr && sscanf(at + 12, "%u", &sec) == 1 && strcmp(getprogname(), "backboardd") == 0;
+		start_ns = rwm_ns() + (uint64_t)sec * 1000000000ull;
+	}
+	return state == 1 && passlog_lines < 1100 && rwm_ns() >= start_ns;
+}
+
+void
+passlog_say(const char *text)
+{
+	char line[220];
+
+	snprintf(line, sizeof(line), "!!P %s", text);
+	sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	passlog_lines++;
+}
+
+/* a line of the pass being recorded, kept until its end */
+void
+passlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+void
+passlog(const char *fmt, ...)
+{
+	va_list ap;
+
+	if (passlog_len + 220 > sizeof(passlog_buf)) {
+		return;
+	}
+	va_start(ap, fmt);
+	int n = vsnprintf(passlog_buf + passlog_len, sizeof(passlog_buf) - passlog_len - 1, fmt, ap);
+	va_end(ap);
+	if (n > 0) {
+		passlog_len += (size_t)n < sizeof(passlog_buf) - passlog_len - 2 ? (size_t)n : 0;
+		passlog_buf[passlog_len++] = '\n';
+		passlog_buf[passlog_len] = 0;
+	}
+}
+
+/* the pass ended: said line by line unless it is the same as the one before (textures' ids aside: the swap chain's
+ * surfaces turn), which only counts it */
+void
+passlog_flush(void)
+{
+	char key[3000];
+	size_t k = 0;
+
+	for (size_t i = 0; i < passlog_len && k < sizeof(key) - 1; i++) {
+		if (passlog_buf[i] == 'c' && (i == 0 || passlog_buf[i - 1] == '\n')) {
+			while (i < passlog_len && passlog_buf[i] != '\n') {   /* attachments: only their formats count */
+				i++;
+			}
+			continue;
+		}
+		key[k++] = passlog_buf[i];
+	}
+	key[k] = 0;
+	if (strcmp(key, passlog_prev) == 0) {
+		passlog_repeat++;
+	} else {
+		char line[64];
+
+		if (passlog_repeat != 0) {
+			snprintf(line, sizeof(line), "r %u", passlog_repeat);
+			passlog_say(line);
+		}
+		passlog_repeat = 0;
+		snprintf(line, sizeof(line), "b %u", passlog_pass);
+		passlog_say(line);
+		for (char *at = passlog_buf, *nl; *at != 0 && (nl = strchr(at, '\n')) != nullptr; at = nl + 1) {
+			*nl = 0;
+			passlog_say(at);
+		}
+		memcpy(passlog_prev, key, k + 1);
+	}
+	passlog_len = 0;
+	passlog_buf[0] = 0;
+}
+
+unsigned
+tex_id(const struct rwm_texture *t)
+{
+	return t != nullptr ? (unsigned)((uintptr_t)t >> 4 & 0xffff) : 0;
+}
+
+} // namespace
+
 extern "C" void
 rwm_render_begin(struct rwm_render_state *s, struct rwa_device *device)
 {
 	memset(s, 0, sizeof(*s));
 	s->device = device;
+	passlog_draws = 0;
+	passlog_pass++;
+	passlog_len = 0;
+	passlog_buf[0] = 0;
 }
 
 /*
@@ -91,6 +210,12 @@ rwm_render_color(struct rwm_render_state *s, unsigned index, void *object, struc
 		return;
 	}
 	s->color[index] = rwm_bound_texture{ object, core };
+	if (core != nullptr && passlog_on()) {
+		const struct rwa_texture_shape *sh = rwm_texture_shape(core);
+
+		passlog("c %u %04x %ux%u %u %d %lu", index, tex_id(core), sh->width, sh->height, sh->pixel_format, clears ? 1 : 0,
+			store);
+	}
 	s->color_count = index + 1;
 	if (store == 2 || store == 3 || resolve_texture) {
 		rwm_print("colour attachment %u asks for a multisample "
@@ -291,6 +416,65 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 			  s->pipeline == nullptr ? "no pipeline state" : "nothing to draw into");
 		return false;
 	}
+	passlog_draws++;
+	/* a generic pipeline drawn with its variant for the configuration bound in buffer 0 (src/metal/pipeline.cpp) */
+	struct rwa_render *special = rwm_generic_variant(s->render, s->vertex_count > 0 ? s->vertex[0].buffer : nullptr,
+							  s->vertex_count > 0 ? s->vertex[0].offset : 0,
+							  s->fragment_count > 0 ? s->fragment[0].buffer : nullptr,
+							  s->fragment_count > 0 ? s->fragment[0].offset : 0);
+	if (passlog_on()) {
+		const char *label = rwm_area_label_of(s->render);
+		char tex[120];
+		int n = 0;
+
+		if (label != nullptr && strncmp(label, "com.apple.coreanimation.", 24) == 0) {
+			label += 24;
+		}
+		tex[0] = 0;
+		for (unsigned i = 0; i < s->texture_count && i < 12 && n < (int)sizeof(tex) - 8; i++) {
+			if (s->textures[i].core != nullptr) {
+				const struct rwa_texture_shape *sh = rwm_texture_shape(s->textures[i].core);
+
+				/* the size of what is sampled, for slots 3 and 4 (the images), so an icon can be told from a 1 x 1 */
+				if (i <= 4 && sh != nullptr && (sh->width > 1 || sh->height > 1)) {
+					n += snprintf(tex + n, sizeof(tex) - n, "%u=%04x:%ux%u/%u,", i, tex_id(s->textures[i].core),
+						      sh->width, sh->height, sh->pixel_format);
+				} else if (i <= 4) {
+					n += snprintf(tex + n, sizeof(tex) - n, "%u=%04x,", i, tex_id(s->textures[i].core));
+				}
+			}
+		}
+		char vtag[16] = "";
+
+		if (special != nullptr) {
+			snprintf(vtag, sizeof(vtag), "+V%u", rwm_generic_last_variant());
+		}
+		/* and the fragment samplers bound, index=id, so a slot the shader samples with nothing in it shows (15 November) */
+		char smp[64];
+		int m = 0;
+
+		smp[0] = 0;
+		for (unsigned i = 0; i < s->sampler_count && i < 8 && m < (int)sizeof(smp) - 12; i++) {
+			if (s->samplers[i] != nullptr) {
+				m += snprintf(smp + m, sizeof(smp) - m, "%u=%04x,", i,
+					      (unsigned)(((uintptr_t)s->samplers[i] >> 4) & 0xffff));
+			}
+		}
+		/* and the scissor and viewport, so a draw that lands outside what is kept shows (15 November) */
+		char clip[64] = "";
+
+		if (s->has_scissor) {
+			snprintf(clip, sizeof(clip), " sc:%u,%u,%ux%u", s->scissor[0], s->scissor[1], s->scissor[2], s->scissor[3]);
+		}
+		if (s->has_viewport) {
+			size_t at = strlen(clip);
+
+			snprintf(clip + at, sizeof(clip) - at, " vp:%d,%d,%dx%d", (int)s->viewport[0], (int)s->viewport[1],
+				 (int)s->viewport[2], (int)s->viewport[3]);
+		}
+		passlog("d %s%s n%llu t:%s s:%s%s", label != nullptr ? label : "?", vtag, (unsigned long long)call->count, tex,
+			smp, clip);
+	}
 	/*
 	 * What the library carries in 32 bits and Metal hands over in 64: `index_bias` in Gallium is a signed int and
 	 * instance counts unsigned, so a number that does not fit would be recorded as a DIFFERENT number -- a base
@@ -322,7 +506,7 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 	rwm_work_keep(w, s->depth_stencil_object);
 	rwm_work_keep(w, call->index_object);
 
-	d->render = s->render;
+	d->render = special != nullptr ? special : s->render;
 	d->stream_mask = s->stream_mask;
 	d->stream_count = s->stream_count;
 	d->color_count = s->color_count;
@@ -432,6 +616,10 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 extern "C" bool
 rwm_render_end(struct rwm_render_state *s, struct rwm_work *w)
 {
+	if (passlog_on()) {
+		passlog("e %u", passlog_draws);
+		passlog_flush();
+	}
 	if (!s->clears && !s->clears_depth && !s->clears_stencil) {
 		return false;
 	}

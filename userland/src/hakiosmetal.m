@@ -275,6 +275,134 @@ static void ensure_function_encoder(void);
 #define mesa_available() rwm_air_available()
 
 /*
+ * Boot-arg rwm_selftest=1 (backboardd): a picture handed over by the processor, as CoreAnimation's are (-replaceRegion:
+ * into a 192 x 192 texture made for reading only), copied by the GPU into a texture it can draw into and read back --
+ * for RGBA16Float (its icons), A8Unorm (its labels) and RGBA8Unorm. The 27 release's home screen has those pictures
+ * arrive whole and come out empty (15 November); this says whether the GPU sees what the processor wrote at all.
+ * One kept line each: what the source reads back as, and what the GPU's copy does.
+ */
+static void
+rw_selftest(struct rwa_device *device)
+{
+	static const unsigned formats[3] = { 115, 1, 70 };
+	enum { W = 192, H = 192 };
+
+	if (device == NULL || strstr(rwm_boot_args(), "rwm_selftest=1") == NULL || strcmp(getprogname(), "backboardd") != 0 ||
+	    mesa.texture_create == NULL || mesa.texture_write == NULL || mesa.texture_read == NULL ||
+	    mesa.texture_copy == NULL || mesa.finish == NULL) {
+		return;
+	}
+	for (unsigned k = 0; k < 3; k++) {
+		const unsigned f = formats[k], bpp = f == 115 ? 8 : f == 1 ? 1 : 4;
+		struct rwa_texture_shape src_shape = { .pixel_format = f, .type = 2, .width = W, .height = H, .depth = 1,
+						       .array_length = 1, .mip_levels = 1, .sample_count = 1, .usage = 0x1 };
+		struct rwa_texture_shape dst_shape = src_shape;
+		char why[256] = { 0 }, line[240];
+		uint8_t *pixels = (uint8_t *)calloc((size_t)W * H, 8), *back = (uint8_t *)calloc((size_t)W * H, 8);
+		const unsigned origin[3] = { 0, 0, 0 }, size[3] = { W, H, 1 };
+		struct rwa_texture *src, *dst = NULL;
+		unsigned long src_lit = 0, dst_lit = 0, sum[4] = { 0, 0, 0, 0 };
+		int wrote = -9, copied = -9, read_src = -9, read_dst = -9, done = -9;
+
+		dst_shape.pixel_format = 70;
+		dst_shape.usage = 0x5;
+		if (pixels == NULL || back == NULL) {
+			free(pixels);
+			free(back);
+			return;
+		}
+		/* the picture: an opaque colour, (0.8, 0.4, 0.2, 1) */
+		for (unsigned i = 0; i < W * H; i++) {
+			if (f == 115) {
+				const uint16_t h[4] = { 0x3a66, 0x3666, 0x3266, 0x3c00 };
+
+				memcpy(pixels + i * 8, h, 8);
+			} else if (f == 1) {
+				pixels[i] = 204;
+			} else {
+				pixels[i * 4 + 0] = 204;
+				pixels[i * 4 + 1] = 102;
+				pixels[i * 4 + 2] = 51;
+				pixels[i * 4 + 3] = 255;
+			}
+		}
+		src = mesa.texture_create(device, &src_shape, why, sizeof(why));
+		if (src != NULL) {
+			wrote = mesa.texture_write(src, 0, 0, origin, size, pixels, (size_t)W * bpp, why, sizeof(why));
+			dst = mesa.texture_create(device, &dst_shape, why, sizeof(why));
+		}
+		if (dst != NULL) {
+			copied = mesa.texture_copy(dst, 0, 0, origin, src, 0, 0, origin, size, why, sizeof(why));
+			done = mesa.finish(device, why, sizeof(why));
+			memset(back, 0, (size_t)W * H * 8);
+			read_src = mesa.texture_read(src, 0, 0, origin, size, back, (size_t)W * bpp, why, sizeof(why));
+			for (unsigned i = 0; i < W * H; i++) {
+				const uint8_t *p = back + (size_t)i * bpp;
+
+				src_lit += f == 115 ? (p[6] | p[7]) != 0 : f == 1 ? p[0] != 0 : p[3] != 0;
+			}
+			memset(back, 0, (size_t)W * H * 8);
+			read_dst = mesa.texture_read(dst, 0, 0, origin, size, back, (size_t)W * 4, why, sizeof(why));
+			for (unsigned i = 0; i < W * H; i++) {
+				dst_lit += back[i * 4 + 3] != 0;
+				for (unsigned c = 0; c < 4; c++) {
+					sum[c] += back[i * 4 + c];
+				}
+			}
+		}
+		snprintf(line, sizeof(line), "!!rwm selftest format %u: write %d copy %d finish %d; the source reads back %lu of %d "
+			 "with alpha (%d), the GPU's copy %lu (%d), average %lu %lu %lu %lu%s%s", f, wrote, copied, done, src_lit,
+			 W * H, read_src, dst_lit, read_dst, sum[0] / (W * H), sum[1] / (W * H), sum[2] / (W * H), sum[3] / (W * H),
+			 why[0] ? ": " : "", why);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		if (dst != NULL && mesa.texture_destroy != NULL) {
+			mesa.texture_destroy(dst);
+		}
+		if (src != NULL && mesa.texture_destroy != NULL) {
+			mesa.texture_destroy(src);
+		}
+		free(pixels);
+		free(back);
+	}
+}
+
+/*
+ * MTLTextureSwizzleChannels onto the library's texture: a descriptor's (-swizzle) or a view's. Until 15 November it was
+ * dropped, and CoreAnimation's images whose alpha is swizzled from One -- an opaque picture kept as BGRX -- read the X
+ * byte as their alpha. The first eight that are not the identity are said in the host's kept lines.
+ */
+static void
+rw_apply_swizzle(struct rwa_texture *texture, MTLTextureSwizzleChannels swizzle, unsigned format)
+{
+	const unsigned char channels[4] = { (unsigned char)swizzle.red, (unsigned char)swizzle.green,
+					    (unsigned char)swizzle.blue, (unsigned char)swizzle.alpha };
+	static unsigned said;
+
+	if (texture == NULL || (channels[0] == 2 && channels[1] == 3 && channels[2] == 4 && channels[3] == 5)) {
+		return;
+	}
+	if (mesa.texture_set_swizzle == NULL || mesa.texture_set_swizzle(texture, channels) != 0) {
+		rw_print("a texture's swizzle (%u %u %u %u) is not taken\n", channels[0], channels[1], channels[2], channels[3]);
+		return;
+	}
+	if (said++ < 8) {
+		char line[160];
+
+		snprintf(line, sizeof(line), "!!rwm %s: format %u swizzled %u %u %u %u", getprogname(), format, channels[0],
+			 channels[1], channels[2], channels[3]);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+}
+
+static void
+rw_apply_descriptor_swizzle(struct rwa_texture *texture, MTLTextureDescriptor *descriptor)
+{
+	if ([descriptor respondsToSelector:@selector(swizzle)]) {
+		rw_apply_swizzle(texture, [descriptor swizzle], (unsigned)[descriptor pixelFormat]);
+	}
+}
+
+/*
  * Say a thing once, per place that says it.
  *
  * Every method of this driver that declines to do something is called by a daemon that will
@@ -974,6 +1102,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 		_mesa = mesa.device_open(why, sizeof(why));
 		rw_print("the compiler library %s\n",
 		         _mesa != NULL ? mesa.device_name(_mesa) : why);
+		rw_selftest(_mesa);
 		rw_warm_start(self, _mesa);
 	}
 
@@ -1640,6 +1769,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	}
 	rwm_uploads[0]++;
 	rwm_uploads[1] += shape.width <= 512 && shape.height <= 512;
+	rw_apply_descriptor_swizzle(texture, descriptor);
 	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self
 							 texture:texture
 							   shape:&shape];
@@ -1670,7 +1800,28 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 		.lod_min = [descriptor lodMinClamp],
 		.lod_max = [descriptor lodMaxClamp],
 	};
+	/* boot-arg rwm_lod0=1: every sampler reads level 0 alone (a test of textures whose other levels were never written) */
+	if (strstr(rwm_boot_args(), "rwm_lod0=1") != NULL) {
+		state.mip_filter = 0;
+		state.lod_min = 0.0f;
+		state.lod_max = 0.0f;
+	}
 	struct rwa_sampler *sampler = mesa.sampler_create(_mesa, &state, why, sizeof(why));
+	/* the first sixteen samplers into the host's kept lines: filters, mip filter and the LOD range (15 November) */
+	{
+		static unsigned said;
+
+		if (said < 16) {
+			char line[200];
+
+			said++;
+			snprintf(line, sizeof(line), "!!rwm %s: sampler %04x address %u %u min %u mag %u mip %u norm %u lod %g..%g",
+				 getprogname(), (unsigned)(((uintptr_t)sampler >> 4) & 0xffff), state.address[0],
+				 state.address[1], state.min_filter, state.mag_filter, state.mip_filter,
+				 state.normalized_coordinates, (double)state.lod_min, (double)state.lod_max);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
 
 	if (sampler == NULL) {
 		rw_print("%s\n", why);
@@ -2197,6 +2348,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	if (core == NULL) {
 		return nil;
 	}
+	rw_apply_descriptor_swizzle(rwm_texture_mesa(core), d);
 
 	HakiosMetalTexture *made = [[HakiosMetalTexture alloc] initWithHakiosDevice:self core:core];
 
@@ -2735,6 +2887,35 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	(void)image;
 	rwm_uploads[2]++;
 	rwm_uploads[3] += ((unsigned long)stride * size[1] * (size[2] ? size[2] : 1)) >> 10;
+	/* the first forty pictures of 16 x 16 or more handed over this way, into the host's kept lines: their size and
+	 * format, and how much of them has any alpha -- the home screen's icons and labels come out empty (15 November) */
+	{
+		static unsigned said;
+		const unsigned format = rwm_texture_shape(_core)->pixel_format;
+		const unsigned bpp = format == 115 ? 8 : format == 1 || format == 10 ? 1 : 4;
+
+		if (said < 40 && size[0] >= 16 && size[1] >= 16 && bytes != NULL && stride >= (NSUInteger)size[0] * bpp) {
+			unsigned long seen = 0, lit = 0;
+			const uint8_t *b = (const uint8_t *)bytes;
+
+			said++;
+			for (unsigned y = 0; y < size[1]; y += (size[1] + 31) / 32) {
+				for (unsigned x = 0; x < size[0]; x += (size[0] + 31) / 32) {
+					const uint8_t *p = b + (size_t)y * stride + (size_t)x * bpp;
+					unsigned alpha = bpp == 1 ? p[0] : bpp == 8 ? (p[6] | p[7] << 8) : p[3];
+
+					seen++;
+					lit += alpha != 0;
+				}
+			}
+			char line[200];
+
+			snprintf(line, sizeof(line), "!!rwm %s: upload %ux%u format %u level %lu of %u, %lu bytes a row: %lu of %lu "
+				 "samples with alpha", getprogname(), size[0], size[1], format, (unsigned long)level,
+				 rwm_texture_shape(_core)->mip_levels, (unsigned long)stride, lit, seen);
+			sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+		}
+	}
 	if (!rwm_texture_write(_core, (unsigned)level, (unsigned)slice, origin, size, bytes, stride)) {
 		rwm_uploads[4]++;
 	}
@@ -2866,9 +3047,13 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 			     slices:(NSRange)slices
 			    swizzle:(MTLTextureSwizzleChannels)swizzle
 {
-	(void)swizzle;
-	return [self newTextureViewWithPixelFormat:format textureType:type levels:levels
-					    slices:slices];
+	HakiosMetalTexture *view = [self newTextureViewWithPixelFormat:format textureType:type levels:levels
+								 slices:slices];
+
+	if (view != nil) {
+		rw_apply_swizzle(rwm_texture_mesa([view hakiosCore]), swizzle, (unsigned)format);
+	}
+	return view;
 }
 - (id)newSharedTextureHandle { RW_NIL("-newSharedTextureHandle"); return nil; }   /* nothing here is shared between processes */
 

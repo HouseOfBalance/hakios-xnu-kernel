@@ -876,8 +876,9 @@ plain_function(id library, id name, id kept, id values)
 	 * the layer's configuration while they run -- the pipeline CoreAnimation draws with at once while Apple's
 	 * compiler makes the specialized ones in the background. Here it is the whole shader: fixed_frag_lph_cpf
 	 * came to 31588 Mali instructions and took 138 s to build, twice, with nothing on the screen meanwhile
-	 * (run 64). So it is made 0: the pipeline is built from the constants it was given, as every pipeline was
-	 * while no constant arrived (run 62, under a second each). Boot-arg rwm_generic=1 keeps CoreAnimation's.
+	 * (run 64). It is passed on as it is since 15 November: the Metal driver builds such a pipeline with it 0 and
+	 * draws with a variant built for each configuration (userland/src/metal/pipeline.cpp, generic_record). Boot-arg
+	 * rwm_generic=0: made 0 here, as before -- no variants, and the generic pipelines draw nothing (runs 68-91).
 	 */
 	static int keep_generic = -1;
 
@@ -885,8 +886,8 @@ plain_function(id library, id name, id kept, id values)
 		char arguments[1024] = "";
 		size_t size = sizeof(arguments) - 1;
 
-		keep_generic = sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
-		    strstr(arguments, "rwm_generic=1") != NULL;
+		keep_generic = !(sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 &&
+		    strstr(arguments, "rwm_generic=0") != NULL);
 	}
 
 	for (unsigned long i = 0; i < n; i++) {
@@ -904,7 +905,7 @@ plain_function(id library, id name, id kept, id values)
 				value = ((id (*)(id, SEL, unsigned long long))objc_msgSend)((id)objc_getClass("NSNumber"),
 				    sel_registerName("numberWithUnsignedLongLong:"), 0ull);
 				if (said_generic++ < 4) {
-					fc_note("%s: fc_generic made 0 (rwm_generic=1 keeps it)", text);
+					fc_note("%s: fc_generic made 0 (boot-arg rwm_generic=0)", text);
 				}
 			}
 			named++;
