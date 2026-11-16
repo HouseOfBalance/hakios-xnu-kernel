@@ -509,12 +509,12 @@ uint32_t FakeGpu::runFragment(uint8_t* job, std::string* why) {
     if (fb.fb.tiler != 0 && drawn_.count(fb.fb.tiler)) {
         drawsNotRasterized_++;      // a tiler job put primitives in this frame: the fake does not draw them
     }
-    // carried out: no primitive, so every tile is its clear colour, written back only by targets that write clean tiles
-    uint32_t x0 = frag.min_tx * 16 > fb.fb.bound_min_x ? frag.min_tx * 16 : fb.fb.bound_min_x;
-    uint32_t y0 = frag.min_ty * 16 > fb.fb.bound_min_y ? frag.min_ty * 16 : fb.fb.bound_min_y;
-    uint32_t x1 = frag.max_tx * 16 + 15, y1 = frag.max_ty * 16 + 15;     // inclusive
-    if (x1 > fb.fb.bound_max_x) x1 = fb.fb.bound_max_x;
-    if (y1 > fb.fb.bound_max_y) y1 = fb.fb.bound_max_y;
+    // carried out: no primitive, so every tile is its clear colour, written back only by targets that write clean tiles,
+    // inside the framebuffer's Bound Min/Max -- and not the job's tiles: on the phone a job over tiles (1,1)-(2,2) of a
+    // 64x64 frame wrote all of it, while the framebuffer's bounds (16..47, and 5,7..40,50 off the tile grid) were kept
+    // to the pixel (runs 501 and 502)
+    uint32_t x0 = fb.fb.bound_min_x, y0 = fb.fb.bound_min_y;
+    uint32_t x1 = fb.fb.bound_max_x, y1 = fb.fb.bound_max_y;     // inclusive
     if (x1 > fb.fb.width - 1) x1 = fb.fb.width - 1;
     if (y1 > fb.fb.height - 1) y1 = fb.fb.height - 1;
     for (const struct hm_v7_rt_read& r : rts) {

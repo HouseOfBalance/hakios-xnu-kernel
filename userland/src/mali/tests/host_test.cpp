@@ -307,6 +307,45 @@ static void testTwins() {
           target->cpu()[0] == 0xa5 && w.fake->pixelsWritten() == 0, "no clean pixel write: done, nothing written");
 }
 
+// what the phone's GPU did with a cleared frame's bounds (runs 501, 502), and the fake GPU now does: the job's tiles do
+// not limit what is written, the framebuffer's Bound Min/Max does, to the pixel
+static void testBounds() {
+    World w;
+    std::string why;
+    auto target = w.gpu.newBo(32768, &why);
+    Target t;
+    t.bo = target.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    auto written = [&](const ClearOptions& o, unsigned* x0, unsigned* y0, unsigned* x1, unsigned* y1) {
+        memset(target->cpu(), 0xa5, target->size());
+        auto pass = ClearPass::make(w.device, t, kColour, o, &why);
+        Submission s;
+        pass->submit(&s);
+        w.gpu.wait(s, 1000);
+        unsigned n = 0;
+        *x0 = *y0 = 99, *x1 = *y1 = 0;
+        for (unsigned y = 0; y < 64; y++) {
+            for (unsigned x = 0; x < 64; x++) {
+                if (word(target->cpu(), y * 64 + x) == 0xcc996633u) {
+                    n++;
+                    *x0 = x < *x0 ? x : *x0, *y0 = y < *y0 ? y : *y0, *x1 = x > *x1 ? x : *x1, *y1 = y > *y1 ? y : *y1;
+                }
+            }
+        }
+        return n;
+    };
+    unsigned x0, y0, x1, y1;
+    ClearOptions tiles;
+    tiles.minTx = tiles.minTy = 1;
+    tiles.maxTx = tiles.maxTy = 2;
+    CHECK(written(tiles, &x0, &y0, &x1, &y1) == 4096, "a job over tiles (1,1)-(2,2) writes the whole frame");
+    ClearOptions bounds;
+    bounds.boundMinX = 5, bounds.boundMinY = 7, bounds.boundMaxX = 40, bounds.boundMaxY = 50;
+    CHECK(written(bounds, &x0, &y0, &x1, &y1) == 36 * 44 && x0 == 5 && y0 == 7 && x1 == 40 && y1 == 50,
+          "the framebuffer's bounds (5,7)-(40,50): (%u,%u)-(%u,%u)", x0, y0, x1, y1);
+}
+
 static void testBuffers() {
     World w;
     std::string why;
@@ -342,6 +381,7 @@ int main() {
     testLiterals();
     testCarriedOut();
     testTwins();
+    testBounds();
     testBuffers();
     printf("host_test: %d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

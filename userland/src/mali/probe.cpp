@@ -110,18 +110,11 @@ bool runClear(Device& device, const ClearCase& c) {
     if (c.format == Format::BGRA8Unorm) {
         want[0] = b, want[2] = r;
     }
-    // the pixels the frame covers: its tiles, inside the frame
-    uint32_t lastTx = (c.width - 1) >> 4, lastTy = (c.height - 1) >> 4;
-    uint32_t x0 = c.options.minTx * 16, y0 = c.options.minTy * 16;
-    uint32_t x1 = (c.options.maxTx == ~0u ? lastTx : c.options.maxTx) * 16 + 15;
-    uint32_t y1 = (c.options.maxTy == ~0u ? lastTy : c.options.maxTy) * 16 + 15;
-    if (x1 >= c.width) x1 = c.width - 1;
-    if (y1 >= c.height) y1 = c.height - 1;
-    // and inside the framebuffer's bounds (the fake GPU's model: both limit what is written)
-    x0 = x0 > c.options.boundMinX ? x0 : c.options.boundMinX;
-    y0 = y0 > c.options.boundMinY ? y0 : c.options.boundMinY;
-    if (c.options.boundMaxX != ~0u && x1 > c.options.boundMaxX) x1 = c.options.boundMaxX;
-    if (c.options.boundMaxY != ~0u && y1 > c.options.boundMaxY) y1 = c.options.boundMaxY;
+    // the pixels the frame covers: the framebuffer's bounds inside the frame. Not the job's tiles: on the phone a job
+    // over some of the frame's tiles wrote all of it (runs 501, 502), while the framebuffer's bounds held to the pixel
+    uint32_t x0 = c.options.boundMinX, y0 = c.options.boundMinY;
+    uint32_t x1 = c.options.boundMaxX == ~0u ? c.width - 1 : c.options.boundMaxX;
+    uint32_t y1 = c.options.boundMaxY == ~0u ? c.height - 1 : c.options.boundMaxY;
 
     Transport& tr = device.gpu().transport();
     Submission s;
@@ -301,6 +294,7 @@ int main(int argc, char** argv) {
     ClearCase bgra = {"clear64-bgra", 64, 64, 256, 0, Format::BGRA8Unorm, {0.2f, 0.4f, 0.6f, 0.8f}, {}, true};
     runClear(device, bgra);
 
+    // a job over tiles (1,1)-(2,2) alone: the whole frame is written all the same (runs 501, 502)
     ClearCase tiles = {"clear64-tiles", 64, 64, 256, 0, Format::RGBA8Unorm, {0.0f, 0.0f, 1.0f, 1.0f}, {}, true};
     tiles.options.minTx = tiles.options.minTy = 1;
     tiles.options.maxTx = tiles.options.maxTy = 2;
@@ -403,6 +397,23 @@ int main(int argc, char** argv) {
                      e ? strerror(e) : "", inRight, inTotal, outRight, outTotal, red, red ? bx0 : 0, red ? by0 : 0, bx1,
                      by1, row20, row44, w[0], w[1], w[2], w[3], canaryKept,
                      (unsigned long long)(bo->size() - 256 * 64), (unsigned long long)us);
+            // the target itself, for the host (tools/probe-picture.py LOG OUT.png triangle): RGB, base64, 96 bytes a line
+            {
+                static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                std::vector<uint8_t> rgb;
+                for (uint32_t i = 0; i < 64 * 64; i++) {
+                    rgb.insert(rgb.end(), bo->cpu() + 4 * i, bo->cpu() + 4 * i + 3);
+                }
+                const unsigned per = 72, lines = (rgb.size() + per - 1) / per;
+                for (unsigned l = 0; l < lines; l++) {
+                    std::string text;
+                    for (size_t i = l * per; i < rgb.size() && i < (l + 1) * per; i += 3) {
+                        uint32_t v = rgb[i] << 16 | rgb[i + 1] << 8 | rgb[i + 2];
+                        for (int k = 18; k >= 0; k -= 6) text += b64[(v >> k) & 63];
+                    }
+                    printf("mali-picture triangle 64x64 %u/%u: %s\n", l + 1, lines, text.c_str());
+                }
+            }
             bool jobs = e == 0 && (tri->vertexStatus() & 0xff) == 1 && (tri->tilerStatus() & 0xff) == 1 &&
                         (tri->fragmentStatus() & 0xff) == 1;
             if (fake != nullptr) {
