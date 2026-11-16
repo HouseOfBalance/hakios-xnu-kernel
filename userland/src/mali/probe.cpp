@@ -431,10 +431,22 @@ bool runDepth(Device& device, bool test) {
     if (e == 0) e = device.gpu().wait(fs, 2000000);
     // pixels well inside both triangles: x + y in pixel space between the two hypotenuses, away from the edges
     unsigned green = 0, red = 0, judged = 0;
-    for (uint32_t y = 14; y < 50; y++) {
-        for (uint32_t x = 14; x < 50; x++) {
+    for (uint32_t y = 0; y < 64; y++) {
+        for (uint32_t x = 0; x < 64; x++) {
             float px = x + 0.5f, py = y + 0.5f;
-            bool both = px > 10 && py > 10 && px < 54 && py < 54 && px + py > 50 && px + py < 62;
+            // inside both triangles by more than a pixel: near (8,8) (56,8) (8,56), far (56,56) (8,40) (40,8)
+            auto inside = [&](const float* tx, const float* ty) {
+                for (int k = 0; k < 3; k++) {
+                    float ax = tx[k], ay = ty[k], bx = tx[(k + 1) % 3], by = ty[(k + 1) % 3];
+                    float cx = tx[(k + 2) % 3], cy = ty[(k + 2) % 3];
+                    float ex = bx - ax, ey = by - ay, len = std::sqrt(ex * ex + ey * ey);
+                    float side = ((cx - ax) * ey - (cy - ay) * ex) > 0 ? 1.0f : -1.0f;
+                    if (side * ((px - ax) * ey - (py - ay) * ex) / len <= 1.0f) return false;
+                }
+                return true;
+            };
+            const float nx[3] = {8, 56, 8}, ny[3] = {8, 8, 56}, fx[3] = {56, 8, 40}, fy[3] = {56, 40, 8};
+            bool both = inside(nx, ny) && inside(fx, fy);
             if (!both) continue;
             judged++;
             const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
