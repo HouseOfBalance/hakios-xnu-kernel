@@ -649,7 +649,8 @@ bool runMultiDraw(Device& device) {
     unsigned left = 0, right = 0, mid = 0, n = 0;
     for (int y = 4; y < 60; y++) {
         left += is(at(6, y), 0, 0xff, 0);
-        right += is(at(61, y), 0, 0, 0xff);
+        // the right triangle (0.5,-1) (1,-1) (1,1) covers column 61 down to row 53 (y = -1 + 4 (x - 0.5))
+        right += y <= 50 ? is(at(61, y), 0, 0, 0xff) : 1;
         mid += is(at(32, y), 0xff, 0xff, 0);
         n++;
     }
