@@ -298,7 +298,7 @@ uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why, bool compu
             *why = "the tiler job has no Position or no Viewport";
             return kJobConfigFault;
         }
-        if (d.draw_mode != 8 || (d.index_type != 0 && d.index_type != 2)) {
+        if ((d.draw_mode != 8 && d.draw_mode != 2 && d.draw_mode != 1) || (d.index_type != 0 && d.index_type != 2)) {
             *why = "a draw mode or index type the fake does not model (triangles, no indices or 16-bit: 8, 0 or 2)";
             return kJobConfigFault;
         }

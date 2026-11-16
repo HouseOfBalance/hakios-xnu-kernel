@@ -522,11 +522,21 @@ void
 hm_v7_tiler_job_indexed(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
     uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices)
 {
+	hm_v7_tiler_job_mode(job, index, dependency, next, vertex_count, tiler, draw, index_count, indices,
+	    MALI_DRAW_MODE_TRIANGLES);
+}
+
+void
+hm_v7_tiler_job_mode(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
+    uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices, unsigned draw_mode)
+{
+	bool lines = draw_mode == MALI_DRAW_MODE_LINES;
 	pack_invocation(pan_section_ptr(job, TILER_JOB, INVOCATION), vertex_count);
 	/* jm_emit_primitive */
 	pan_section_pack(job, TILER_JOB, PRIMITIVE, cfg) {
-		cfg.draw_mode = MALI_DRAW_MODE_TRIANGLES;
-		cfg.first_provoking_vertex = false;     /* rast->flatshade_first */
+		cfg.draw_mode = (enum mali_draw_mode)draw_mode;
+		/* "For line primitives, PRIMITIVE.first_provoking_vertex must be set to true" */
+		cfg.first_provoking_vertex = lines;
 		cfg.job_task_split = 6;
 		cfg.low_depth_cull = true;              /* rast->depth_clip_near */
 		cfg.high_depth_cull = true;             /* rast->depth_clip_far */

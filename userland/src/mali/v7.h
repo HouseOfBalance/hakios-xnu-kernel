@@ -168,6 +168,11 @@ void hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t ne
  * shaded (jm_emit_primitive: index type, count and the indices' address; base vertex 0) */
 void hm_v7_tiler_job_indexed(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
     uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices);
+/* the same for another primitive: MALI_DRAW_MODE_* (pan_draw_mode: 1 points, 2 lines, 8 triangles); for lines the first
+ * vertex provokes and Draw's flat shading vertex says so (jm_emit_primitive, jm_emit_tiler_draw), the primitive size the
+ * constant 1.0 -- the line width, and a point's size when the shader writes none */
+void hm_v7_tiler_job_mode(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
+    uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices, unsigned draw_mode);
 
 /* A compute job (GENX(jm_launch_grid), v7): GROUPS workgroups of LOCAL invocations each, the Invocation packed as
  * panfrost_pack_work_groups_compute packs it, Job Task Split the sum of log2ceil(local + 1), a barrier in the header

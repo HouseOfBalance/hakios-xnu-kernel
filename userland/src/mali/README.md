@@ -60,6 +60,56 @@ Runs 500 to 502, the 27 release with `mali=1 metal=1`, `mali-probe` as launchd's
   a barrier from threadgroup memory), and Apple's own kernels: 16 of the 36 compute functions of the 27 release's
   PortraitFilters compiled on the phone through the AIR frontend (`hm_compile_air_kernel`), and three of them
   dispatched, each writing exactly what its NIR says. 36 of 36 stages.
+- Run 513: `blit` (the `copy` kernel: 200 of 200 words, the canary after them kept), `lines` (two lines of width 1:
+  58 of 58 pixels judged right, 64 drawn in all, 32 a line, nothing else) and `points` (four of size 1: exactly their
+  four pixels). 39 of 39 stages; **capabilities 23 of 37 measured (62%)**.
+
+## Capabilities: how far along
+
+A fixed list of 37 things a Metal backend for this GPU has to do, the same list in `probe.cpp` (`capabilities()`).
+One counts only when every `mali-probe` stage named for it said PASS on the phone in the same run; the probe prints
+`capabilities N of 37 measured` at the end. A count, not a weight: the last ones (Apple's render functions, the
+`MTLDevice` plug-in, presenting) are the largest pieces of work.
+
+| # | Capability | Stages |
+|---|---|---|
+| 1 | the GPU opened and identified | `open` `params` `device` |
+| 2 | GPU buffers: create, map, address | `buffer` |
+| 3 | job submission and completion | `write-value` |
+| 4 | render pass: load Clear, store | `clear64` `clear64-tiler` `clear64-noclean` |
+| 5 | targets of any size, to 750x1624 | `clear-48x20` `clear-750x1624` `varyings-160x96` `varyings-750x1624` |
+| 6 | BGRA8 targets | `clear64-bgra` `varyings-bgra` |
+| 7 | vertex and fragment shaders: a draw | `triangle` |
+| 8 | vertex attributes and varyings | `varyings` |
+| 9 | uniform buffers (setVertexBytes) | `uniform` |
+| 10 | blending, source over | `blend` |
+| 11 | indexed draws, 16-bit | `indexed` |
+| 12 | several draws in a pass | `multidraw` |
+| 13 | textures sampled, nearest | `texture` |
+| 14 | compute dispatch | `compute` |
+| 15 | threadgroup memory and barriers | `shared` |
+| 16 | depth test and write | `depth` `depth-off` |
+| 17 | the shader compiler on the device | `compiler` `compiler-draw` |
+| 18 | command buffers, encoders, statuses | `metal-api` |
+| 19 | an IOSurface as a drawable | `iosurface` |
+| 20 | Apple metallib compute kernels | `apple-image_calcminmax0` `apple-MetalFaceMask_InitMinMax` `apple-MetalFaceMask_InitSpanTable` |
+| 21 | blit: buffer to buffer copy | `blit` (the `copy` kernel) |
+| 22 | primitive: lines | `lines` |
+| 23 | primitive: points | `points` |
+| 24 | textures sampled, linear | -- |
+| 25 | mipmaps | -- |
+| 26 | more pixel formats (R8, RG8, RGBA16F...) | -- |
+| 27 | render to a texture, then sample it | -- |
+| 28 | multisampling | -- |
+| 29 | stencil | -- |
+| 30 | scissor and viewport from the API | -- |
+| 31 | culling and winding | -- |
+| 32 | instanced draws | -- |
+| 33 | vertex descriptors and argument buffers | -- |
+| 34 | Apple vertex and fragment functions (AIR) | -- |
+| 35 | blit: textures, generateMipmaps | -- |
+| 36 | presenting to the panel (CAMetalLayer) | -- |
+| 37 | Metal.framework's MTLDevice on this backend | -- |
 
 ## mali-probe's stages
 

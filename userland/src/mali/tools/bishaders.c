@@ -119,7 +119,7 @@ main(int argc, char **argv)
 	program("tri");
 	program("color");
 	program("tex");
-	for (const char **name = (const char *[]){ "fill", "share", NULL }; *name; name++) {
+	for (const char **name = (const char *[]){ "fill", "share", "copy", NULL }; *name; name++) {
 		if (hm_compile_kernel(*name, GPU_ID, &k, why, sizeof(why)) != 0) {
 			fprintf(stderr, "bishaders: %s\n", why);
 			return 1;

@@ -457,11 +457,64 @@ share_kernel(unsigned gpu_id, struct hm_kernel *out)
 	return 0;
 }
 
+/* copy: a blit of words, out[gid] = in[gid] for gid < count; uniform buffer 0: the source's address (words 0, 1), the
+ * destination's (2, 3), the count (4); 64 threads a workgroup (MTLBlitCommandEncoder's copyFromBuffer, as a kernel) */
+static int
+copy_kernel(unsigned gpu_id, struct hm_kernel *out)
+{
+	nir_builder c = shader(MESA_SHADER_COMPUTE, "copy_cs");
+	c.shader->info.workgroup_size[0] = 64;
+	c.shader->info.workgroup_size[1] = 1;
+	c.shader->info.workgroup_size[2] = 1;
+	c.shader->info.num_ubos = 1;
+	c.shader->info.first_ubo_is_default_ubo = true;
+	nir_def *gid = nir_channel(&c, nir_load_global_invocation_id(&c, 32), 0);
+	nir_def *u = nir_load_ubo(&c, 4, 32, nir_imm_int(&c, 0), nir_imm_int(&c, 0), .align_mul = 16, .align_offset = 0,
+	    .range_base = 0, .range = 16);
+	nir_def *count = nir_load_ubo(&c, 1, 32, nir_imm_int(&c, 0), nir_imm_int(&c, 16), .align_mul = 16,
+	    .align_offset = 0, .range_base = 16, .range = 4);
+	nir_push_if(&c, nir_ult(&c, gid, count));
+	{
+		nir_def *off = nir_u2u64(&c, nir_imul_imm(&c, gid, 4));
+		nir_def *src = nir_iadd(&c, nir_pack_64_2x32_split(&c, nir_channel(&c, u, 0), nir_channel(&c, u, 1)), off);
+		nir_def *dst = nir_iadd(&c, nir_pack_64_2x32_split(&c, nir_channel(&c, u, 2), nir_channel(&c, u, 3)), off);
+		nir_store_global(&c, dst, 4, nir_load_global(&c, src, 4, 1, 32), 0x1);
+	}
+	nir_pop_if(&c, NULL);
+	NIR_PASS(_, c.shader, nir_lower_compute_system_values, NULL);
+
+	struct util_dynarray bin;
+	struct pan_shader_info cs;
+	compile(c.shader, gpu_id, &bin, &cs);
+	struct mali_renderer_state_packed rsd;
+	pan_pack(&rsd, RENDERER_STATE, cfg) {
+		pan_shader_prepare_rsd(&cs, 0, &cfg);
+	}
+	memset(out, 0, sizeof(*out));
+	out->name = "copy";
+	out->code = copy(bin.data, bin.size);
+	out->size = bin.size;
+	out->rsd = copy(rsd.opaque, 64);
+	out->push = push_table(&cs);
+	out->push_count = cs.push.count;
+	out->local[0] = 64, out->local[1] = 1, out->local[2] = 1;
+	out->tls_size = cs.tls_size;
+	out->work_registers = cs.work_reg_count;
+	out->ubo_count = cs.ubo_count;
+	out->wls_size = cs.wls_size;
+	util_dynarray_fini(&bin);
+	ralloc_free(c.shader);
+	return 0;
+}
+
 int
 hm_compile_kernel(const char *name, unsigned gpu_id, struct hm_kernel *out, char *why, size_t why_size)
 {
 	if (strcmp(name, "share") == 0) {
 		return share_kernel(gpu_id, out);
+	}
+	if (strcmp(name, "copy") == 0) {
+		return copy_kernel(gpu_id, out);
 	}
 	if (strcmp(name, "fill") != 0) {
 		snprintf(why, why_size, "no kernel %s", name);

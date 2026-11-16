@@ -44,6 +44,8 @@ struct DrawInput {
     // an index buffer: INDEX_COUNT 16-bit indices into the VERTEX_COUNT vertices (triangles of them)
     const uint16_t* indices = nullptr;
     uint32_t indexCount = 0;
+    // MTLPrimitiveType: triangles, lines (pairs of vertices) or points
+    enum class Primitive { Triangles, Lines, Points } primitive = Primitive::Triangles;
 };
 
 class DrawPass {

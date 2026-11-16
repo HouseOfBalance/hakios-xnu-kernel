@@ -26,8 +26,12 @@ static std::string writeDraw(Device& device, const Target& t, const hm_program& 
         kTexture = D::kTexture, kSurface = D::kSurface, kSampler = D::kSampler, kSysvals = D::kSysvals,
         kSysvalSize = D::kSysvalSize, kIndices = D::kIndices, kSize = D::kSize;
     (void)device;
-    if (in.indices == nullptr && (in.vertexCount < 3 || in.vertexCount % 3 != 0 || in.vertexCount > 48))
-        return no("a vertex count that is not a whole number of triangles, 3 to 48");
+    const unsigned per = in.primitive == DrawInput::Primitive::Triangles ? 3 :
+                         in.primitive == DrawInput::Primitive::Lines ? 2 : 1;
+    if (in.primitive != DrawInput::Primitive::Triangles && in.indices != nullptr)
+        return no("indices with lines or points (not served yet)");
+    if (in.indices == nullptr && (in.vertexCount < per || in.vertexCount % per != 0 || in.vertexCount > 48))
+        return no("a vertex count that is not a whole number of primitives, up to 48");
     if (in.indices != nullptr) {
         if (in.vertexCount < 1 || in.vertexCount > 48 || in.indexCount < 3 || in.indexCount % 3 != 0 ||
             in.indexCount * 2 > kSize - kIndices)
@@ -196,7 +200,8 @@ static std::string writeDraw(Device& device, const Target& t, const hm_program& 
         hm_v7_tiler_job_indexed(cpu + kTilerJob, vIndex + 1, vIndex, next, in.vertexCount, tilerCtx, &fragment, in.indexCount,
                                 gpu + kIndices);
     } else {
-        hm_v7_tiler_job_indexed(cpu + kTilerJob, vIndex + 1, vIndex, next, in.vertexCount, tilerCtx, &fragment, 0, 0);
+        hm_v7_tiler_job_mode(cpu + kTilerJob, vIndex + 1, vIndex, next, in.vertexCount, tilerCtx, &fragment, 0, 0,
+                             in.primitive == DrawInput::Primitive::Lines ? 2 : in.primitive == DrawInput::Primitive::Points ? 1 : 8);
     }
 
     if (prevTiler != 0) {

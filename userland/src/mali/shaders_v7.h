@@ -267,6 +267,25 @@ static const struct hm_push_word hm_share_cs_push[2] = {
 };
 static const struct hm_kernel hm_share = { "share", hm_share_cs_code, 288, hm_share_cs_rsd, hm_share_cs_push, 2, { 64, 1, 1 }, 0, 32, 1, 256 };
 
+/* --- copy: compute shader 224 bytes, 32 work registers, 0 bytes of threadgroup memory --- */
+static const uint32_t hm_copy_cs_code[56] = {
+	0xc000822b, 0x80cb1843, 0x8006da13, 0x00000800, 0x00000043, 0x80cb185c, 0x0003e4bf, 0x60000000,
+	0xc0004029, 0x8b8ac043, 0xc0076591, 0x31400828, 0x00008025, 0x80cb180c, 0x0c0718d3, 0x58c16002,
+	0x000080ab, 0x80cb185c, 0xe03718bf, 0x0001b2bc, 0x10000053, 0x80cb1858, 0x000031e3, 0x00000002,
+	0x0000812d, 0x80cb1840, 0x00071813, 0x01800020, 0x00008123, 0x80cb182c, 0x040ecaf3, 0x58c2e000,
+	0x0000009d, 0x80cb1858, 0xe030b1e3, 0x0001c62f, 0x00000053, 0x80cb185c, 0x0003fcd3, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_copy_cs_rsd[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00002001, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00019000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const struct hm_push_word hm_copy_cs_push[5] = {
+	{ 0, 0 }, { 0, 4 }, { 0, 8 }, { 0, 12 }, { 0, 16 },
+};
+static const struct hm_kernel hm_copy = { "copy", hm_copy_cs_code, 224, hm_copy_cs_rsd, hm_copy_cs_push, 5, { 64, 1, 1 }, 0, 32, 1, 0 };
+
 /* textures: RGBA8Unorm's format word and the identity swizzle */
 static const uint32_t hm_texture_format_rgba8 = 0x000bb000;
 static const uint32_t hm_texture_swizzle_identity = 0x688;

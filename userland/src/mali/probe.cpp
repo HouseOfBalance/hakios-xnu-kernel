@@ -68,9 +68,12 @@ void say(const char* format, ...) {
 #endif
 }
 
+std::vector<std::string> gPassedStages;
+
 bool verdict(const char* stage, bool ok, const std::string& detail) {
     say("%s %s %s", stage, ok ? "PASS" : "FAIL", detail.c_str());
     (ok ? gPassed : gFailed)++;
+    if (ok) gPassedStages.push_back(stage);
     return ok;
 }
 
@@ -403,6 +406,201 @@ bool runCompute(Device& device) {
     verdict(stage, ok, detail);
     if (!ok || gDump) pass->dump(stdout);
     return ok;
+}
+
+// The copy kernel as a blit (MTLBlitCommandEncoder's copyFromBuffer): 200 words of a pattern from one buffer into
+// another of canaries, 4 workgroups of 64 so the last is cut short by the count; every word copied, every other kept
+bool runBlit(Device& device) {
+    const char* stage = "blit";
+    std::string why;
+    auto src = device.gpu().newBo(4096, &why);
+    auto dst = src ? device.gpu().newBo(4096, &why) : nullptr;
+    if (!src || !dst) return verdict(stage, false, why);
+    uint32_t* in = reinterpret_cast<uint32_t*>(src->cpu());
+    for (unsigned i = 0; i < src->size() / 4; i++) in[i] = 0x9e3779b9u * (i + 1);
+    memset(dst->cpu(), kCanary, dst->size());
+    const unsigned count = 200;
+    uint32_t uniforms[8] = {static_cast<uint32_t>(src->gpu()), static_cast<uint32_t>(src->gpu() >> 32),
+                            static_cast<uint32_t>(dst->gpu()), static_cast<uint32_t>(dst->gpu() >> 32), count, 0, 0, 0};
+    const unsigned groups[3] = {(count + 63) / 64, 1, 1};
+    auto pass = ComputePass::make(device, hm_copy, groups, uniforms, sizeof(uniforms), &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission s;
+    uint64_t t0 = device.gpu().transport().nowUs();
+    int e = pass->submit({dst.get()}, &s);
+    if (e == 0) e = device.gpu().wait(s, 2000000);
+    uint64_t us = device.gpu().transport().nowUs() - t0;
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(dst->cpu());
+    unsigned right = 0, kept = 0;
+    for (unsigned i = 0; i < count; i++) right += w[i] == in[i];
+    for (unsigned i = count; i < dst->size() / 4; i++) kept += w[i] == 0xa5a5a5a5u;
+    char detail[200];
+    snprintf(detail, sizeof(detail), "job %s%s%s; %u of %u words copied (word 0 %08x, word %u %08x), canary %u of %llu kept; %llu us",
+             statusText(pass->status()).c_str(), e ? ", " : "", e ? strerror(e) : "", right, count, w[0], count - 1,
+             w[count - 1], kept, (unsigned long long)(dst->size() / 4 - count), (unsigned long long)us);
+    bool job = e == 0 && (pass->status() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU checks the job, runs no shader: %s) %s", stage, job ? "job accepted" : "job REFUSED", detail);
+        if (!job) gFailed++;
+        return job;
+    }
+    bool ok = job && right == count && kept == dst->size() / 4 - count;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
+// Lines and points with the color program into 64x64 on black. Lines: a red one along row 32 from x 16.5 to 48.5 and a
+// green one down column 10 from y 16.5 to 48.5 (width 1); points: four of size 1 at pixel centres. Judged: the
+// pixels well inside each line, every point's own pixel, and every pixel more than one away from all of them black
+bool runPrimitive(Device& device, bool lines) {
+    const char* stage = lines ? "lines" : "points";
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    auto ndc = [](float p) { return (p - 32.0f) / 32.0f; };
+    // pixel-space vertices, then their colours (red, green, blue, white for the points)
+    const float lx[4] = {16.5f, 48.5f, 10.5f, 10.5f}, ly[4] = {32.5f, 32.5f, 16.5f, 48.5f};
+    const float px[4] = {8.5f, 40.5f, 20.5f, 55.5f}, py[4] = {8.5f, 20.5f, 50.5f, 55.5f};
+    const float* vx = lines ? lx : px;
+    const float* vy = lines ? ly : py;
+    float pos[16], col[16];
+    const float lineCol[16] = {1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1};
+    const float pointCol[16] = {1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1};
+    for (int i = 0; i < 4; i++) {
+        pos[4 * i] = ndc(vx[i]), pos[4 * i + 1] = ndc(vy[i]), pos[4 * i + 2] = 0, pos[4 * i + 3] = 1;
+    }
+    memcpy(col, lines ? lineCol : pointCol, sizeof(col));
+    const float one[4] = {1, 1, 1, 1};
+    DrawInput in;
+    in.attributes[0] = pos;
+    in.attributes[1] = col;
+    in.vertexCount = 4;
+    in.uniforms = one;
+    in.uniformSize = 16;
+    in.primitive = lines ? DrawInput::Primitive::Lines : DrawInput::Primitive::Points;
+    auto pass = DrawPass::make(device, t, hm_color, in, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    uint64_t t0 = device.gpu().transport().nowUs();
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    uint64_t us = device.gpu().transport().nowUs() - t0;
+    auto px8 = [&](unsigned x, unsigned y) { return bo->cpu() + y * 256 + 4 * x; };
+    auto is = [&](unsigned x, unsigned y, const float* c) {
+        const uint8_t* q = px8(x, y);
+        for (int k = 0; k < 4; k++) if (q[k] != unorm8(c[k])) return false;
+        return true;
+    };
+    unsigned onRight = 0, onTotal = 0, offRight = 0, offTotal = 0, drawn = 0;
+    if (lines) {
+        for (unsigned x = 18; x <= 46; x++) onTotal++, onRight += is(x, 32, lineCol);
+        for (unsigned y = 18; y <= 46; y++) onTotal++, onRight += is(10, y, lineCol + 8);
+    } else {
+        for (int i = 0; i < 4; i++) onTotal++, onRight += is(static_cast<unsigned>(px[i]), static_cast<unsigned>(py[i]), pointCol + 4 * i);
+    }
+    const float black[4] = {0, 0, 0, 1};
+    for (unsigned y = 0; y < 64; y++) {
+        for (unsigned x = 0; x < 64; x++) {
+            float cx = x + 0.5f, cy = y + 0.5f;
+            bool near = false;
+            if (lines) {
+                near |= cy >= 31.0f && cy <= 34.0f && cx >= 15.0f && cx <= 50.0f;
+                near |= cx >= 9.0f && cx <= 12.0f && cy >= 15.0f && cy <= 50.0f;
+            } else {
+                for (int i = 0; i < 4; i++) near |= std::fabs(cx - px[i]) <= 1.0f && std::fabs(cy - py[i]) <= 1.0f;
+            }
+            drawn += !is(x, y, black);
+            if (near) continue;
+            offTotal++, offRight += is(x, y, black);
+        }
+    }
+    char detail[300];
+    snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s%s%s; on the %s %u of %u right, elsewhere %u of %u black, "
+             "%u pixels drawn; %llu us", statusText(pass->vertexStatus()).c_str(), statusText(pass->tilerStatus()).c_str(),
+             statusText(pass->fragmentStatus()).c_str(), e ? ", " : "", e ? strerror(e) : "", stage, onRight, onTotal,
+             offRight, offTotal, drawn, (unsigned long long)us);
+    bool jobs = e == 0 && (pass->vertexStatus() & 0xff) == 1 && (pass->tilerStatus() & 0xff) == 1 &&
+                (pass->fragmentStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU does not rasterize: %s) %s", stage, jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && onRight == onTotal && offRight == offTotal;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
+// The fixed list of what a Metal backend for this GPU has to do (README "Capabilities"): each one counted only when
+// every stage named for it said PASS in this run; those with no stage are not done yet
+struct Capability {
+    const char* name;
+    std::vector<const char*> stages;
+};
+
+void capabilities() {
+    const Capability list[] = {
+        {"the GPU opened and identified", {"open", "params", "device"}},
+        {"GPU buffers: create, map, address", {"buffer"}},
+        {"job submission and completion", {"write-value"}},
+        {"render pass: load Clear, store", {"clear64", "clear64-tiler", "clear64-noclean"}},
+        {"targets of any size, to 750x1624", {"clear-48x20", "clear-750x1624", "varyings-160x96", "varyings-750x1624"}},
+        {"BGRA8 targets", {"clear64-bgra", "varyings-bgra"}},
+        {"vertex and fragment shaders: a draw", {"triangle"}},
+        {"vertex attributes and varyings", {"varyings"}},
+        {"uniform buffers (setVertexBytes)", {"uniform"}},
+        {"blending, source over", {"blend"}},
+        {"indexed draws, 16-bit", {"indexed"}},
+        {"several draws in a pass", {"multidraw"}},
+        {"textures sampled, nearest", {"texture"}},
+        {"compute dispatch", {"compute"}},
+        {"threadgroup memory and barriers", {"shared"}},
+        {"depth test and write", {"depth", "depth-off"}},
+        {"the shader compiler on the device", {"compiler", "compiler-draw"}},
+        {"command buffers, encoders, statuses", {"metal-api"}},
+        {"an IOSurface as a drawable", {"iosurface"}},
+        {"Apple metallib compute kernels", {"apple-image_calcminmax0", "apple-MetalFaceMask_InitMinMax", "apple-MetalFaceMask_InitSpanTable"}},
+        {"blit: buffer to buffer copy", {"blit"}},
+        {"primitive: lines", {"lines"}},
+        {"primitive: points", {"points"}},
+        {"textures sampled, linear", {}},
+        {"mipmaps", {}},
+        {"more pixel formats (R8, RG8, RGBA16F...)", {}},
+        {"render to a texture, then sample it", {}},
+        {"multisampling", {}},
+        {"stencil", {}},
+        {"scissor and viewport from the API", {}},
+        {"culling and winding", {}},
+        {"instanced draws", {}},
+        {"vertex descriptors and argument buffers", {}},
+        {"Apple vertex and fragment functions (AIR)", {}},
+        {"blit: textures, generateMipmaps", {}},
+        {"presenting to the panel (CAMetalLayer)", {}},
+        {"Metal.framework's MTLDevice on this backend", {}},
+    };
+    const unsigned total = sizeof(list) / sizeof(list[0]);
+    unsigned measured = 0;
+    std::string missing;
+    for (unsigned i = 0; i < total; i++) {
+        bool ok = !list[i].stages.empty();
+        for (const char* st : list[i].stages) {
+            bool found = false;
+            for (const std::string& p : gPassedStages) found |= p == st;
+            ok &= found;
+        }
+        measured += ok;
+        printf("mali-probe: capability %2u %s: %s\n", i + 1, list[i].name, ok ? "measured" : list[i].stages.empty() ? "not done" : "FAILED");
+        if (!ok && !list[i].stages.empty()) missing += std::string(missing.empty() ? "" : ", ") + list[i].name;
+    }
+    say("capabilities %u of %u measured (%u%%)%s%s", measured, total, measured * 100 / total,
+        missing.empty() ? "" : "; failed: ", missing.c_str());
 }
 
 // Depth: one draw of two triangles, the near one (z -0.5, green) first and the far one (z +0.5, red) after it,
@@ -1257,6 +1455,9 @@ int main(int argc, char** argv) {
         runTexture(device);
         runCompute(device);
         runShared(device);
+        runBlit(device);
+        runPrimitive(device, true);
+        runPrimitive(device, false);
         runDepth(device, false);
         runDepth(device, true);
         runCompiler(device);
@@ -1291,6 +1492,7 @@ int main(int argc, char** argv) {
             fake->faults().size(), (unsigned long long)fake->pixelsWritten());
         for (const auto& f : fake->faults()) say("fake fault: %s", f.why.c_str());
     }
+    if (gShow == 0 && !gFake) capabilities();
     say("done: %u passed, %u failed; milestone clear64 %s", gPassed, gFailed, milestone ? "PASS" : "FAIL");
     return milestone ? 0 : 1;
 }
