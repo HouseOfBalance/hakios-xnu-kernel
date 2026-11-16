@@ -53,6 +53,11 @@ fi
 # Panfrost), /hakios/bin/mali-probe; the job list runs it (RC_JOBS=userland/rc.jobs.maliprobe), or a shell by hand
 if [ -n "${MALI27:-}" ]; then
 	cp $MALI27/mali-probe $T/bin/mali-probe
+	# Apple's kernels its apple-kernels stage compiles on the phone (mali27.sh copies them out of the IPSW)
+	if [ -f $MALI27/PortraitFilters.metallib ]; then
+		mkdir -p $T/share
+		cp $MALI27/PortraitFilters.metallib $T/share/
+	fi
 fi
 # the audio server's output device (inj26.sh): arm64e, in place of 16.5's arm64 one, which the audio server cannot load;
 # the system image links /System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver to it (mkimage26.py)

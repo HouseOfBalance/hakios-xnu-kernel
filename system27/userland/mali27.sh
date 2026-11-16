@@ -52,7 +52,8 @@ PY
 	$CC -std=c11 -O2 -w -DPAN_ARCH=7 $DEFS -I"$B" -I"$MESA_SRC/src" -I"$MESA_SRC/include" -I"$B/compiler/nir" \
 		-I"$MESA_SRC/src/compiler/nir" -I"$B/compiler" -I"$MESA_SRC/src/compiler" -I"$B/panfrost/lib" \
 		-I"$MESA_SRC/src/panfrost/lib" -I"$B/panfrost/lib/genxml" -I"$MESA_SRC/src/panfrost/lib/genxml" \
-		-I"$MESA_SRC/src/panfrost" -I"$B/util/format" -c $S/compiler.c -o $O/compiler.o
+		-I"$MESA_SRC/src/panfrost" -I"$B/util/format" -I"$MESA_SRC/src/compiler/air" -I"$ROOT/tools/mesa/air" \
+		-c $S/compiler.c -o $O/compiler.o
 	COMPILER_OBJ=$O/compiler.o
 	COMPILER_LIBS=($B/panfrost/lib/libpan-arch-v7.a $B/panfrost/lib/libpan-format-v7.a $B/panfrost/lib/libpan-format-v6.a
 		$B/panfrost/lib/libpanfrost_lib.a $B/panfrost/compiler/libpanfrost_bifrost.a
@@ -60,6 +61,12 @@ PY
 		$B/panfrost/util/libpanfrost_util.a $B/panfrost/shared/libpanfrost_shared.a $B/compiler/nir/libnir.a
 		$B/compiler/libcompiler.a $B/util/libmesa_util.a $B/c11/impl/libmesa_util_c11.a $B/util/blake3/libblake3.a -lz)
 	PROBE_DEFS=-DHAKIOS_MALI_COMPILER
+	COMPILER_LIBS+=($B/compiler/air/libair.a)
+	# Apple's kernels for mali-probe's apple-kernels stage: PortraitFilters' .metallib of the extracted IPSW (REL), which
+	# the pruned system image leaves out; root26-sys.sh puts it into the small image's share/
+	REL=${REL:-$ROOT/build/ios27/ios27}
+	PF=$REL/rootfs/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib
+	[ -f "$PF" ] && cp "$PF" $O/PortraitFilters.metallib
 	$CXX -std=c++17 -O2 -fno-exceptions -fno-rtti $PROBE_DEFS -I$S -c $S/probe.cpp -o $O/probe.o
 fi
 rm -f $O/libhakios-mali.a

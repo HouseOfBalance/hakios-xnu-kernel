@@ -244,7 +244,7 @@ static const uint32_t hm_fill_cs_rsd[16] = {
 static const struct hm_push_word hm_fill_cs_push[3] = {
 	{ 0, 0 }, { 0, 4 }, { 0, 8 },
 };
-static const struct hm_kernel hm_fill = { "fill", hm_fill_cs_code, 128, hm_fill_cs_rsd, hm_fill_cs_push, 3, { 16, 1, 1 }, 0, 32 };
+static const struct hm_kernel hm_fill = { "fill", hm_fill_cs_code, 128, hm_fill_cs_rsd, hm_fill_cs_push, 3, { 16, 1, 1 }, 0, 32, 1 };
 
 /* textures: RGBA8Unorm's format word and the identity swizzle */
 static const uint32_t hm_texture_format_rgba8 = 0x000bb000;

@@ -29,6 +29,7 @@
 #include "pan_util.h"
 
 #include "compiler.h"
+#include "nir_air.h"
 
 /*
  * load_viewport_scale/offset as system values in uniform buffer 1, which the compiler pushes: words 0..2 the scale,
@@ -445,6 +446,7 @@ hm_compile_kernel(const char *name, unsigned gpu_id, struct hm_kernel *out, char
 		out->local[0] = 16, out->local[1] = 1, out->local[2] = 1;
 		out->tls_size = cs.tls_size;
 		out->work_registers = cs.work_reg_count;
+		out->ubo_count = cs.ubo_count;
 		util_dynarray_fini(&bin);
 		ralloc_free(c.shader);
 	}
@@ -470,4 +472,221 @@ hm_compile_swizzle_identity(void)
 	const unsigned char identity[4] = { PIPE_SWIZZLE_X, PIPE_SWIZZLE_Y, PIPE_SWIZZLE_Z, PIPE_SWIZZLE_W };
 
 	return panfrost_translate_swizzle_4(identity);
+}
+
+/* --- Apple's kernels ------------------------------------------------------------------------------------------- */
+
+/* a device buffer access (load_ssbo, store_ssbo, ssbo_atomic, ssbo_atomic_swap with an immediate buffer index, which is
+ * how the AIR frontend writes them) as the same access to global memory at the buffer's address, read out of the
+ * system value buffer, plus the offset */
+static bool
+ssbo_to_global(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+	uint32_t *used = data;
+	int index_src, offset_src;
+
+	switch (intr->intrinsic) {
+	case nir_intrinsic_load_ssbo:
+		index_src = 0, offset_src = 1;
+		break;
+	case nir_intrinsic_store_ssbo:
+		index_src = 1, offset_src = 2;
+		break;
+	case nir_intrinsic_ssbo_atomic:
+	case nir_intrinsic_ssbo_atomic_swap:
+		index_src = 0, offset_src = 1;
+		break;
+	default:
+		return false;
+	}
+	if (!nir_src_is_const(intr->src[index_src])) {
+		return false;                   /* left alone: the compiler refuses it by name */
+	}
+	unsigned index = nir_src_as_uint(intr->src[index_src]);
+	*used |= 1u << index;
+	b->cursor = nir_before_instr(&intr->instr);
+	nir_def *words = nir_load_ubo(b, 2, 32, nir_imm_int(b, HM_AIR_SYSVAL_UBO), nir_imm_int(b, 8 * index),
+	    .align_mul = 8, .align_offset = 0, .range_base = 8 * index, .range = 8);
+	nir_def *addr = nir_iadd(b, nir_pack_64_2x32(b, words), nir_u2u64(b, intr->src[offset_src].ssa));
+	unsigned align = (intr->intrinsic == nir_intrinsic_load_ssbo || intr->intrinsic == nir_intrinsic_store_ssbo)
+	    ? nir_intrinsic_align(intr) : 4;
+
+	switch (intr->intrinsic) {
+	case nir_intrinsic_load_ssbo: {
+		nir_def *v = nir_build_load_global(b, intr->def.num_components, intr->def.bit_size, addr, .align_mul = align,
+		    .access = nir_intrinsic_access(intr));
+		nir_def_replace(&intr->def, v);
+		break;
+	}
+	case nir_intrinsic_store_ssbo:
+		nir_build_store_global(b, intr->src[0].ssa, addr, .align_mul = align, .write_mask = nir_intrinsic_write_mask(intr),
+		    .access = nir_intrinsic_access(intr));
+		nir_instr_remove(&intr->instr);
+		break;
+	case nir_intrinsic_ssbo_atomic: {
+		nir_def *v = nir_global_atomic(b, intr->def.bit_size, addr, intr->src[2].ssa,
+		    .atomic_op = nir_intrinsic_atomic_op(intr));
+		nir_def_replace(&intr->def, v);
+		break;
+	}
+	case nir_intrinsic_ssbo_atomic_swap: {
+		nir_def *v = nir_global_atomic_swap(b, intr->def.bit_size, addr, intr->src[2].ssa, intr->src[3].ssa,
+		    .atomic_op = nir_intrinsic_atomic_op(intr));
+		nir_def_replace(&intr->def, v);
+		break;
+	}
+	default:
+		break;
+	}
+	return true;
+}
+
+/* the dispatch's sizes as system values in the same buffer, as Panfrost pushes PAN_SYSVAL_NUM_WORK_GROUPS and
+ * PAN_SYSVAL_LOCAL_GROUP_SIZE: the number of threadgroups at byte HM_AIR_SYSVAL_GRID, the threadgroup's size at
+ * HM_AIR_SYSVAL_LOCAL (a Metal kernel's size is the dispatch's) */
+static bool
+grid_sysvals(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+{
+	unsigned offset;
+
+	if (intr->intrinsic == nir_intrinsic_load_num_workgroups) {
+		offset = HM_AIR_SYSVAL_GRID;
+	} else if (intr->intrinsic == nir_intrinsic_load_workgroup_size) {
+		offset = HM_AIR_SYSVAL_LOCAL;
+	} else {
+		return false;
+	}
+	b->cursor = nir_before_instr(&intr->instr);
+	nir_def *v = nir_load_ubo(b, 3, 32, nir_imm_int(b, HM_AIR_SYSVAL_UBO), nir_imm_int(b, offset), .align_mul = 16,
+	    .align_offset = 0, .range_base = offset, .range = 12);
+	nir_def_replace(&intr->def, nir_u2uN(b, v, intr->def.bit_size));
+	return true;
+}
+
+int
+hm_air_kernels(const void *lib, size_t size, char *names, size_t names_size)
+{
+	void *mem = ralloc_context(NULL);
+	struct air_metallib ml;
+	const char *err = NULL;
+	int count = 0;
+	size_t at = 0;
+
+	if (!air_metallib_parse(mem, lib, size, &ml, &err)) {
+		ralloc_free(mem);
+		return -1;
+	}
+	for (unsigned i = 0; i < ml.num_functions; i++) {
+		const char *calls = NULL;
+		int stage = air_module_stage(mem, ml.functions[i].bitcode, ml.functions[i].bitcode_size, &calls, &err);
+		size_t n = strlen(ml.functions[i].name) + 1;
+
+		if (stage == MESA_SHADER_COMPUTE && at + n <= names_size) {
+			memcpy(names + at, ml.functions[i].name, n);
+			at += n;
+			count++;
+		}
+	}
+	ralloc_free(mem);
+	return count;
+}
+
+int
+hm_compile_air_kernel(const void *lib, size_t size, const char *entry, unsigned gpu_id, struct hm_kernel *out,
+    uint32_t *device_buffers, uint32_t *constant_buffers, char *why, size_t why_size)
+{
+	void *mem = ralloc_context(NULL);
+	struct air_metallib ml;
+	const char *err = NULL;
+	const struct air_metallib_function *f = NULL;
+
+	if (!air_metallib_parse(mem, lib, size, &ml, &err)) {
+		snprintf(why, why_size, "the .metallib: %s", err ? err : "not one");
+		ralloc_free(mem);
+		return -1;
+	}
+	for (unsigned i = 0; i < ml.num_functions; i++) {
+		if (strcmp(ml.functions[i].name, entry) == 0) f = &ml.functions[i];
+	}
+	if (f == NULL) {
+		snprintf(why, why_size, "no function %s in the .metallib", entry);
+		ralloc_free(mem);
+		return -1;
+	}
+	struct air_shader_info info;
+	nir_shader *s = air_to_nir(mem, f->bitcode, f->bitcode_size, NULL, NULL, GENX(pan_shader_get_compiler_options)(),
+	    &info, &err);
+	if (s == NULL) {
+		snprintf(why, why_size, "%s: AIR to NIR: %s", entry, err ? err : "refused");
+		ralloc_free(mem);
+		return -1;
+	}
+	if (s->info.stage != MESA_SHADER_COMPUTE) {
+		snprintf(why, why_size, "%s is not a kernel", entry);
+		ralloc_free(mem);
+		return -1;
+	}
+	*constant_buffers = 0;
+	for (unsigned i = 0; i < info.num_resources; i++) {
+		const struct air_resource *r = &info.resources[i];
+
+		if (r->kind == AIR_RESOURCE_CONSTANT_BUFFER && r->index < HM_AIR_SYSVAL_UBO) {
+			*constant_buffers |= 1u << r->index;
+		} else if (r->kind == AIR_RESOURCE_TEXTURE || r->kind == AIR_RESOURCE_IMAGE || r->kind == AIR_RESOURCE_SAMPLER ||
+		    r->kind == AIR_RESOURCE_THREADGROUP_BUFFER || (r->kind == AIR_RESOURCE_CONSTANT_BUFFER && !r->unused)) {
+			if (r->kind != AIR_RESOURCE_CONSTANT_BUFFER) {
+				snprintf(why, why_size, "%s binds a texture, image, sampler or threadgroup memory (not served yet)", entry);
+				ralloc_free(mem);
+				return -1;
+			}
+		}
+	}
+	if (info.threadgroup_bytes != 0) {
+		snprintf(why, why_size, "%s uses %u bytes of threadgroup memory (not served yet)", entry, info.threadgroup_bytes);
+		ralloc_free(mem);
+		return -1;
+	}
+	if (getenv("HM_PRINT_NIR") != NULL) {
+		nir_print_shader(s, stderr);
+	}
+	*device_buffers = 0;
+	NIR_PASS(_, s, nir_shader_intrinsics_pass, ssbo_to_global, nir_metadata_control_flow, device_buffers);
+	if (s->info.num_ubos < HM_AIR_SYSVAL_UBO + 1) {
+		s->info.num_ubos = HM_AIR_SYSVAL_UBO + 1;
+	}
+	NIR_PASS(_, s, nir_lower_compute_system_values, NULL);
+	NIR_PASS(_, s, nir_shader_intrinsics_pass, grid_sysvals, nir_metadata_control_flow, NULL);
+
+	struct util_dynarray bin;
+	struct pan_shader_info cs;
+	struct panfrost_compile_inputs inputs = { .gpu_id = gpu_id, .no_idvs = true, .pushable_ubos = ~0u };
+	bifrost_preprocess_nir(s, gpu_id);
+	util_dynarray_init(&bin, NULL);
+	GENX(pan_shader_compile)(s, &inputs, &bin, &cs);
+	if (bin.size == 0) {
+		snprintf(why, why_size, "%s: the Bifrost compiler gave no code", entry);
+		util_dynarray_fini(&bin);
+		ralloc_free(mem);
+		return -1;
+	}
+	struct mali_renderer_state_packed rsd;
+	pan_pack(&rsd, RENDERER_STATE, cfg) {
+		pan_shader_prepare_rsd(&cs, 0, &cfg);
+	}
+	memset(out, 0, sizeof(*out));
+	out->name = strdup(entry);
+	out->code = copy(bin.data, bin.size);
+	out->size = bin.size;
+	out->rsd = copy(rsd.opaque, 64);
+	out->push = push_table(&cs);
+	out->push_count = cs.push.count;
+	out->local[0] = s->info.workgroup_size[0];
+	out->local[1] = s->info.workgroup_size[1];
+	out->local[2] = s->info.workgroup_size[2];
+	out->tls_size = cs.tls_size;
+	out->work_registers = cs.work_reg_count;
+	out->ubo_count = cs.ubo_count;
+	util_dynarray_fini(&bin);
+	ralloc_free(mem);
+	return 0;
 }

@@ -823,6 +823,101 @@ bool runSurface(Device& device) {
 #endif
 }
 
+// Apple's own kernels, compiled on the phone from a .metallib of the 27 release (PortraitFilters', in the small image as
+// /hakios/share/PortraitFilters.metallib) through the AIR frontend, the device buffers made global memory and Mesa's
+// Bifrost compiler, dispatched by ComputePass: one thread each, and what each must write, read off its NIR
+// (tools/airkernels with HM_PRINT_NIR): image_calcminmax0 words 0 and 1 = 0x7fffffff 0x80000000;
+// MetalFaceMask_InitMinMax words 0..2 = 0x7fffffff and 3..5 = 0x80000000; MetalFaceMask_InitSpanTable words 2 and 3 = 0
+bool runAppleKernels(Device& device) {
+#if !defined(HAKIOS_MALI_COMPILER)
+    (void)device;
+    say("apple-kernels MEASURE not built in (needs the compiler)");
+    return true;
+#else
+    const char* path = "/hakios/share/PortraitFilters.metallib";
+    FILE* f = fopen(path, "rb");
+    if (f == nullptr) return verdict("apple-kernels", false, std::string("no ") + path);
+    std::vector<uint8_t> lib;
+    uint8_t chunk[65536];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0) lib.insert(lib.end(), chunk, chunk + n);
+    fclose(f);
+    static char names[16384];
+    int count = hm_air_kernels(lib.data(), lib.size(), names, sizeof(names));
+    struct Case {
+        const char* name;
+        std::vector<std::pair<unsigned, uint32_t>> want;    // word, value
+    } cases[] = {
+        {"image_calcminmax0", {{0, 0x7fffffffu}, {1, 0x80000000u}}},
+        {"MetalFaceMask_InitMinMax", {{0, 0x7fffffffu}, {1, 0x7fffffffu}, {2, 0x7fffffffu}, {3, 0x80000000u},
+                                      {4, 0x80000000u}, {5, 0x80000000u}}},
+        {"MetalFaceMask_InitSpanTable", {{2, 0}, {3, 0}}},
+    };
+    bool all = true;
+    unsigned compiled = 0;
+    for (const char* name = names; count > 0 && *name; name += strlen(name) + 1) {
+        hm_kernel k;
+        uint32_t dev = 0, con = 0;
+        char why[300];
+        if (hm_compile_air_kernel(lib.data(), lib.size(), name, static_cast<unsigned>(device.productId()), &k, &dev, &con,
+                                  why, sizeof(why)) == 0) {
+            compiled++;
+            hm_kernel_free(&k);
+        }
+    }
+    say("apple-kernels MEASURE %u of %d compute functions of PortraitFilters compiled on the phone", compiled, count);
+    for (const Case& c : cases) {
+        std::string stage = std::string("apple-") + c.name;
+        hm_kernel k;
+        uint32_t dev = 0, con = 0;
+        char why[300];
+        uint64_t t0 = device.gpu().transport().nowUs();
+        if (hm_compile_air_kernel(lib.data(), lib.size(), c.name, static_cast<unsigned>(device.productId()), &k, &dev,
+                                  &con, why, sizeof(why)) != 0) {
+            all = verdict(stage.c_str(), false, why) && all;
+            continue;
+        }
+        uint64_t compileUs = device.gpu().transport().nowUs() - t0;
+        std::string w;
+        auto bo = device.gpu().newBo(4096, &w);
+        memset(bo->cpu(), kCanary, bo->size());
+        // the system values: buffer 0's address at byte 0, one threadgroup of one thread
+        std::vector<uint8_t> sys(HM_AIR_SYSVAL_SIZE, 0);
+        uint64_t addr = bo->gpu();
+        memcpy(&sys[0], &addr, 8);
+        uint32_t one[3] = {1, 1, 1};
+        memcpy(&sys[HM_AIR_SYSVAL_GRID], one, 12);
+        memcpy(&sys[HM_AIR_SYSVAL_LOCAL], one, 12);
+        const unsigned groups[3] = {1, 1, 1}, local[3] = {1, 1, 1};
+        auto pass = ComputePass::makeWith(device, k, groups, local, {{HM_AIR_SYSVAL_UBO, sys}}, &w);
+        if (!pass) {
+            all = verdict(stage.c_str(), false, "refused: " + w) && all;
+            hm_kernel_free(&k);
+            continue;
+        }
+        Submission s;
+        int e = pass->submit({bo.get()}, &s);
+        if (e == 0) e = device.gpu().wait(s, 2000000);
+        const uint32_t* words = reinterpret_cast<const uint32_t*>(bo->cpu());
+        unsigned right = 0;
+        std::string got;
+        for (const auto& wv : c.want) {
+            right += words[wv.first] == wv.second;
+            char b[24];
+            snprintf(b, sizeof(b), " %#x", words[wv.first]);
+            got += b;
+        }
+        char detail[300];
+        snprintf(detail, sizeof(detail), "compiled on the phone in %llu us (%u bytes, device buffers %#x); job %s; %u of %zu "
+                 "words as the NIR says:%s", (unsigned long long)compileUs, k.size, dev, statusText(pass->status()).c_str(),
+                 right, c.want.size(), got.c_str());
+        all = verdict(stage.c_str(), e == 0 && (pass->status() & 0xff) == 1 && right == c.want.size(), detail) && all;
+        hm_kernel_free(&k);
+    }
+    return all;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1127,6 +1222,7 @@ int main(int argc, char** argv) {
         runMultiDraw(device);
         runMetal(device);
         runSurface(device);
+        runAppleKernels(device);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);

@@ -90,13 +90,19 @@ class ComputePass {
 public:
     static std::unique_ptr<ComputePass> make(Device& device, const hm_kernel& kernel, const unsigned groups[3],
                                              const void* uniforms, uint32_t uniformSize, std::string* why);
+    // the same with uniform buffers by index (an Apple kernel's constant buffers and its system values, compiler.h) and
+    // the threadgroup's size given here (LOCAL; a Metal kernel's is the dispatch's)
+    static std::unique_ptr<ComputePass> makeWith(Device& device, const hm_kernel& kernel, const unsigned groups[3],
+                                                 const unsigned local[3],
+                                                 const std::vector<std::pair<uint32_t, std::vector<uint8_t>>>& ubos,
+                                                 std::string* why);
     // with the buffers the kernel writes (each remembers the job)
     int submit(const std::vector<const Bo*>& uses, Submission* out);
     uint32_t status() const;
     void dump(FILE* fp) const;
 
-    static constexpr uint32_t kJob = 0x000, kRsd = 0x100, kUbos = 0x140, kPush = 0x180, kLocalStorage = 0x1c0,
-        kCode = 0x400, kUniforms = 0xc00, kSize = 0x1000;
+    static constexpr uint32_t kJob = 0x000, kRsd = 0x100, kLocalStorage = 0x140, kUbos = 0x180, kPush = 0x200,
+        kCode = 0x400, kUniforms = 0x2000, kSize = 0x4000;
 
 private:
     ComputePass(Device& device) : device_(device) {}

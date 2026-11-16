@@ -62,4 +62,5 @@ struct hm_kernel {
 	uint32_t local[3];
 	uint32_t tls_size;                  /* bytes of stack a thread (0: none) */
 	uint32_t work_registers;
+	uint32_t ubo_count;                 /* uniform buffers the kernel's table must hold (an Apple kernel's: 16) */
 };

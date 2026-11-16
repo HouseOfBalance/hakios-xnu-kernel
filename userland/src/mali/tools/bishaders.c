@@ -128,8 +128,8 @@ main(int argc, char **argv)
 	words("fill", "cs_rsd", k.rsd, 16);
 	pushes("fill", "cs_push", k.push, k.push_count);
 	fprintf(out, "static const struct hm_kernel hm_fill = { \"fill\", hm_fill_cs_code, %u, hm_fill_cs_rsd, hm_fill_cs_push, "
-	    "%u, { %u, %u, %u }, %u, %u };\n", k.size, k.push_count, k.local[0], k.local[1], k.local[2], k.tls_size,
-	    k.work_registers);
+	    "%u, { %u, %u, %u }, %u, %u, %u };\n", k.size, k.push_count, k.local[0], k.local[1], k.local[2], k.tls_size,
+	    k.work_registers, k.ubo_count);
 	hm_kernel_free(&k);
 	fprintf(out, "\n/* textures: RGBA8Unorm's format word and the identity swizzle */\n"
 	    "static const uint32_t hm_texture_format_rgba8 = 0x%08x;\nstatic const uint32_t hm_texture_swizzle_identity = 0x%03x;\n",

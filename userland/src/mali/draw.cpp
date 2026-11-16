@@ -315,19 +315,52 @@ void DrawPass::dump(FILE* fp) const {
 
 std::unique_ptr<ComputePass> ComputePass::make(Device& device, const hm_kernel& k, const unsigned groups[3],
                                                const void* uniforms, uint32_t uniformSize, std::string* why) {
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> ubos;
+    if (uniformSize != 0) {
+        ubos.emplace_back(0, std::vector<uint8_t>(static_cast<const uint8_t*>(uniforms),
+                                                  static_cast<const uint8_t*>(uniforms) + uniformSize));
+    }
+    return makeWith(device, k, groups, k.local, ubos, why);
+}
+
+std::unique_ptr<ComputePass> ComputePass::makeWith(Device& device, const hm_kernel& k, const unsigned groups[3],
+                                                   const unsigned local[3],
+                                                   const std::vector<std::pair<uint32_t, std::vector<uint8_t>>>& ubos,
+                                                   std::string* why) {
     auto no = [why, &k](const std::string& s) {
         if (why) *why = std::string(k.name) + ": " + s;
         return std::unique_ptr<ComputePass>();
     };
+    const struct hm_v7_sizes* sz = hm_v7_sizes();
     for (int i = 0; i < 3; i++) {
         if (groups[i] == 0 || groups[i] > 65535) return no("a workgroup count outside 1..65535");
+        if (local[i] == 0 || local[i] > 256) return no("a threadgroup size outside 1..256");
     }
+    if (local[0] * local[1] * local[2] > 256) return no("more than 256 threads a threadgroup");
     if (k.tls_size != 0) return no("a kernel that spills to thread storage (not served yet)");
     if (k.size > kUniforms - kCode) return no("the kernel does not fit");
-    if (uniformSize > kSize - kUniforms) return no("the uniform data do not fit");
+    uint32_t tableEntries = k.ubo_count ? k.ubo_count : 1;
+    if (tableEntries * sz->uniform_buffer > kPush - kUbos) return no("too many uniform buffers");
+    if (k.push_count * 4 > kCode - kPush) return no("too many pushed words");
+    // where each buffer's bytes go, 16-aligned, and every pushed word inside one of them
+    std::vector<std::pair<uint32_t, uint32_t>> at;   // (ubo index, offset in the command buffer)
+    uint32_t next = kUniforms;
+    for (const auto& u : ubos) {
+        if (u.first >= tableEntries) return no("uniform buffer " + std::to_string(u.first) + " is past the kernel's table");
+        if (next + u.second.size() > kSize) return no("the uniform data do not fit");
+        at.emplace_back(u.first, next);
+        next = (next + static_cast<uint32_t>(u.second.size()) + 15) & ~15u;
+    }
+    auto source = [&](const hm_push_word& w) -> const uint8_t* {
+        for (size_t i = 0; i < ubos.size(); i++) {
+            if (ubos[i].first == w.ubo && w.offset + 4u <= ubos[i].second.size()) return ubos[i].second.data() + w.offset;
+        }
+        return nullptr;
+    };
     for (uint32_t i = 0; i < k.push_count; i++) {
-        if (k.push[i].ubo != 0 || k.push[i].offset + 4u > uniformSize)
-            return no("the kernel pushes a word the uniform data does not hold");
+        if (source(k.push[i]) == nullptr)
+            return no("the kernel pushes word " + std::to_string(k.push[i].offset) + " of uniform buffer " +
+                      std::to_string(k.push[i].ubo) + ", which the data do not hold");
     }
     std::unique_ptr<ComputePass> pass(new ComputePass(device));
     pass->cmd_ = device.gpu().newBo(kSize, why);
@@ -341,19 +374,19 @@ std::unique_ptr<ComputePass> ComputePass::make(Device& device, const hm_kernel& 
     rsd[0] |= static_cast<uint32_t>(gpu + kCode);
     rsd[1] |= static_cast<uint32_t>((gpu + kCode) >> 32);
     memcpy(cpu + kRsd, rsd, sizeof(rsd));
-    if (uniformSize != 0) {
-        memcpy(cpu + kUniforms, uniforms, uniformSize);
-        hm_v7_uniform_buffer(cpu + kUbos, gpu + kUniforms, uniformSize);
+    for (size_t i = 0; i < ubos.size(); i++) {
+        memcpy(cpu + at[i].second, ubos[i].second.data(), ubos[i].second.size());
+        hm_v7_uniform_buffer(cpu + kUbos + at[i].first * sz->uniform_buffer, gpu + at[i].second,
+                             static_cast<uint32_t>(ubos[i].second.size()));
     }
-    const uint8_t* u = static_cast<const uint8_t*>(uniforms);
-    for (uint32_t i = 0; i < k.push_count; i++) memcpy(cpu + kPush + 4 * i, u + k.push[i].offset, 4);
+    for (uint32_t i = 0; i < k.push_count; i++) memcpy(cpu + kPush + 4 * i, source(k.push[i]), 4);
     hm_v7_local_storage(cpu + kLocalStorage);
     struct hm_v7_draw d = {};
     d.state = gpu + kRsd;
     d.thread_storage = gpu + kLocalStorage;
-    d.uniform_buffers = uniformSize ? gpu + kUbos : 0;
+    d.uniform_buffers = gpu + kUbos;
     d.push_uniforms = k.push_count ? gpu + kPush : 0;
-    hm_v7_compute_job(cpu + kJob, 1, 0, groups, k.local, &d);
+    hm_v7_compute_job(cpu + kJob, 1, 0, groups, local, &d);
     return pass;
 }
 
