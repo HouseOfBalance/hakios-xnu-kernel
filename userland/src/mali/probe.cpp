@@ -34,6 +34,7 @@
 #include "compiler.h"
 #endif
 #include "draw.hpp"
+#include "metal.hpp"
 #include "pass.hpp"
 #include "shaders_v7.h"
 
@@ -663,6 +664,82 @@ bool runMultiDraw(Device& device) {
     return ok;
 }
 
+// Metal's command model (metal.hpp), nothing below it used directly: one command buffer with a render pass (a cleared
+// BGRA8 texture, a textured quad sampling a 2x2 texture and a source-over half-transparent triangle over it), a
+// second pass with no draw (its clear alone), and a compute dispatch, committed and waited for; the status Completed
+// and the results right
+bool runMetal(Device& device) {
+    using namespace hakios::mali::metal;
+    const char* stage = "metal-api";
+    std::string why;
+    auto target = Texture::make(device, 64, 64, Format::BGRA8Unorm, &why);
+    auto image = Texture::make(device, 2, 2, Format::RGBA8Unorm, &why);
+    auto empty = Texture::make(device, 16, 16, Format::RGBA8Unorm, &why);
+    auto out = device.gpu().newBo(4096, &why);
+    if (!target || !image || !empty || !out) return verdict(stage, false, why);
+    const uint8_t texels[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+    image->replace(texels, 8);
+    memset(out->cpu(), kCanary, out->size());
+
+    CommandBuffer cb(device);
+    const float black[4] = {0, 0, 0, 1}, gray[4] = {0.5f, 0.5f, 0.5f, 1};
+    RenderEncoder* enc = cb.renderCommandEncoder(*target, black);
+    RenderPipeline textured{&hm_tex, false, false}, over{&hm_color, true, false};
+    const float quad[24] = {-1, -1, 0, 1, 1, -1, 0, 1, -1, 1, 0, 1, -1, 1, 0, 1, 1, -1, 0, 1, 1, 1, 0, 1};
+    const float uv[24] = {0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0};
+    enc->setPipeline(textured);
+    enc->setVertexBytes(0, quad, 24);
+    enc->setVertexBytes(1, uv, 24);
+    enc->setFragmentTexture(image.get(), true);
+    enc->drawTriangles(6);
+    const float tri[12] = {-0.5f, -0.5f, 0, 1, 0.5f, -0.5f, 0, 1, 0, 0.5f, 0, 1};
+    const float white[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const float half[4] = {0.5f, 0.5f, 0.5f, 0.5f};
+    enc->setPipeline(over);
+    enc->setVertexBytes(0, tri, 12);
+    enc->setVertexBytes(1, white, 12);
+    enc->setUniformBytes(half, 16);
+    enc->drawTriangles(3);
+    enc->endEncoding();
+    cb.renderCommandEncoder(*empty, gray)->endEncoding();
+    uint32_t uniforms[3] = {static_cast<uint32_t>(out->gpu()), static_cast<uint32_t>(out->gpu() >> 32), 7};
+    const unsigned groups[3] = {2, 1, 1};
+    cb.dispatch(ComputePipeline{&hm_fill}, groups, uniforms, sizeof(uniforms), {out.get()});
+    cb.commit();
+    cb.waitUntilCompleted();
+
+    // the quad's four quarters the four texels (B G R A in memory), the triangle's middle the texel blended half white
+    std::vector<uint8_t> px(64 * 64 * 4), e(16 * 16 * 4);
+    target->read(px.data(), 256);
+    empty->read(e.data(), 64);
+    auto at = [&](int x, int y) { return &px[(y * 64 + x) * 4]; };
+    bool corners = at(4, 4)[2] == 255 && at(4, 4)[1] == 0 && at(60, 4)[1] == 255 && at(60, 4)[2] == 0 &&
+                   at(4, 60)[0] == 255 && at(60, 60)[0] == 255 && at(60, 60)[1] == 255;
+    const uint8_t* m = at(26, 22);   // inside the triangle, in the red texel's quarter: (255,0,0)*0.5 + 0.5 white
+    bool blended = m[2] >= 254 && m[1] >= 126 && m[1] <= 129 && m[0] >= 126 && m[0] <= 129;
+    unsigned grayOk = 0;
+    for (int i = 0; i < 256; i++) grayOk += e[4 * i] == 128 && e[4 * i + 3] == 255;
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(out->cpu());
+    unsigned words = 0;
+    for (unsigned i = 0; i < 32; i++) words += w[i] == i * 3 + 7;
+    const char* st = cb.status() == CommandBuffer::Status::Completed ? "Completed" :
+                     cb.status() == CommandBuffer::Status::Error ? "Error" : "not done";
+    char detail[300];
+    snprintf(detail, sizeof(detail), "command buffer %s%s%s in %llu us; texels in the quarters %s, the triangle blended "
+             "over them %02x%02x%02x, the empty pass's clear %u of 256, the dispatch %u of 32 words", st,
+             cb.error().empty() ? "" : ": ", cb.error().c_str(), (unsigned long long)cb.gpuMicroseconds(),
+             corners ? "right" : "WRONG", m[2], m[1], m[0], grayOk, words);
+    if (gFake) {
+        bool ok = cb.status() == CommandBuffer::Status::Completed && grayOk == 256;
+        say("%s MEASURE (the fake GPU: the clear carried out, draws and kernels not run: %s) %s", stage,
+            ok ? "accepted" : "REFUSED", detail);
+        if (!ok) gFailed++;
+        return ok;
+    }
+    return verdict(stage, cb.status() == CommandBuffer::Status::Completed && corners && blended && grayOk == 256 &&
+                   words == 32, detail);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -965,6 +1042,7 @@ int main(int argc, char** argv) {
         runColorDraw(device, "varyings-bgra", rgb, one, black, false, 64, 64, true);
         runIndexed(device);
         runMultiDraw(device);
+        runMetal(device);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);
