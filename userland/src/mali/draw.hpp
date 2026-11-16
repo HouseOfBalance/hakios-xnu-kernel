@@ -37,6 +37,9 @@ struct DrawInput {
     uint64_t textureOffset = 0;
     uint32_t textureWidth = 0, textureHeight = 0, textureRowBytes = 0;
     bool nearest = true;
+    // Metal's depth test Less with writes, in the tile buffer alone (cleared to 1.0, not written back): what a draw of
+    // several triangles needs to keep the nearest
+    bool depthTest = false;
 };
 
 class DrawPass {

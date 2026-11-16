@@ -389,6 +389,64 @@ bool runCompute(Device& device) {
     return ok;
 }
 
+// Depth: one draw of two triangles, the near one (z -0.5, green) first and the far one (z +0.5, red) after it,
+// overlapping; with the depth test where both cover a pixel it must be green, without it red
+bool runDepth(Device& device, bool test) {
+    const char* stage = test ? "depth" : "depth-off";
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    // near: pixels (8,8) (56,8) (8,56), so x + y < 64; far: (56,56) (8,40) (40,8), so x + y > 48: both in 48..64
+    const float pos[24] = {-0.75f, -0.75f, -0.5f, 1, 0.75f, -0.75f, -0.5f, 1, -0.75f, 0.75f, -0.5f, 1,
+                           0.75f, 0.75f, 0.5f, 1, -0.75f, 0.25f, 0.5f, 1, 0.25f, -0.75f, 0.5f, 1};
+    const float col[24] = {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1};
+    const float one[4] = {1, 1, 1, 1};
+    DrawInput in;
+    in.attributes[0] = pos;
+    in.attributes[1] = col;
+    in.vertexCount = 6;
+    in.uniforms = one;
+    in.uniformSize = 16;
+    in.depthTest = test;
+    auto pass = DrawPass::make(device, t, hm_color, in, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    // pixels well inside both triangles: x + y in pixel space between the two hypotenuses, away from the edges
+    unsigned green = 0, red = 0, judged = 0;
+    for (uint32_t y = 14; y < 50; y++) {
+        for (uint32_t x = 14; x < 50; x++) {
+            float px = x + 0.5f, py = y + 0.5f;
+            bool both = px > 10 && py > 10 && px < 54 && py < 54 && px + py > 50 && px + py < 62;
+            if (!both) continue;
+            judged++;
+            const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
+            green += q[0] == 0 && q[1] == 0xff && q[2] == 0;
+            red += q[0] == 0xff && q[1] == 0 && q[2] == 0;
+        }
+    }
+    char detail[220];
+    snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s; where both cover: %u green (near), %u red (far) of %u",
+             statusText(pass->vertexStatus()).c_str(), statusText(pass->tilerStatus()).c_str(),
+             statusText(pass->fragmentStatus()).c_str(), green, red, judged);
+    bool jobs = e == 0 && (pass->fragmentStatus() & 0xff) == 1 && (pass->tilerStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU does not rasterize: %s) %s", stage, jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && judged > 0 && (test ? green == judged : red == judged);
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -685,6 +743,8 @@ int main(int argc, char** argv) {
         runColorDraw(device, "blend", white, half, blue, true);
         runTexture(device);
         runCompute(device);
+        runDepth(device, false);
+        runDepth(device, true);
     }
 
     // the time of a submission and its wait, twenty clears of 64x64

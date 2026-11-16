@@ -186,7 +186,7 @@ hm_v7_framebuffer(void *out, uint64_t gpu, const struct hm_v7_fb *fb, const stru
 		cfg.tie_break_rule = MALI_TIE_BREAK_RULE_MINUS_180_IN_0_OUT;
 		cfg.render_target_count = fb->rt_count;
 		cfg.z_internal_format = MALI_Z_INTERNAL_FORMAT_D24;    /* "Default to 24 bit depth if there's no surface" */
-		cfg.z_clear = 0.0f;
+		cfg.z_clear = fb->z_clear;
 		cfg.s_clear = 0;
 		cfg.color_buffer_allocation = fb->cbuf_allocation;
 		cfg.sample_count = 1;

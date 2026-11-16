@@ -30,6 +30,10 @@ static const uint32_t hm_tri_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x41582200, 0x00000000, 0x00000000, 0x00000000,
 	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000000,
 };
+static const uint32_t hm_tri_fs_rsd_depth[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x40182200, 0x00000000, 0x00000000, 0x00000000,
+	0x39d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000000,
+};
 static const uint32_t hm_tri_fs_rsd_blended[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x41502200, 0x00000000, 0x00000000, 0x00000000,
 	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000000,
@@ -59,6 +63,7 @@ static const struct hm_program hm_tri = {
 	hm_tri_vs_push, 0, hm_tri_fs_push, 0,
 	hm_tri_vs_out, 1, hm_tri_fs_in, 0,
 	hm_tri_attribute_formats, hm_tri_attribute_sizes, 1, 0, 0, 0,
+	hm_tri_fs_rsd_depth,
 };
 
 /* --- color: vertex shader 288 bytes, 32 work registers, preload 0x6000000000000000; fragment shader 160 bytes, 32 work registers, preload 0x100000000000000f, blend register format 1 --- */
@@ -87,6 +92,10 @@ static const uint32_t hm_color_vs_rsd[16] = {
 static const uint32_t hm_color_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00010000, 0x41582201, 0x00000000, 0x00000000, 0x00000000,
 	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00010080, 0x00000000, 0x00000000, 0x00001801,
+};
+static const uint32_t hm_color_fs_rsd_depth[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00010000, 0x40182201, 0x00000000, 0x00000000, 0x00000000,
+	0x39d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00010080, 0x00000000, 0x00000000, 0x00001801,
 };
 static const uint32_t hm_color_fs_rsd_blended[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00010000, 0x41502201, 0x00000000, 0x00000000, 0x00000000,
@@ -119,6 +128,7 @@ static const struct hm_program hm_color = {
 	hm_color_vs_push, 0, hm_color_fs_push, 4,
 	hm_color_vs_out, 2, hm_color_fs_in, 1,
 	hm_color_attribute_formats, hm_color_attribute_sizes, 2, 0, 0, 1,
+	hm_color_fs_rsd_depth,
 };
 
 /* --- tex: vertex shader 288 bytes, 32 work registers, preload 0x6000000000000000; fragment shader 144 bytes, 32 work registers, preload 0x100000000000000f, blend register format 1 --- */
@@ -147,6 +157,10 @@ static const uint32_t hm_tex_vs_rsd[16] = {
 static const uint32_t hm_tex_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x41582200, 0x00000000, 0x00000000, 0x00000000,
 	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000002,
+};
+static const uint32_t hm_tex_fs_rsd_depth[16] = {
+	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x40182200, 0x00000000, 0x00000000, 0x00000000,
+	0x39d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000002,
 };
 static const uint32_t hm_tex_fs_rsd_blended[16] = {
 	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x41502200, 0x00000000, 0x00000000, 0x00000000,
@@ -178,6 +192,7 @@ static const struct hm_program hm_tex = {
 	hm_tex_vs_push, 0, hm_tex_fs_push, 0,
 	hm_tex_vs_out, 2, hm_tex_fs_in, 1,
 	hm_tex_attribute_formats, hm_tex_attribute_sizes, 2, 1, 1, 0,
+	hm_tex_fs_rsd_depth,
 };
 
 /* --- fill: compute shader 128 bytes, 32 work registers, preload 0x1000000000000000, pushes 3 --- */

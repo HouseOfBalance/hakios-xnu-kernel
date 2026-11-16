@@ -98,7 +98,8 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     rsd[0] |= static_cast<uint32_t>(gpu + kVsCode);
     rsd[1] |= static_cast<uint32_t>((gpu + kVsCode) >> 32);
     memcpy(cpu + kVsRsd, rsd, sizeof(rsd));
-    memcpy(rsd, in.blendOver ? p.fs_rsd_blended : p.fs_rsd, sizeof(rsd));
+    if (in.depthTest && in.blendOver) return no("a depth test with blending (not served yet)");
+    memcpy(rsd, in.depthTest ? p.fs_rsd_depth : in.blendOver ? p.fs_rsd_blended : p.fs_rsd, sizeof(rsd));
     rsd[0] |= static_cast<uint32_t>(gpu + kFsCode);
     rsd[1] |= static_cast<uint32_t>((gpu + kFsCode) >> 32);
     memcpy(cpu + kFsRsd, rsd, sizeof(rsd));
@@ -191,6 +192,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fb.tiler = gpu + kTilerCtx;
     hm_v7_tile_size(4, device.tileBufferBudget(), &fb.tile_size, &fb.cbuf_allocation);
     fb.rt_count = 1;
+    fb.z_clear = 1.0f;
     struct hm_v7_rt rt = {};
     rt.format = HM_RT_RGBA8_UNORM;
     rt.base = base;

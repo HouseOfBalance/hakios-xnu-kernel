@@ -71,6 +71,7 @@ struct hm_v7_fb {
 	uint32_t tile_size;               /* pixels a tile (pan_select_tile_size): a power of two, 16 to 256 */
 	uint32_t cbuf_allocation;         /* bytes of tile buffer for the colour (pan_select_tile_size), 1 KB units */
 	uint32_t rt_count;                /* render targets that follow, 1 to 8 */
+	float z_clear;                    /* the tile buffer's depth at the frame's start (pan_emit_fbd: zs.clear_value) */
 };
 struct hm_v7_rt {
 	enum hm_rt_format format;

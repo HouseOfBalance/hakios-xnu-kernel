@@ -109,10 +109,11 @@ var(nir_builder *b, nir_variable_mode mode, const struct glsl_type *type, const 
 
 /* the fragment shader's Renderer State for the fixed state above, as panfrost_emit_frag_shader merges it */
 static void
-fs_state(const struct pan_shader_info *fs, struct mali_renderer_state_packed *fs_rsd)
+fs_state(const struct pan_shader_info *fs, struct mali_renderer_state_packed *fs_rsd, bool depth)
 {
 	struct mali_renderer_state_packed partial;
-	struct pan_earlyzs_state earlyzs = pan_earlyzs_get(pan_earlyzs_analyze(fs), false, false, true);
+	/* pan_earlyzs_get(fs->earlyzs, writes_zs, alpha_to_coverage, zs_always_passes): a depth test that writes */
+	struct pan_earlyzs_state earlyzs = pan_earlyzs_get(pan_earlyzs_analyze(fs), depth, false, !depth);
 
 	pan_pack(fs_rsd, RENDERER_STATE, cfg) {
 		cfg.properties.pixel_kill_operation = (enum mali_pixel_kill)earlyzs.kill;
@@ -146,9 +147,10 @@ fs_state(const struct pan_shader_info *fs, struct mali_renderer_state_packed *fs
 		pan_pack(&rast_st, STENCIL_MASK_MISC, cfg) {
 			cfg.single_sampled_lines = true;
 		}
+		/* panfrost_create_depth_stencil_state: depth off is ALWAYS; on, LESS with writes (Metal's Less, write) */
 		pan_pack(&zsa_depth, MULTISAMPLE_MISC, cfg) {
-			cfg.depth_function = MALI_FUNC_ALWAYS;
-			cfg.depth_write_mask = false;
+			cfg.depth_function = depth ? MALI_FUNC_LESS : MALI_FUNC_ALWAYS;
+			cfg.depth_write_mask = depth;
 		}
 		pan_pack(&zsa_st, STENCIL_MASK_MISC, cfg) {
 			cfg.stencil_enable = false;
@@ -247,7 +249,9 @@ program(const char *name, nir_shader *vs_nir, nir_shader *fs_nir, const enum pip
 	pan_pack(&vs_rsd, RENDERER_STATE, cfg) {
 		pan_shader_prepare_rsd(&vs, 0, &cfg);
 	}
-	fs_state(&fs, &fs_rsd);
+	struct mali_renderer_state_packed fs_rsd_depth;
+	fs_state(&fs, &fs_rsd, false);
+	fs_state(&fs, &fs_rsd_depth, true);
 
 	struct mali_blend_packed off, over;
 	blend_desc(&fs, (struct pan_blend_equation){ .blend_enable = false, .color_mask = 0xf }, &off);
@@ -265,6 +269,7 @@ program(const char *name, nir_shader *vs_nir, nir_shader *fs_nir, const enum pip
 	snprintf(n, sizeof(n), "hm_%s_fs_code", name); words(n, (const uint32_t *)fs_bin.data, fs_bin.size / 4);
 	snprintf(n, sizeof(n), "hm_%s_vs_rsd", name); words(n, vs_rsd.opaque, 16);
 	snprintf(n, sizeof(n), "hm_%s_fs_rsd", name); words(n, fs_rsd.opaque, 16);
+	snprintf(n, sizeof(n), "hm_%s_fs_rsd_depth", name); words(n, fs_rsd_depth.opaque, 16);
 	/* a blend that reads the destination keeps the GPU from killing the pixels it covers (pan_allow_forward_pixel_to_kill) */
 	fs_rsd.opaque[4] &= ~(1u << 19);
 	snprintf(n, sizeof(n), "hm_%s_fs_rsd_blended", name); words(n, fs_rsd.opaque, 16);
@@ -287,10 +292,10 @@ program(const char *name, nir_shader *vs_nir, nir_shader *fs_nir, const enum pip
 	    "\thm_%s_vs_code, sizeof(hm_%s_vs_code), hm_%s_fs_code, sizeof(hm_%s_fs_code),\n"
 	    "\thm_%s_vs_rsd, hm_%s_fs_rsd, hm_%s_fs_rsd_blended, hm_%s_blend_off, hm_%s_blend_over,\n"
 	    "\thm_%s_vs_push, %u, hm_%s_fs_push, %u,\n\thm_%s_vs_out, %u, hm_%s_fs_in, %u,\n"
-	    "\thm_%s_attribute_formats, hm_%s_attribute_sizes, %u, %u, %u, %u,\n};\n",
+	    "\thm_%s_attribute_formats, hm_%s_attribute_sizes, %u, %u, %u, %u,\n\thm_%s_fs_rsd_depth,\n};\n",
 	    name, name, name, name, name, name, name, name, name, name, name, name, vs.push.count, name, fs.push.count, name,
 	    vs.varyings.output_count, name, fs.varyings.input_count, name, name, nattr, fs.texture_count, fs.sampler_count,
-	    blend_over ? 1 : 0);
+	    blend_over ? 1 : 0, name);
 	(void)blend_over;
 }
 
