@@ -31,6 +31,11 @@ struct DrawInput {
     uint32_t uniformSize = 0;
     float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     bool blendOver = false;     // Metal's source-over, premultiplied: One, OneMinusSourceAlpha
+    // texture 0 and sampler 0 of a program that samples (RGBA8Unorm, linear rows, one level), and its filtering
+    const Bo* texture = nullptr;
+    uint64_t textureOffset = 0;
+    uint32_t textureWidth = 0, textureHeight = 0, textureRowBytes = 0;
+    bool nearest = true;
 };
 
 class DrawPass {
@@ -47,7 +52,8 @@ public:
         kHeapDesc = 0x300, kTilerCtx = 0x340, kVsRsd = 0x400, kFsRsd = 0x440, kAttributes = 0x4c0,
         kAttributeBuffers = 0x500, kVaryings = 0x5c0, kVaryingBuffers = 0x640, kViewport = 0x680,
         kLocalStorage = 0x6c0, kUbos = 0x700, kVsPush = 0x740, kFsPush = 0x7c0, kVertices = 0x800,
-        kGeneral = 0xc00, kPositions = 0xe00, kVsCode = 0x1000, kFsCode = 0x1800, kUniforms = 0x2000, kSize = 0x4000;
+        kGeneral = 0xc00, kPositions = 0xe00, kVsCode = 0x1000, kFsCode = 0x1800, kUniforms = 0x2000, kTexture = 0x3000,
+        kSurface = 0x3040, kSampler = 0x3080, kSize = 0x4000;
 
 private:
     DrawPass(Device& device) : device_(device) {}
@@ -55,6 +61,7 @@ private:
     Target target_;
     std::unique_ptr<Bo> cmd_;
     const Bo* heap_ = nullptr;
+    const Bo* texture_ = nullptr;
 };
 
 }  // namespace hakios::mali

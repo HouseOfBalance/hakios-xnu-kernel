@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "draw.hpp"
+#include "shaders_v7.h"
 #include "v7.h"
 
 namespace hakios::mali {
@@ -34,7 +35,16 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
         }
     }
     if (vertexBytes > kGeneral - kVertices) return no("the vertices do not fit");
-    if (p.texture_count || p.sampler_count) return no("textures are not served by DrawPass");
+    if (p.texture_count > 1 || p.sampler_count > 1) return no("more than one texture or sampler");
+    if (p.texture_count != 0) {
+        const Bo* tb = in.texture;
+        if (tb == nullptr) return no("the program samples a texture and none is given");
+        uint64_t tbase = tb->gpu() + in.textureOffset;
+        if (in.textureWidth == 0 || in.textureHeight == 0 || in.textureWidth > 4096 || in.textureHeight > 4096 ||
+            in.textureRowBytes < 4 * in.textureWidth || (tbase & 63) != 0 || (in.textureRowBytes & 63) != 0 ||
+            in.textureOffset + static_cast<uint64_t>(in.textureRowBytes) * (in.textureHeight - 1) + 4ull * in.textureWidth > tb->size())
+            return no("the texture is not 64-byte aligned rows of RGBA8 inside its buffer (pan_layout.c, v7)");
+    }
     if (in.blendOver && !p.can_blend) return no("the program has no blended state");
     for (uint32_t i = 0; i < p.vs_push_count; i++) {
         if (p.vs_push[i].ubo != 0 || p.vs_push[i].offset + 4u > in.uniformSize)
@@ -44,7 +54,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
         if (p.fs_push[i].ubo != 0 || p.fs_push[i].offset + 4u > in.uniformSize)
             return no("the fragment shader pushes a word the uniform data does not hold");
     }
-    if (in.uniformSize > kSize - kUniforms) return no("the uniform data do not fit");
+    if (in.uniformSize > kTexture - kUniforms) return no("the uniform data do not fit");
     if (p.vs_size > kFsCode - kVsCode || p.fs_size > kUniforms - kFsCode - 128) return no("the shaders do not fit");
 
     // the varyings, linked (pan_assign_varyings, panfrost_emit_varying_descs): general buffer offsets by the vertex
@@ -71,6 +81,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
 
     std::unique_ptr<DrawPass> pass(new DrawPass(device));
     pass->target_ = t;
+    pass->texture_ = p.texture_count ? in.texture : nullptr;
     pass->cmd_ = device.gpu().newBo(kSize, why);
     if (!pass->cmd_) return nullptr;
     pass->heap_ = device.tilerHeap(why);
@@ -138,6 +149,13 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     for (uint32_t i = 0; i < p.vs_push_count; i++) memcpy(cpu + kVsPush + 4 * i, u + p.vs_push[i].offset, 4);
     for (uint32_t i = 0; i < p.fs_push_count; i++) memcpy(cpu + kFsPush + 4 * i, u + p.fs_push[i].offset, 4);
 
+    // texture 0 and sampler 0 (GENX(panfrost_new_texture), panfrost_create_sampler_state)
+    if (p.texture_count != 0) {
+        hm_v7_surface_with_stride(cpu + kSurface, in.texture->gpu() + in.textureOffset, static_cast<int32_t>(in.textureRowBytes), 0);
+        hm_v7_texture_2d(cpu + kTexture, hm_texture_format_rgba8, hm_texture_swizzle_identity, in.textureWidth,
+                         in.textureHeight, gpu + kSurface);
+        hm_v7_sampler(cpu + kSampler, in.nearest);
+    }
     hm_v7_viewport(cpu + kViewport, 0, 0, 63, 63, 0.0f, 1.0f);
     hm_v7_local_storage(cpu + kLocalStorage);
     hm_v7_tiler_heap(cpu + kHeapDesc, pass->heap_->gpu(), static_cast<uint32_t>(pass->heap_->size()));
@@ -162,6 +180,8 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fragment.thread_storage = gpu + kLocalStorage;
     fragment.push_uniforms = p.fs_push_count ? gpu + kFsPush : 0;
     fragment.uniform_buffers = in.uniformSize ? gpu + kUbos : 0;
+    fragment.textures = p.texture_count ? gpu + kTexture : 0;
+    fragment.samplers = p.sampler_count ? gpu + kSampler : 0;
     hm_v7_tiler_job(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment);
 
     struct hm_v7_fb fb = {};
@@ -189,6 +209,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
 
 int DrawPass::submit(Submission* draw, Submission* frame) {
     std::vector<const Bo*> uses = {cmd_.get(), target_.bo, &device_.samplePositions(), heap_};
+    if (texture_ != nullptr) uses.push_back(texture_);
     int error = device_.gpu().submit(cmd_->gpu() + kVertexJob, false, uses, draw);
     if (error == 0) error = device_.gpu().submit(cmd_->gpu() + kFragmentJob, true, uses, frame);
     return error;

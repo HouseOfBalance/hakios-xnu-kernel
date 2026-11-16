@@ -285,6 +285,73 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
     return ok;
 }
 
+// The tex program: a 4x4 RGBA8 texture of sixteen colours sampled with nearest filtering across a quad covering
+// the 64x64 target (two triangles, uv 0..1): pixel (x, y) must be texel (x / 16, y / 16) exactly, judged away from
+// the texel edges by a pixel
+bool runTexture(Device& device) {
+    const char* stage = "texture";
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    auto tex = device.gpu().newBo(4096, &why);
+    if (!bo || !tex) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    uint8_t texel[16][4];
+    for (int i = 0; i < 16; i++) {
+        texel[i][0] = static_cast<uint8_t>(17 * i), texel[i][1] = static_cast<uint8_t>(255 - 16 * i);
+        texel[i][2] = static_cast<uint8_t>((i * 97) & 255), texel[i][3] = 255;
+    }
+    for (int y = 0; y < 4; y++) memcpy(tex->cpu() + y * 64, texel[4 * y], 16);
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    // two triangles over the whole viewport: NDC -1..1, uv 0..1 (row y of the target is uv.y = y / 64)
+    const float pos[24] = {-1, -1, 0, 1, 1, -1, 0, 1, -1, 1, 0, 1, 1, -1, 0, 1, 1, 1, 0, 1, -1, 1, 0, 1};
+    const float uv[24] = {0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0};
+    DrawInput in;
+    in.attributes[0] = pos;
+    in.attributes[1] = uv;
+    in.vertexCount = 6;
+    in.texture = tex.get();
+    in.textureWidth = in.textureHeight = 4;
+    in.textureRowBytes = 64;
+    in.nearest = true;
+    auto pass = DrawPass::make(device, t, hm_tex, in, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    unsigned right = 0, judged = 0;
+    char firstBad[120] = "";
+    for (uint32_t y = 0; y < 64; y++) {
+        for (uint32_t x = 0; x < 64; x++) {
+            if (x % 16 == 0 || x % 16 == 15 || y % 16 == 0 || y % 16 == 15) continue;
+            judged++;
+            const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
+            const uint8_t* w = texel[(y / 16) * 4 + x / 16];
+            if (memcmp(q, w, 4) == 0) right++;
+            else if (firstBad[0] == 0)
+                snprintf(firstBad, sizeof(firstBad), "; first wrong (%u,%u): %02x%02x%02x%02x, want %02x%02x%02x%02x", x, y,
+                         q[0], q[1], q[2], q[3], w[0], w[1], w[2], w[3]);
+        }
+    }
+    char detail[300];
+    snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s; %u of %u pixels the texel their uv names%s",
+             statusText(pass->vertexStatus()).c_str(), statusText(pass->tilerStatus()).c_str(),
+             statusText(pass->fragmentStatus()).c_str(), right, judged, firstBad);
+    bool jobs = e == 0 && (pass->vertexStatus() & 0xff) == 1 && (pass->tilerStatus() & 0xff) == 1 &&
+                (pass->fragmentStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU checks the jobs, does not rasterize: %s) %s", stage, jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && right == judged;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -579,6 +646,7 @@ int main(int argc, char** argv) {
         runColorDraw(device, "varyings", rgb, one, black, false);
         runColorDraw(device, "uniform", rgb, tint, black, false);
         runColorDraw(device, "blend", white, half, blue, true);
+        runTexture(device);
     }
 
     // the time of a submission and its wait, twenty clears of 64x64

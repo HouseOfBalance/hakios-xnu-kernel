@@ -427,6 +427,7 @@ hm_v7_sampler(void *out, bool nearest)
 		cfg.wrap_mode_s = MALI_WRAP_MODE_CLAMP_TO_EDGE;
 		cfg.wrap_mode_t = MALI_WRAP_MODE_CLAMP_TO_EDGE;
 		cfg.wrap_mode_r = MALI_WRAP_MODE_CLAMP_TO_EDGE;
+		cfg.seamless_cube_map = false;  /* cso->seamless_cube_map, a 2D texture */
 	}
 }
 
@@ -748,6 +749,8 @@ hm_v7_read_draw(const void *job, bool tiler, struct hm_v7_draw_read *out, const 
 		out->draw.thread_storage = d.thread_storage;
 		out->draw.push_uniforms = d.push_uniforms;
 		out->draw.uniform_buffers = d.uniform_buffers;
+		out->draw.textures = d.textures;
+		out->draw.samplers = d.samplers;
 	} else {
 		pan_section_unpack(job, COMPUTE_JOB, INVOCATION, inv);
 		pan_section_unpack(job, COMPUTE_JOB, DRAW, d);

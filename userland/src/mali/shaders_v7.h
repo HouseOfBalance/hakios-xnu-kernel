@@ -120,3 +120,66 @@ static const struct hm_program hm_color = {
 	hm_color_vs_out, 2, hm_color_fs_in, 1,
 	hm_color_attribute_formats, hm_color_attribute_sizes, 2, 0, 0, 1,
 };
+
+/* --- tex: vertex shader 288 bytes, 32 work registers, preload 0x6000000000000000; fragment shader 144 bytes, 32 work registers, preload 0x100000000000000f, blend register format 1 --- */
+static const uint32_t hm_tex_vs_code[72] = {
+	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020023, 0x30800888,
+	0x0000402b, 0x20070406, 0xc0018004, 0x11800018, 0x10004020, 0x20070008, 0x0a8000bc, 0x38004102,
+	0x00834001, 0x0009c078, 0x08076590, 0x0401002f, 0x10004061, 0x00084086, 0x0a876590, 0x42043102,
+	0x41820007, 0x80cb198a, 0x00027a23, 0x3801d964, 0x20000076, 0x70000004, 0x3f00000c, 0x47000000,
+	0x2000004a, 0x80cb1c02, 0xc000a123, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020123, 0x30800848,
+	0x2104004e, 0x80cb1e06, 0x00026a23, 0x01800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_tex_fs_code[36] = {
+	0x3f3c054e, 0x80cb1ef8, 0xc0023d07, 0x4b460f8c, 0xcc30084e, 0x80cb186b, 0x0002a583, 0x02400004,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_tex_vs_rsd[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00020002, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00006000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_tex_fs_rsd[16] = {
+	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x41582200, 0x00000000, 0x00000000, 0x00000000,
+	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000002,
+};
+static const uint32_t hm_tex_fs_rsd_blended[16] = {
+	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x41502200, 0x00000000, 0x00000000, 0x00000000,
+	0x37d8ffff, 0x40000000, 0x00000000, 0x00000000, 0x00000080, 0x00000000, 0x00000000, 0x00000002,
+};
+static const uint32_t hm_tex_blend_off[4] = {
+	0x00000200, 0xf0122122, 0x00000019, 0x010ed000,
+};
+static const uint32_t hm_tex_blend_over[4] = {
+	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
+};
+static const struct hm_push_word hm_tex_vs_push[1] = { { 0, 0 }
+};
+static const struct hm_push_word hm_tex_fs_push[1] = { { 0, 0 }
+};
+static const struct hm_varying hm_tex_vs_out[2] = {
+	{ 0, 0x00000000, 16 },   /* VARYING_SLOT_POS, r32g32b32a32_uint */
+	{ 32, 0x0008d010, 8 },   /* VARYING_SLOT_VAR0, r32g32_uint */
+};
+static const struct hm_varying hm_tex_fs_in[1] = {
+	{ 32, 0x000af010, 8 },   /* VARYING_SLOT_VAR0, r32g32_float */
+};
+static const uint32_t hm_tex_attribute_formats[2] = { 0x000bf000, 0x000bf000, };
+static const uint32_t hm_tex_attribute_sizes[2] = { 16, 16, };
+static const struct hm_program hm_tex = {
+	"tex",
+	hm_tex_vs_code, sizeof(hm_tex_vs_code), hm_tex_fs_code, sizeof(hm_tex_fs_code),
+	hm_tex_vs_rsd, hm_tex_fs_rsd, hm_tex_fs_rsd_blended, hm_tex_blend_off, hm_tex_blend_over,
+	hm_tex_vs_push, 0, hm_tex_fs_push, 0,
+	hm_tex_vs_out, 2, hm_tex_fs_in, 1,
+	hm_tex_attribute_formats, hm_tex_attribute_sizes, 2, 1, 1, 0,
+};
+
+/* textures: RGBA8Unorm's format word and the identity swizzle */
+static const uint32_t hm_texture_format_rgba8 = 0x000bb000;
+static const uint32_t hm_texture_swizzle_identity = 0x688;

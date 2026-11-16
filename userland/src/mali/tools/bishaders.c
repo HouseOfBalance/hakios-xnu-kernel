@@ -43,6 +43,7 @@
 #include "pan_earlyzs.h"
 #include "pan_format.h"
 #include "pan_shader.h"
+#include "pan_util.h"
 
 #define GPU_ID 0x7402u
 
