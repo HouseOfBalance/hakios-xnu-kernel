@@ -199,7 +199,7 @@ bool runClear(Device& device, const ClearCase& c) {
 // pixel: more than a pixel inside the triangle the colour interpolated in screen space (w is 1) times the tint, through
 // the blend when there is one; more than a pixel outside the clear; within 2/255 a channel (8-bit rounding, dithering)
 bool runColorDraw(Device& device, const char* stage, const float colors[12], const float tint[4], const float clear[4],
-                  bool over, uint32_t W = 64, uint32_t H = 64) {
+                  bool over, uint32_t W = 64, uint32_t H = 64, bool bgra = false) {
     std::string why;
     const uint32_t R = (4 * W + 63) & ~63u;
     auto bo = device.gpu().newBo(static_cast<uint64_t>(R) * H + 4096, &why);
@@ -210,6 +210,7 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
     t.width = W;
     t.height = H;
     t.rowBytes = R;
+    t.format = bgra ? Format::BGRA8Unorm : Format::RGBA8Unorm;
     const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
     DrawInput in;
     in.attributes[0] = positions;
@@ -255,6 +256,10 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
                 }
             } else {
                 memcpy(want, clearPx, 4);
+            }
+            if (bgra) {
+                uint8_t r = want[0];
+                want[0] = want[2], want[2] = r;
             }
             unsigned diff = 0;
             for (int c = 0; c < 4; c++) {
@@ -520,6 +525,66 @@ bool runCompiler(Device& device) {
     if (fill.code) hm_kernel_free(&fill);
     return ok;
 #endif
+}
+
+// An indexed draw: a quad of four vertices as two triangles of six 16-bit indices (0 1 2, 2 1 3), every vertex green:
+// the quad's inside green, the rest the clear
+bool runIndexed(Device& device) {
+    const char* stage = "indexed";
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    // the quad (-0.5..0.5)^2: pixels 16..48
+    const float pos[16] = {-0.5f, -0.5f, 0, 1, 0.5f, -0.5f, 0, 1, -0.5f, 0.5f, 0, 1, 0.5f, 0.5f, 0, 1};
+    const float col[16] = {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1};
+    const uint16_t idx[6] = {0, 1, 2, 2, 1, 3};
+    const float one[4] = {1, 1, 1, 1};
+    DrawInput in;
+    in.attributes[0] = pos;
+    in.attributes[1] = col;
+    in.vertexCount = 4;
+    in.indices = idx;
+    in.indexCount = 6;
+    in.uniforms = one;
+    in.uniformSize = 16;
+    auto pass = DrawPass::make(device, t, hm_color, in, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    unsigned inRight = 0, inTotal = 0, outRight = 0, outTotal = 0;
+    for (uint32_t y = 0; y < 64; y++) {
+        for (uint32_t x = 0; x < 64; x++) {
+            const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
+            if (x >= 17 && x <= 46 && y >= 17 && y <= 46) {
+                inTotal++;
+                inRight += q[0] == 0 && q[1] == 0xff && q[2] == 0 && q[3] == 0xff;
+            } else if (x < 15 || x > 48 || y < 15 || y > 48) {
+                outTotal++;
+                outRight += q[0] == 0 && q[1] == 0 && q[2] == 0 && q[3] == 0xff;
+            }
+        }
+    }
+    char detail[220];
+    snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s; inside %u of %u green, outside %u of %u the clear",
+             statusText(pass->vertexStatus()).c_str(), statusText(pass->tilerStatus()).c_str(),
+             statusText(pass->fragmentStatus()).c_str(), inRight, inTotal, outRight, outTotal);
+    bool jobs = e == 0 && (pass->fragmentStatus() & 0xff) == 1 && (pass->tilerStatus() & 0xff) == 1 &&
+                (pass->vertexStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU does not rasterize: %s) %s", stage, jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && inRight == inTotal && outRight == outTotal;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
 }
 
 }  // namespace
@@ -821,6 +886,8 @@ int main(int argc, char** argv) {
         runColorDraw(device, "blend", white, half, blue, true);
         runColorDraw(device, "varyings-160x96", rgb, one, black, false, 160, 96);
         runColorDraw(device, "varyings-750x1624", rgb, one, black, false, 750, 1624);
+        runColorDraw(device, "varyings-bgra", rgb, one, black, false, 64, 64, true);
+        runIndexed(device);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);

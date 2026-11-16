@@ -143,7 +143,8 @@ fs_state(const struct pan_shader_info *fs, struct mali_renderer_state_packed *fs
 
 /* the target's Blend descriptor (panfrost_emit_blend) for equation EQ */
 static void
-blend_desc(const struct pan_shader_info *fs, struct pan_blend_equation eq, struct mali_blend_packed *blend)
+blend_desc(const struct pan_shader_info *fs, struct pan_blend_equation eq, enum pipe_format format,
+    struct mali_blend_packed *blend)
 {
 	struct mali_blend_equation_packed eqp;
 	bool opaque = pan_blend_is_opaque(eq);
@@ -165,7 +166,7 @@ blend_desc(const struct pan_shader_info *fs, struct pan_blend_equation eq, struc
 		cfg.mode = opaque ? MALI_BLEND_MODE_OPAQUE : MALI_BLEND_MODE_FIXED_FUNCTION;
 		cfg.fixed_function.num_comps = 4;
 		cfg.fixed_function.conversion.memory_format =
-		    GENX(panfrost_dithered_format_from_pipe_format)(PIPE_FORMAT_R8G8B8A8_UNORM, true);
+		    GENX(panfrost_dithered_format_from_pipe_format)(format, true);
 		cfg.fixed_function.rt = 0;
 		if (!opaque) {
 			cfg.fixed_function.alpha_zero_nop = pan_blend_alpha_zero_nop(eq);
@@ -241,13 +242,18 @@ build(const char *name, unsigned gpu_id, nir_shader *vs_nir, nir_shader *fs_nir,
 	fs_rsd_blended = fs_rsd;
 	/* a blend that reads the destination keeps the GPU from killing the pixels it covers (pan_allow_forward_pixel_to_kill) */
 	fs_rsd_blended.opaque[4] &= ~(1u << 19);
-	struct mali_blend_packed off, over;
-	blend_desc(&fs, (struct pan_blend_equation){ .blend_enable = false, .color_mask = 0xf }, &off);
-	blend_desc(&fs, (struct pan_blend_equation){
+	struct mali_blend_packed off, over, off_bgra, over_bgra;
+	const struct pan_blend_equation eq_off = { .blend_enable = false, .color_mask = 0xf };
+	const struct pan_blend_equation eq_over = {
 		.blend_enable = true, .rgb_func = PIPE_BLEND_ADD, .rgb_src_factor = PIPE_BLENDFACTOR_ONE,
 		.rgb_dst_factor = PIPE_BLENDFACTOR_INV_SRC_ALPHA, .alpha_func = PIPE_BLEND_ADD,
 		.alpha_src_factor = PIPE_BLENDFACTOR_ONE, .alpha_dst_factor = PIPE_BLENDFACTOR_INV_SRC_ALPHA,
-		.color_mask = 0xf }, &over);
+		.color_mask = 0xf };
+	blend_desc(&fs, eq_off, PIPE_FORMAT_R8G8B8A8_UNORM, &off);
+	blend_desc(&fs, eq_over, PIPE_FORMAT_R8G8B8A8_UNORM, &over);
+	/* the same for a BGRA8Unorm target (the window server's surfaces) */
+	blend_desc(&fs, eq_off, PIPE_FORMAT_B8G8R8A8_UNORM, &off_bgra);
+	blend_desc(&fs, eq_over, PIPE_FORMAT_B8G8R8A8_UNORM, &over_bgra);
 	uint32_t *formats = calloc(nattr ? nattr : 1, 4), *sizes = calloc(nattr ? nattr : 1, 4);
 	for (unsigned i = 0; i < nattr; i++) {
 		formats[i] = GENX(panfrost_format_from_pipe_format)(attributes[i])->hw;
@@ -265,6 +271,8 @@ build(const char *name, unsigned gpu_id, nir_shader *vs_nir, nir_shader *fs_nir,
 	out->fs_rsd_depth = copy(fs_rsd_depth.opaque, 64);
 	out->blend_off = copy(off.opaque, 16);
 	out->blend_over = copy(over.opaque, 16);
+	out->blend_off_bgra = copy(off_bgra.opaque, 16);
+	out->blend_over_bgra = copy(over_bgra.opaque, 16);
 	out->vs_push = push_table(&vs);
 	out->vs_push_count = vs.push.count;
 	out->fs_push = push_table(&fs);
@@ -293,7 +301,8 @@ hm_program_free(struct hm_program *p)
 {
 	free((void *)p->vs_code); free((void *)p->fs_code); free((void *)p->vs_rsd); free((void *)p->fs_rsd);
 	free((void *)p->fs_rsd_blended); free((void *)p->fs_rsd_depth); free((void *)p->blend_off);
-	free((void *)p->blend_over); free((void *)p->vs_push); free((void *)p->fs_push); free((void *)p->vs_out);
+	free((void *)p->blend_over); free((void *)p->blend_off_bgra); free((void *)p->blend_over_bgra);
+	free((void *)p->vs_push); free((void *)p->fs_push); free((void *)p->vs_out);
 	free((void *)p->fs_in); free((void *)p->attribute_formats); free((void *)p->attribute_sizes);
 	memset(p, 0, sizeof(*p));
 }

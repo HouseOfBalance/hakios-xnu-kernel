@@ -504,6 +504,13 @@ void
 hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count, uint64_t tiler,
     const struct hm_v7_draw *draw)
 {
+	hm_v7_tiler_job_indexed(job, index, dependency, next, vertex_count, tiler, draw, 0, 0);
+}
+
+void
+hm_v7_tiler_job_indexed(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
+    uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices)
+{
 	pack_invocation(pan_section_ptr(job, TILER_JOB, INVOCATION), vertex_count);
 	/* jm_emit_primitive */
 	pan_section_pack(job, TILER_JOB, PRIMITIVE, cfg) {
@@ -512,8 +519,10 @@ hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, u
 		cfg.job_task_split = 6;
 		cfg.low_depth_cull = true;              /* rast->depth_clip_near */
 		cfg.high_depth_cull = true;             /* rast->depth_clip_far */
-		cfg.index_count = vertex_count;
-		cfg.index_type = MALI_INDEX_TYPE_NONE;
+		cfg.index_count = indices ? index_count : vertex_count;
+		cfg.index_type = indices ? MALI_INDEX_TYPE_UINT16 : MALI_INDEX_TYPE_NONE;
+		cfg.indices = indices;
+		cfg.base_vertex_offset = 0;     /* draw->index_bias - ctx->offset_start */
 		cfg.secondary_shader = false;
 	}
 	/* panfrost_emit_primitive_size: not points, so the constant (the line width) */

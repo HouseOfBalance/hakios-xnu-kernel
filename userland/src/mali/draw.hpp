@@ -40,6 +40,9 @@ struct DrawInput {
     // Metal's depth test Less with writes, in the tile buffer alone (cleared to 1.0, not written back): what a draw of
     // several triangles needs to keep the nearest
     bool depthTest = false;
+    // an index buffer: INDEX_COUNT 16-bit indices into the VERTEX_COUNT vertices (triangles of them)
+    const uint16_t* indices = nullptr;
+    uint32_t indexCount = 0;
 };
 
 class DrawPass {
@@ -59,7 +62,7 @@ public:
         kAttributeBuffers = 0x500, kVaryings = 0x5c0, kVaryingBuffers = 0x640, kViewport = 0x680,
         kLocalStorage = 0x6c0, kUbos = 0x700, kVsPush = 0x740, kFsPush = 0x7c0, kVertices = 0x800,
         kGeneral = 0xc00, kPositions = 0xe00, kVsCode = 0x1000, kFsCode = 0x1800, kUniforms = 0x2000, kTexture = 0x3000,
-        kSurface = 0x3040, kSampler = 0x3080, kSysvals = 0x3100, kSysvalSize = 32, kSize = 0x4000;
+        kSurface = 0x3040, kSampler = 0x3080, kSysvals = 0x3100, kSysvalSize = 32, kIndices = 0x3200, kSize = 0x4000;
 
 private:
     DrawPass(Device& device) : device_(device) {}

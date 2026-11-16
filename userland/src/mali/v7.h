@@ -160,6 +160,10 @@ void hm_v7_vertex_job(void *job, unsigned index, uint64_t next, unsigned vertex_
  * near and far, the last vertex provoking (Gallium's rasterizer defaults); nothing culled */
 void hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
     uint64_t tiler, const struct hm_v7_draw *draw);
+/* the same with an index buffer: INDEX_COUNT 16-bit indices at INDICES into the VERTEX_COUNT vertices the vertex job
+ * shaded (jm_emit_primitive: index type, count and the indices' address; base vertex 0) */
+void hm_v7_tiler_job_indexed(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
+    uint64_t tiler, const struct hm_v7_draw *draw, unsigned index_count, uint64_t indices);
 
 /* A compute job (GENX(jm_launch_grid), v7): GROUPS workgroups of LOCAL invocations each, the Invocation packed as
  * panfrost_pack_work_groups_compute packs it, Job Task Split the sum of log2ceil(local + 1), a barrier in the header

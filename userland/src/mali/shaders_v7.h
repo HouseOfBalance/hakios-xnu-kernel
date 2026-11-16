@@ -44,6 +44,12 @@ static const uint32_t hm_tri_blend_off[4] = {
 static const uint32_t hm_tri_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
+static const uint32_t hm_tri_blend_off_bgra[4] = {
+	0x00000200, 0xf0122122, 0x00000019, 0x010ed000,
+};
+static const uint32_t hm_tri_blend_over_bgra[4] = {
+	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
+};
 static const struct hm_push_word hm_tri_vs_push[6] = {
 	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
@@ -68,7 +74,7 @@ static const struct hm_program hm_tri = {
 	hm_tri_vs_push, 6, hm_tri_fs_push, 0,
 	hm_tri_vs_out, 1, hm_tri_fs_in, 0,
 	hm_tri_attribute_formats, hm_tri_attribute_sizes, 1, 0, 0, 0,
-	hm_tri_fs_rsd_depth, 32, 32,
+	hm_tri_fs_rsd_depth, 32, 32, hm_tri_blend_off_bgra, hm_tri_blend_over_bgra,
 };
 
 /* --- color: vertex shader 320 bytes, 32 work registers; fragment shader 160 bytes, 32 work registers --- */
@@ -113,6 +119,12 @@ static const uint32_t hm_color_blend_off[4] = {
 static const uint32_t hm_color_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
+static const uint32_t hm_color_blend_off_bgra[4] = {
+	0x00000200, 0xf0122122, 0x00000019, 0x010ed000,
+};
+static const uint32_t hm_color_blend_over_bgra[4] = {
+	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
+};
 static const struct hm_push_word hm_color_vs_push[6] = {
 	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
@@ -139,7 +151,7 @@ static const struct hm_program hm_color = {
 	hm_color_vs_push, 6, hm_color_fs_push, 4,
 	hm_color_vs_out, 2, hm_color_fs_in, 1,
 	hm_color_attribute_formats, hm_color_attribute_sizes, 2, 0, 0, 1,
-	hm_color_fs_rsd_depth, 32, 32,
+	hm_color_fs_rsd_depth, 32, 32, hm_color_blend_off_bgra, hm_color_blend_over_bgra,
 };
 
 /* --- tex: vertex shader 320 bytes, 32 work registers; fragment shader 144 bytes, 32 work registers --- */
@@ -184,6 +196,12 @@ static const uint32_t hm_tex_blend_off[4] = {
 static const uint32_t hm_tex_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
+static const uint32_t hm_tex_blend_off_bgra[4] = {
+	0x00000200, 0xf0122122, 0x00000019, 0x010ed000,
+};
+static const uint32_t hm_tex_blend_over_bgra[4] = {
+	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
+};
 static const struct hm_push_word hm_tex_vs_push[6] = {
 	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
@@ -209,7 +227,7 @@ static const struct hm_program hm_tex = {
 	hm_tex_vs_push, 6, hm_tex_fs_push, 0,
 	hm_tex_vs_out, 2, hm_tex_fs_in, 1,
 	hm_tex_attribute_formats, hm_tex_attribute_sizes, 2, 1, 1, 0,
-	hm_tex_fs_rsd_depth, 32, 32,
+	hm_tex_fs_rsd_depth, 32, 32, hm_tex_blend_off_bgra, hm_tex_blend_over_bgra,
 };
 
 /* --- fill: compute shader 128 bytes, 32 work registers --- */

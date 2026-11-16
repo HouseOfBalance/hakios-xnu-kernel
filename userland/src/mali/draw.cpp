@@ -16,15 +16,23 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
         return std::unique_ptr<DrawPass>();
     };
     const struct hm_v7_sizes* sz = hm_v7_sizes();
-    if (t.bo == nullptr || t.width == 0 || t.height == 0 || t.width > 4096 || t.height > 4096 ||
-        t.format != Format::RGBA8Unorm)
-        return no("a draw goes into an RGBA8Unorm target of 1 to 4096 pixels a side");
+    if (t.bo == nullptr || t.width == 0 || t.height == 0 || t.width > 4096 || t.height > 4096)
+        return no("a draw goes into a target of 1 to 4096 pixels a side");
+    const bool bgra = t.format == Format::BGRA8Unorm;
     uint64_t base = t.bo->gpu() + t.offset;
     if ((base & 63) != 0 || (t.rowBytes & 63) != 0 || t.rowBytes < 4 * t.width ||
         t.offset + static_cast<uint64_t>(t.rowBytes) * (t.height - 1) + 4ull * t.width > t.bo->size())
         return no("the target is not 64-byte aligned rows inside its buffer (pan_layout.c, v7)");
-    if (in.vertexCount < 3 || in.vertexCount % 3 != 0 || in.vertexCount > 48)
+    if (in.indices == nullptr && (in.vertexCount < 3 || in.vertexCount % 3 != 0 || in.vertexCount > 48))
         return no("a vertex count that is not a whole number of triangles, 3 to 48");
+    if (in.indices != nullptr) {
+        if (in.vertexCount < 1 || in.vertexCount > 48 || in.indexCount < 3 || in.indexCount % 3 != 0 ||
+            in.indexCount * 2 > kSize - kIndices)
+            return no("an indexed draw of 1 to 48 vertices and a whole number of triangles of indices");
+        for (uint32_t i = 0; i < in.indexCount; i++) {
+            if (in.indices[i] >= in.vertexCount) return no("an index past the vertices");
+        }
+    }
     if (p.attribute_count > 4) return no("more than four vertex attributes");
     uint32_t vertexBytes = 0;
     for (uint32_t a = 0; a < p.attribute_count; a++) {
@@ -105,7 +113,8 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     rsd[0] |= static_cast<uint32_t>(gpu + kFsCode);
     rsd[1] |= static_cast<uint32_t>((gpu + kFsCode) >> 32);
     memcpy(cpu + kFsRsd, rsd, sizeof(rsd));
-    memcpy(cpu + kFsRsd + sz->renderer_state, in.blendOver ? p.blend_over : p.blend_off, sz->blend);
+    memcpy(cpu + kFsRsd + sz->renderer_state,
+           in.blendOver ? (bgra ? p.blend_over_bgra : p.blend_over) : (bgra ? p.blend_off_bgra : p.blend_off), sz->blend);
 
     // the vertex attributes, one buffer each, and the tables' ends
     uint64_t at = kVertices;
@@ -193,7 +202,13 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fragment.uniform_buffers = gpu + kUbos;
     fragment.textures = p.texture_count ? gpu + kTexture : 0;
     fragment.samplers = p.sampler_count ? gpu + kSampler : 0;
-    hm_v7_tiler_job(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment);
+    if (in.indices != nullptr) {
+        memcpy(cpu + kIndices, in.indices, 2 * in.indexCount);
+        hm_v7_tiler_job_indexed(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment, in.indexCount,
+                                gpu + kIndices);
+    } else {
+        hm_v7_tiler_job(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment);
+    }
 
     struct hm_v7_fb fb = {};
     fb.width = t.width;
@@ -206,7 +221,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fb.rt_count = 1;
     fb.z_clear = 1.0f;
     struct hm_v7_rt rt = {};
-    rt.format = HM_RT_RGBA8_UNORM;
+    rt.format = bgra ? HM_RT_BGRA8_UNORM : HM_RT_RGBA8_UNORM;
     rt.base = base;
     rt.row_stride = t.rowBytes;
     rt.write_enable = true;

@@ -76,6 +76,8 @@ program(const char *name)
 	words(name, "fs_rsd_blended", p.fs_rsd_blended, 16);
 	words(name, "blend_off", p.blend_off, 4);
 	words(name, "blend_over", p.blend_over, 4);
+	words(name, "blend_off_bgra", p.blend_off_bgra, 4);
+	words(name, "blend_over_bgra", p.blend_over_bgra, 4);
 	pushes(name, "vs_push", p.vs_push, p.vs_push_count);
 	pushes(name, "fs_push", p.fs_push, p.fs_push_count);
 	varyings(name, "vs_out", p.vs_out, p.vs_out_count);
@@ -86,10 +88,10 @@ program(const char *name)
 	    "\thm_%s_vs_code, %u, hm_%s_fs_code, %u,\n"
 	    "\thm_%s_vs_rsd, hm_%s_fs_rsd, hm_%s_fs_rsd_blended, hm_%s_blend_off, hm_%s_blend_over,\n"
 	    "\thm_%s_vs_push, %u, hm_%s_fs_push, %u,\n\thm_%s_vs_out, %u, hm_%s_fs_in, %u,\n"
-	    "\thm_%s_attribute_formats, hm_%s_attribute_sizes, %u, %u, %u, %u,\n\thm_%s_fs_rsd_depth, %u, %u,\n};\n",
+	    "\thm_%s_attribute_formats, hm_%s_attribute_sizes, %u, %u, %u, %u,\n\thm_%s_fs_rsd_depth, %u, %u, hm_%s_blend_off_bgra, hm_%s_blend_over_bgra,\n};\n",
 	    name, name, name, p.vs_size, name, p.fs_size, name, name, name, name, name, name, p.vs_push_count, name,
 	    p.fs_push_count, name, p.vs_out_count, name, p.fs_in_count, name, name, p.attribute_count, p.texture_count,
-	    p.sampler_count, p.can_blend, name, p.vs_work_registers, p.fs_work_registers);
+	    p.sampler_count, p.can_blend, name, p.vs_work_registers, p.fs_work_registers, name, name);
 	hm_program_free(&p);
 }
 

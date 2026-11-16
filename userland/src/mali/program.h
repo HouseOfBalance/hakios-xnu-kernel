@@ -47,6 +47,8 @@ struct hm_program {
 	uint32_t can_blend;
 	const uint32_t *fs_rsd_depth;       /* 16 words: depth test Less, depth written (in the tile buffer) */
 	uint32_t vs_work_registers, fs_work_registers;
+	const uint32_t *blend_off_bgra;     /* the two Blend descriptors for a BGRA8Unorm target */
+	const uint32_t *blend_over_bgra;
 };
 
 /* a compute kernel: its code, its Renderer State (the address left 0), the words it pushes, its workgroup size */
