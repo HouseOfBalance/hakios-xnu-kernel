@@ -3,6 +3,8 @@
 //   mali-probe            every stage against the kernel's HakiosMali (waits up to 60 s for the service)
 //   mali-probe --fake     the same stages against the fake GPU, in this process (any machine)
 //   mali-probe --dump     also print every frame's descriptors as Mesa's printers say them
+//   mali-probe --until T  nothing but wait until the system has been up T seconds (a job list's clock: pictures
+//                         taken at the run's end, which is a time since boot, wherever launchd started the list)
 //   mali-probe --show N   only the triangle, then it on the panel for N seconds, sixteen times as big (a picture of
 //                         the test for fbgrab: put again five times a second, as the window server draws over it)
 //
@@ -19,12 +21,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <sys/time.h>
 #include <unistd.h>
 #include <vector>
 
-#if defined(__APPLE__)
+#include <sys/types.h>
 #include <sys/sysctl.h>
-#endif
 
 #include "fake_gpu.hpp"
 #include "mali.hpp"
@@ -192,12 +194,23 @@ bool runClear(Device& device, const ClearCase& c) {
 
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);       // every line out as it is printed: a crash must not take them along
+    if (argc == 3 && strcmp(argv[1], "--until") == 0) {
+        struct timeval boot = {}, now = {};
+        size_t n = sizeof(boot);
+        int mib[2] = {CTL_KERN, KERN_BOOTTIME};
+        if (sysctl(mib, 2, &boot, &n, nullptr, 0) != 0) return 1;
+        gettimeofday(&now, nullptr);
+        long up = now.tv_sec - boot.tv_sec, until = atol(argv[2]);
+        printf("mali-probe: up %ld s, waiting until %ld s\n", up, until);
+        if (until > up) sleep(static_cast<unsigned>(until - up));
+        return 0;
+    }
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fake") == 0) gFake = true;
         else if (strcmp(argv[i], "--dump") == 0) gDump = true;
         else if (strcmp(argv[i], "--show") == 0 && i + 1 < argc) gShow = atoi(argv[++i]);
         else {
-            fprintf(stderr, "usage: mali-probe [--fake] [--dump] [--show SECONDS]\n");
+            fprintf(stderr, "usage: mali-probe [--fake] [--dump] [--show SECONDS] | mali-probe --until SECONDS\n");
             return 2;
         }
     }
