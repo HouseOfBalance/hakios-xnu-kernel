@@ -58,6 +58,9 @@ struct ClearOptions {
     bool cleanPixelWrite = true;
     // the tiles the Fragment job runs, 16-pixel units, inclusive; ~0u: to the frame's last
     uint32_t minTx = 0, minTy = 0, maxTx = ~0u, maxTy = ~0u;
+    // the Framebuffer Parameters' Bound Min/Max, pixels, inclusive; ~0u: to the frame's last (pan_emit_fbd always
+    // writes the whole frame here and limits the work with the job's tiles alone)
+    uint32_t boundMinX = 0, boundMinY = 0, boundMaxX = ~0u, boundMaxY = ~0u;
 };
 
 // One cleared frame, built and ready to submit. Its descriptors live in a command buffer of its own.

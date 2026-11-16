@@ -103,8 +103,10 @@ std::unique_ptr<ClearPass> ClearPass::make(Device& device, const Target& t, cons
     struct hm_v7_fb fb = {};
     fb.width = t.width;
     fb.height = t.height;
-    fb.bound_max_x = t.width - 1;
-    fb.bound_max_y = t.height - 1;
+    fb.bound_min_x = o.boundMinX;
+    fb.bound_min_y = o.boundMinY;
+    fb.bound_max_x = o.boundMaxX == ~0u ? t.width - 1 : o.boundMaxX;
+    fb.bound_max_y = o.boundMaxY == ~0u ? t.height - 1 : o.boundMaxY;
     fb.sample_locations = device.samplePositions().gpu();
     fb.tiler = tiler;
     hm_v7_tile_size(4, device.tileBufferBudget(), &fb.tile_size, &fb.cbuf_allocation);

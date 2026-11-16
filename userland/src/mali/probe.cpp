@@ -117,6 +117,11 @@ bool runClear(Device& device, const ClearCase& c) {
     uint32_t y1 = (c.options.maxTy == ~0u ? lastTy : c.options.maxTy) * 16 + 15;
     if (x1 >= c.width) x1 = c.width - 1;
     if (y1 >= c.height) y1 = c.height - 1;
+    // and inside the framebuffer's bounds (the fake GPU's model: both limit what is written)
+    x0 = x0 > c.options.boundMinX ? x0 : c.options.boundMinX;
+    y0 = y0 > c.options.boundMinY ? y0 : c.options.boundMinY;
+    if (c.options.boundMaxX != ~0u && x1 > c.options.boundMaxX) x1 = c.options.boundMaxX;
+    if (c.options.boundMaxY != ~0u && y1 > c.options.boundMaxY) y1 = c.options.boundMaxY;
 
     Transport& tr = device.gpu().transport();
     Submission s;
@@ -150,12 +155,26 @@ bool runClear(Device& device, const ClearCase& c) {
             if (m[i] != kCanary && firstWrong == ~0ull) firstWrong = i;
         }
     }
+    // what the GPU wrote, whatever was expected: the pixels of the target holding the colour and their bounding box
+    uint64_t holding = 0;
+    uint32_t bx0 = ~0u, by0 = ~0u, bx1 = 0, by1 = 0;
+    for (uint32_t y = 0; y < c.height; y++) {
+        for (uint32_t x = 0; x < c.width; x++) {
+            if (memcmp(m + c.offset + static_cast<uint64_t>(y) * c.rowBytes + 4ull * x, want, 4) == 0) {
+                holding++;
+                bx0 = x < bx0 ? x : bx0, by0 = y < by0 ? y : by0, bx1 = x > bx1 ? x : bx1, by1 = y > by1 ? y : by1;
+            }
+        }
+    }
+    char region[80];
+    if (holding == 0) snprintf(region, sizeof(region), "none written");
+    else snprintf(region, sizeof(region), "written (%u,%u)-(%u,%u), %llu", bx0, by0, bx1, by1, (unsigned long long)holding);
     char detail[320];
     snprintf(detail, sizeof(detail), "%ux%u %s, job %s, %llu of %llu pixels %02x%02x%02x%02x, canary %llu of %llu "
-             "bytes kept, %llu us", c.width, c.height, c.format == Format::BGRA8Unorm ? "BGRA8" : "RGBA8",
+             "bytes kept, %s, %llu us", c.width, c.height, c.format == Format::BGRA8Unorm ? "BGRA8" : "RGBA8",
              statusText(status).c_str(), static_cast<unsigned long long>(right), static_cast<unsigned long long>(covered),
              want[0], want[1], want[2], want[3], static_cast<unsigned long long>(canaryKept),
-             static_cast<unsigned long long>(canaryTotal), static_cast<unsigned long long>(us));
+             static_cast<unsigned long long>(canaryTotal), region, static_cast<unsigned long long>(us));
     bool ok = (status & 0xff) == 1 && right == covered && canaryKept == canaryTotal;
     std::string text = detail;
     if (!ok && firstWrong != ~0ull) {
@@ -286,6 +305,23 @@ int main(int argc, char** argv) {
     tiles.options.minTx = tiles.options.minTy = 1;
     tiles.options.maxTx = tiles.options.maxTy = 2;
     runClear(device, tiles);
+
+    // run 501: the job's tiles alone did not keep the GPU inside (1,1)-(2,2) -- it wrote the whole 64x64. Which bounds
+    // does it keep? The framebuffer's alone, then both
+    ClearCase fbBounds = {"clear64-fbbounds", 64, 64, 256, 0, Format::RGBA8Unorm, {1.0f, 0.0f, 1.0f, 1.0f}, {}, true};
+    fbBounds.options.boundMinX = fbBounds.options.boundMinY = 16;
+    fbBounds.options.boundMaxX = fbBounds.options.boundMaxY = 47;
+    runClear(device, fbBounds);
+    ClearCase both = {"clear64-both", 64, 64, 256, 0, Format::RGBA8Unorm, {0.0f, 1.0f, 1.0f, 1.0f}, {}, true};
+    both.options.minTx = both.options.minTy = 1;
+    both.options.maxTx = both.options.maxTy = 2;
+    both.options.boundMinX = both.options.boundMinY = 16;
+    both.options.boundMaxX = both.options.boundMaxY = 47;
+    runClear(device, both);
+    // and a frame bounded off the tile grid: pixels (5,7)-(40,50)
+    ClearCase odd2 = {"clear64-fbbounds-odd", 64, 64, 256, 0, Format::RGBA8Unorm, {1.0f, 1.0f, 0.0f, 1.0f}, {}, true};
+    odd2.options.boundMinX = 5, odd2.options.boundMinY = 7, odd2.options.boundMaxX = 40, odd2.options.boundMaxY = 50;
+    runClear(device, odd2);
 
     ClearCase big = {"clear-750x1624", 750, 1624, 3008, 0, Format::BGRA8Unorm, {0.1f, 0.2f, 0.3f, 1.0f}, {}, true};
     runClear(device, big);
