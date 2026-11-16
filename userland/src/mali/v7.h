@@ -40,6 +40,7 @@ enum hm_job_type {
 struct hm_v7_sizes {
 	unsigned job_header, fragment_job, write_value_job, framebuffer, render_target, zs_crc_extension,
 	    tiler_context, tiler_heap, sample_positions, job_align, framebuffer_align, tiler_align;
+	unsigned vertex_job, tiler_job, renderer_state, blend, attribute, attribute_buffer, viewport, local_storage;
 };
 const struct hm_v7_sizes *hm_v7_sizes(void);
 
@@ -111,6 +112,40 @@ void hm_v7_tile_size(unsigned bytes_per_pixel, unsigned tib_budget, uint32_t *ti
  * become 8 bits each, rounded to even, and the word is repeated four times */
 void hm_v7_pack_clear_rgba8(const float rgba[4], uint32_t out[4]);
 
+/* --- a draw (jm_launch_draw on v7 without IDVS: a vertex job, then a tiler job that depends on it) ------------ */
+
+/* An Attribute (vertex input or varying record): BUFFER_INDEX into the buffers beside it, FORMAT a Pixel Format
+ * word (hm_v7_position_format, or one Mesa's format table gives), OFFSET bytes; Offset enable is v7.xml's default
+ * for a vertex input (panfrost_emit_vertex_data), off for a varying (pan_emit_vary: PAN_ARCH <= 5 only) */
+void hm_v7_attribute(void *out, unsigned buffer_index, uint32_t format, int32_t offset, bool offset_enable);
+/* An Attribute Buffer of type 1D (v7.xml's default): POINTER 64-aligned, STRIDE and SIZE bytes; a zeroed one ends a
+ * table (panfrost_emit_vertex_data and _varying_descriptor leave one after the last: "suppress prefetch") */
+void hm_v7_attribute_buffer(void *out, uint64_t pointer, uint32_t stride, uint32_t size);
+/* the position varying's format, pan_special_format(PAN_VARY_POSITION) on v7: MALI_SNAP_4 << 12, no swizzle */
+uint32_t hm_v7_position_format(void);
+/* A Viewport (panfrost_emit_viewport, v7): the scissor [MIN, MAX] inclusive in pixels, depth [MIN_Z, MAX_Z]; the
+ * x and y limits v7.xml's defaults (-inf, +inf) */
+void hm_v7_viewport(void *out, unsigned min_x, unsigned min_y, unsigned max_x, unsigned max_y, float min_z, float max_z);
+/* Local Storage with no thread or workgroup storage (GENX(pan_emit_tls) with both sizes 0) */
+void hm_v7_local_storage(void *out);
+
+struct hm_v7_draw {
+	uint64_t state;                   /* the stage's Renderer State (followed by its Blend descriptors: fragment) */
+	uint64_t attributes, attribute_buffers;
+	uint64_t varyings, varying_buffers;
+	uint64_t position;                /* the tiler's: the position varying buffer */
+	uint64_t viewport;                /* the tiler's */
+	uint64_t thread_storage;
+};
+/* A vertex job: Compute Job's layout with type Vertex (jm_emit_vertex_job), VERTEX_COUNT vertices of one instance
+ * (jm_launch_draw's Invocation for instance_count 1), Job Task Split 5 */
+void hm_v7_vertex_job(void *job, unsigned index, uint64_t next, unsigned vertex_count, const struct hm_v7_draw *draw);
+/* A tiler job (jm_emit_tiler_job): triangles, VERTEX_COUNT vertices, no index buffer, the Tiler Context TILER,
+ * dependent on job DEPENDENCY of the chain; Primitive Size the constant 1.0 (a line width of 1); depth clipped
+ * near and far, the last vertex provoking (Gallium's rasterizer defaults); nothing culled */
+void hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
+    uint64_t tiler, const struct hm_v7_draw *draw);
+
 /* --- reading (the fake GPU, the probe's dumps) ------------------------------------------------------------- */
 
 struct hm_v7_job {
@@ -166,6 +201,16 @@ int hm_v7_read_framebuffer(const void *fbd, struct hm_v7_fb_read *out, const cha
 int hm_v7_read_rt(const void *rt, struct hm_v7_rt_read *out, const char **why);
 int hm_v7_read_tiler_context(const void *ctx, struct hm_v7_tiler_read *out, const char **why);
 int hm_v7_read_tiler_heap(const void *heap, struct hm_v7_tiler_read *out, const char **why);
+
+/* a vertex job's or tiler job's draw (TILER: the Tiler Job's layout, else the Compute Job's): its Draw, the
+ * invocation count, and for a tiler job the primitive's draw mode and index count and the Tiler Context */
+struct hm_v7_draw_read {
+	struct hm_v7_draw draw;
+	unsigned invocations;             /* vertices less one, as packed */
+	unsigned draw_mode, index_count, index_type;
+	uint64_t tiler;
+};
+int hm_v7_read_draw(const void *job, bool tiler, struct hm_v7_draw_read *out, const char **why);
 
 /* the GPU's own write into a job's header when the job ends (what the fake GPU does in its place) */
 void hm_v7_set_exception_status(void *job, uint32_t status);

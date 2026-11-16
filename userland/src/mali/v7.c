@@ -69,6 +69,14 @@ hm_v7_sizes(void)
 		.job_align = pan_alignment(JOB_HEADER),
 		.framebuffer_align = pan_alignment(FRAMEBUFFER),
 		.tiler_align = pan_alignment(TILER_CONTEXT),
+		.vertex_job = pan_size(COMPUTE_JOB),
+		.tiler_job = pan_size(TILER_JOB),
+		.renderer_state = pan_size(RENDERER_STATE),
+		.blend = pan_size(BLEND),
+		.attribute = pan_size(ATTRIBUTE),
+		.attribute_buffer = pan_size(ATTRIBUTE_BUFFER),
+		.viewport = pan_size(VIEWPORT),
+		.local_storage = pan_size(LOCAL_STORAGE),
 	};
 	return &sizes;
 }
@@ -331,6 +339,150 @@ hm_v7_pack_clear_rgba8(const float rgba[4], uint32_t out[4])
 	}
 }
 
+/* --- a draw ---------------------------------------------------------------------------------------------- */
+
+void
+hm_v7_attribute(void *out, unsigned buffer_index, uint32_t format, int32_t offset, bool offset_enable)
+{
+	pan_cast_and_pack(out, ATTRIBUTE, cfg) {
+		cfg.buffer_index = buffer_index;
+		cfg.offset_enable = offset_enable;
+		cfg.format = format;
+		cfg.offset = offset;
+	}
+}
+
+void
+hm_v7_attribute_buffer(void *out, uint64_t pointer, uint32_t stride, uint32_t size)
+{
+	if (pointer == 0 && stride == 0 && size == 0) {
+		memset(out, 0, pan_size(ATTRIBUTE_BUFFER));
+		return;
+	}
+	pan_cast_and_pack(out, ATTRIBUTE_BUFFER, cfg) {
+		cfg.pointer = pointer;
+		cfg.stride = stride;
+		cfg.size = size;
+	}
+}
+
+uint32_t
+hm_v7_position_format(void)
+{
+	return MALI_SNAP_4 << 12;
+}
+
+void
+hm_v7_viewport(void *out, unsigned min_x, unsigned min_y, unsigned max_x, unsigned max_y, float min_z, float max_z)
+{
+	pan_cast_and_pack(out, VIEWPORT, cfg) {
+		cfg.scissor_minimum_x = min_x;
+		cfg.scissor_minimum_y = min_y;
+		cfg.scissor_maximum_x = max_x;
+		cfg.scissor_maximum_y = max_y;
+		cfg.minimum_z = min_z;
+		cfg.maximum_z = max_z;
+	}
+}
+
+void
+hm_v7_local_storage(void *out)
+{
+	pan_cast_and_pack(out, LOCAL_STORAGE, cfg) {
+		cfg.wls_instances = MALI_LOCAL_STORAGE_NO_WORKGROUP_MEM;
+	}
+}
+
+static void
+pack_invocation(struct mali_invocation_packed *out, unsigned vertex_count)
+{
+	/* GENX(jm_launch_draw), instance_count 1 */
+	pan_pack(out, INVOCATION, cfg) {
+		cfg.invocations = vertex_count - 1;
+		cfg.size_y_shift = 0;
+		cfg.size_z_shift = 0;
+		cfg.workgroups_x_shift = 0;
+		cfg.workgroups_y_shift = 0;
+		cfg.workgroups_z_shift = 32;
+		cfg.thread_group_split = MALI_SPLIT_MIN_EFFICIENT;
+	}
+}
+
+void
+hm_v7_vertex_job(void *job, unsigned index, uint64_t next, unsigned vertex_count, const struct hm_v7_draw *draw)
+{
+	pack_invocation(pan_section_ptr(job, COMPUTE_JOB, INVOCATION), vertex_count);
+	pan_section_pack(job, COMPUTE_JOB, PARAMETERS, cfg) {
+		cfg.job_task_split = 5;
+	}
+	/* jm_emit_vertex_draw */
+	pan_section_pack(job, COMPUTE_JOB, DRAW, cfg) {
+		cfg.state = draw->state;
+		cfg.attributes = draw->attributes;
+		cfg.attribute_buffers = draw->attribute_buffers;
+		cfg.varyings = draw->varyings;
+		cfg.varying_buffers = draw->varyings ? draw->varying_buffers : 0;
+		cfg.thread_storage = draw->thread_storage;
+		cfg.offset_start = 0;
+		cfg.instance_size = 1;
+	}
+	pan_section_pack(job, COMPUTE_JOB, HEADER, cfg) {
+		cfg.type = MALI_JOB_TYPE_VERTEX;
+		cfg.index = index;
+		cfg.next = next;
+	}
+}
+
+void
+hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count, uint64_t tiler,
+    const struct hm_v7_draw *draw)
+{
+	pack_invocation(pan_section_ptr(job, TILER_JOB, INVOCATION), vertex_count);
+	/* jm_emit_primitive */
+	pan_section_pack(job, TILER_JOB, PRIMITIVE, cfg) {
+		cfg.draw_mode = MALI_DRAW_MODE_TRIANGLES;
+		cfg.first_provoking_vertex = false;     /* rast->flatshade_first */
+		cfg.job_task_split = 6;
+		cfg.low_depth_cull = true;              /* rast->depth_clip_near */
+		cfg.high_depth_cull = true;             /* rast->depth_clip_far */
+		cfg.index_count = vertex_count;
+		cfg.index_type = MALI_INDEX_TYPE_NONE;
+		cfg.secondary_shader = false;
+	}
+	/* panfrost_emit_primitive_size: not points, so the constant (the line width) */
+	pan_section_pack(job, TILER_JOB, PRIMITIVE_SIZE, cfg) {
+		cfg.constant = 1.0f;
+	}
+	pan_section_pack(job, TILER_JOB, TILER, cfg) {
+		cfg.address = tiler;
+	}
+	pan_section_pack(job, TILER_JOB, PADDING, cfg) {
+		(void)cfg;
+	}
+	/* jm_emit_tiler_draw, v7 */
+	pan_section_pack(job, TILER_JOB, DRAW, cfg) {
+		cfg.cull_front_face = false;
+		cfg.cull_back_face = false;
+		cfg.front_face_ccw = false;
+		cfg.position = draw->position;
+		cfg.state = draw->state;
+		cfg.attributes = draw->attributes;
+		cfg.attribute_buffers = draw->attribute_buffers;
+		cfg.viewport = draw->viewport;
+		cfg.varyings = draw->varyings;
+		cfg.varying_buffers = draw->varyings ? draw->varying_buffers : 0;
+		cfg.thread_storage = draw->thread_storage;
+		cfg.offset_start = 0;
+		cfg.instance_size = 1;
+	}
+	pan_section_pack(job, TILER_JOB, HEADER, cfg) {
+		cfg.type = MALI_JOB_TYPE_TILER;
+		cfg.index = index;
+		cfg.dependency_1 = dependency;
+		cfg.next = next;
+	}
+}
+
 /* --- reading ---------------------------------------------------------------------------------------------- */
 
 static int
@@ -499,6 +651,45 @@ hm_v7_read_tiler_heap(const void *heap, struct hm_v7_tiler_read *out, const char
 	out->heap_bottom = h.bottom;
 	out->heap_top = h.top;
 	out->heap_size = h.size;
+	return said(why);
+}
+
+int
+hm_v7_read_draw(const void *job, bool tiler, struct hm_v7_draw_read *out, const char **why)
+{
+	hm_invalid[0] = 0;
+	memset(out, 0, sizeof(*out));
+	if (tiler) {
+		pan_section_unpack(job, TILER_JOB, INVOCATION, inv);
+		pan_section_unpack(job, TILER_JOB, PRIMITIVE, prim);
+		pan_section_unpack(job, TILER_JOB, TILER, t);
+		pan_section_unpack(job, TILER_JOB, DRAW, d);
+		out->invocations = inv.invocations;
+		out->draw_mode = prim.draw_mode;
+		out->index_count = prim.index_count;
+		out->index_type = prim.index_type;
+		out->tiler = t.address;
+		out->draw.state = d.state;
+		out->draw.attributes = d.attributes;
+		out->draw.attribute_buffers = d.attribute_buffers;
+		out->draw.varyings = d.varyings;
+		out->draw.varying_buffers = d.varying_buffers;
+		out->draw.position = d.position;
+		out->draw.viewport = d.viewport;
+		out->draw.thread_storage = d.thread_storage;
+	} else {
+		pan_section_unpack(job, COMPUTE_JOB, INVOCATION, inv);
+		pan_section_unpack(job, COMPUTE_JOB, DRAW, d);
+		out->invocations = inv.invocations;
+		out->draw.state = d.state;
+		out->draw.attributes = d.attributes;
+		out->draw.attribute_buffers = d.attribute_buffers;
+		out->draw.varyings = d.varyings;
+		out->draw.varying_buffers = d.varying_buffers;
+		out->draw.position = d.position;
+		out->draw.viewport = d.viewport;
+		out->draw.thread_storage = d.thread_storage;
+	}
 	return said(why);
 }
 

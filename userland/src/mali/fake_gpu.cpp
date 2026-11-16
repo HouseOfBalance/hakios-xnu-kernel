@@ -154,6 +154,7 @@ void FakeGpu::unmap(uint32_t handle, void* address, uint64_t) {
 
 void FakeGpu::runChain(uint64_t jc, bool fragment, uint64_t seq) {
     std::set<uint64_t> seen;
+    std::set<unsigned> done;      // the job indices run so far (a dependency must name one)
     unsigned n = 0;
     for (uint64_t address = jc; address != 0; n++) {
         Fault f;
@@ -205,6 +206,13 @@ void FakeGpu::runChain(uint64_t jc, bool fragment, uint64_t seq) {
             status = runWriteValue(job, &why);
         } else if (h.type == HM_JOB_FRAGMENT) {
             status = runFragment(job, &why);
+        } else if (h.type == HM_JOB_VERTEX || h.type == HM_JOB_TILER) {
+            if ((h.dependency_1 != 0 && !done.count(h.dependency_1)) || (h.dependency_2 != 0 && !done.count(h.dependency_2))) {
+                status = kJobConfigFault;
+                why = "the job depends on a job index the chain has not run before it";
+            } else {
+                status = runDraw(job, h.type == HM_JOB_TILER, &why);
+            }
         } else if (h.type == HM_JOB_NULL) {
             status = 0;
         } else {
@@ -220,8 +228,78 @@ void FakeGpu::runChain(uint64_t jc, bool fragment, uint64_t seq) {
         }
         hm_v7_set_exception_status(job, kDone);
         jobsRun_++;
+        done.insert(h.index);
         address = h.next;
     }
+}
+
+// A vertex or tiler job: everything its draw names inside a buffer, its Renderer State's shader too; a tiler job's
+// Tiler Context as a fragment job's. Nothing is run: the fragment job of a frame whose Tiler Context got primitives
+// writes its clear colour alone, and says so (drawsNotRasterized).
+uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why) {
+    const struct hm_v7_sizes* sz = hm_v7_sizes();
+    const char* invalid = nullptr;
+    struct hm_v7_draw_read d;
+    if (hm_v7_read_draw(job, tiler, &d, &invalid) != 0) {
+        *why = invalid;
+        return kJobConfigFault;
+    }
+    const char* kind = tiler ? "the tiler job's" : "the vertex job's";
+    struct {
+        uint64_t address;
+        uint64_t length;
+        const char* what;
+    } named[] = {
+        {d.draw.state, sz->renderer_state + (tiler ? sz->blend : 0), "Renderer State"},
+        {d.draw.attributes, sz->attribute, "Attributes"},
+        {d.draw.attribute_buffers, sz->attribute_buffer, "Attribute Buffers"},
+        {d.draw.varyings, sz->attribute, "Varyings"},
+        {d.draw.varying_buffers, sz->attribute_buffer, "Varying Buffers"},
+        {d.draw.position, 16ull * (d.invocations + 1), "Position"},
+        {d.draw.viewport, sz->viewport, "Viewport"},
+        {d.draw.thread_storage, sz->local_storage, "Thread Storage"},
+    };
+    for (const auto& n : named) {
+        if (n.address != 0 && at(n.address, n.length) == nullptr) {
+            *why = std::string(kind) + " " + n.what + " at " + hex(n.address) + " is outside every buffer";
+            return kTranslationFault | kAccessRead;
+        }
+    }
+    if (d.draw.state == 0 || (d.draw.state & 63) != 0) {
+        *why = std::string(kind) + " Renderer State is missing or not 64-byte aligned";
+        return kJobConfigFault;
+    }
+    const uint8_t* rsd = at(d.draw.state, sz->renderer_state);
+    uint64_t shader;
+    memcpy(&shader, rsd, 8);
+    if (at(shader, 64) == nullptr) {
+        *why = std::string(kind) + " shader at " + hex(shader) + " is outside every buffer";
+        return kTranslationFault | (2u << 8);
+    }
+    if (d.draw.thread_storage == 0) {
+        *why = std::string(kind) + " draw has no Thread Storage (Panfrost always gives the batch's)";
+        return kJobConfigFault;
+    }
+    if (tiler) {
+        if (d.draw.position == 0 || d.draw.viewport == 0) {
+            *why = "the tiler job has no Position or no Viewport";
+            return kJobConfigFault;
+        }
+        if (d.draw_mode != 8 || d.index_type != 0) {
+            *why = "a draw mode or index type the fake does not model (triangles without indices: 8, 0)";
+            return kJobConfigFault;
+        }
+        uint8_t* ctx = (d.tiler & 63) == 0 ? at(d.tiler, sz->tiler_context) : nullptr;
+        if (ctx == nullptr) {
+            *why = "the tiler job's Tiler Context at " + hex(d.tiler) + " is not a 64-aligned descriptor inside a buffer";
+            return kTranslationFault | kAccessRead;
+        }
+        drawn_.insert(d.tiler);
+    } else if (d.draw.varyings == 0 || d.draw.varying_buffers == 0) {
+        *why = "the vertex job writes no varyings (no position for the tiler)";
+        return kJobConfigFault;
+    }
+    return 0;
 }
 
 uint32_t FakeGpu::runWriteValue(uint8_t* job, std::string* why) {
@@ -428,6 +506,9 @@ uint32_t FakeGpu::runFragment(uint8_t* job, std::string* why) {
         return kDataInvalidFault;
     }
 
+    if (fb.fb.tiler != 0 && drawn_.count(fb.fb.tiler)) {
+        drawsNotRasterized_++;      // a tiler job put primitives in this frame: the fake does not draw them
+    }
     // carried out: no primitive, so every tile is its clear colour, written back only by targets that write clean tiles
     uint32_t x0 = frag.min_tx * 16 > fb.fb.bound_min_x ? frag.min_tx * 16 : fb.fb.bound_min_x;
     uint32_t y0 = frag.min_ty * 16 > fb.fb.bound_min_y ? frag.min_ty * 16 : fb.fb.bound_min_y;

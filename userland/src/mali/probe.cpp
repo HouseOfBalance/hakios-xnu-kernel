@@ -331,6 +331,92 @@ int main(int argc, char** argv) {
     noclean.options.cleanPixelWrite = false;
     runClear(device, noclean);
 
+    // the first triangle: shaders compiled by Mesa's Bifrost compiler (shaders_v7.h), a vertex job, a tiler job and the
+    // Fragment job, all written here. NDC (-0.5,-0.5) (0.5,-0.5) (0,0.5) land on pixels (16,16) (48,16) (32,48);
+    // a pixel whose centre is more than a pixel inside must be red, more than a pixel outside the clear colour
+    // (black), and the edges are not judged. The fake GPU checks the jobs and does not rasterize.
+    {
+        auto bo = gpu.newBo(256 * 64 + 4096, &why);
+        Target t;
+        t.bo = bo.get();
+        t.width = t.height = 64;
+        t.rowBytes = 256;
+        const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
+        const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        std::unique_ptr<TrianglePass> tri;
+        if (bo) {
+            memset(bo->cpu(), kCanary, bo->size());
+            tri = TrianglePass::make(device, t, positions, black, &why);
+        }
+        if (!tri) {
+            verdict("triangle", false, "refused: " + why);
+        } else {
+            Submission ds, fs;
+            uint64_t t0 = gpu.transport().nowUs();
+            int e = tri->submit(&ds, &fs);
+            if (e == 0) e = gpu.wait(fs, 2000000);
+            uint64_t us = gpu.transport().nowUs() - t0;
+            const float vx[3] = {16, 48, 32}, vy[3] = {16, 16, 48};
+            unsigned inRight = 0, inTotal = 0, outRight = 0, outTotal = 0, red = 0;
+            uint32_t bx0 = ~0u, by0 = ~0u, bx1 = 0, by1 = 0, row20 = 0, row44 = 0;
+            const uint8_t redPx[4] = {0xff, 0, 0, 0xff}, blackPx[4] = {0, 0, 0, 0xff};
+            for (uint32_t y = 0; y < 64; y++) {
+                for (uint32_t x = 0; x < 64; x++) {
+                    float px = x + 0.5f, py = y + 0.5f, d = 1e9f;
+                    bool inside = true;
+                    for (int k = 0; k < 3; k++) {
+                        float ax = vx[k], ay = vy[k], bx = vx[(k + 1) % 3], by = vy[(k + 1) % 3];
+                        float ex = bx - ax, ey = by - ay, len = std::sqrt(ex * ex + ey * ey);
+                        // the signed distance to the edge, positive inside (the vertices are counter-clockwise
+                        // with y down... either winding: compared against the third vertex's side)
+                        float cx = vx[(k + 2) % 3], cy = vy[(k + 2) % 3];
+                        float side = ((cx - ax) * ey - (cy - ay) * ex) > 0 ? 1.0f : -1.0f;
+                        float dist = side * ((px - ax) * ey - (py - ay) * ex) / len;
+                        inside = inside && dist > 0;
+                        d = std::fabs(dist) < d ? std::fabs(dist) : d;
+                    }
+                    const uint8_t* p = bo->cpu() + y * 256 + 4 * x;
+                    bool isRed = memcmp(p, redPx, 4) == 0;
+                    if (isRed) {
+                        red++;
+                        bx0 = x < bx0 ? x : bx0, by0 = y < by0 ? y : by0, bx1 = x > bx1 ? x : bx1, by1 = y > by1 ? y : by1;
+                        row20 += y == 20, row44 += y == 44;
+                    }
+                    if (d <= 1.0f) continue;
+                    if (inside) {
+                        inTotal++;
+                        inRight += isRed;
+                    } else {
+                        outTotal++;
+                        outRight += memcmp(p, blackPx, 4) == 0;
+                    }
+                }
+            }
+            unsigned canaryKept = 0;
+            for (uint64_t i = 256 * 64; i < bo->size(); i++) canaryKept += bo->cpu()[i] == kCanary;
+            const float* w = tri->positionsWritten();
+            char b[400];
+            snprintf(b, sizeof(b), "vertex %s tiler %s fragment %s%s%s; inside %u of %u red, outside %u of %u black; "
+                     "red %u pixels in (%u,%u)-(%u,%u), rows 20/44 %u/%u wide; vertex 0 written at (%g, %g, %g, %g); "
+                     "canary %u of %llu kept; %llu us", statusText(tri->vertexStatus()).c_str(),
+                     statusText(tri->tilerStatus()).c_str(), statusText(tri->fragmentStatus()).c_str(), e ? ", " : "",
+                     e ? strerror(e) : "", inRight, inTotal, outRight, outTotal, red, red ? bx0 : 0, red ? by0 : 0, bx1,
+                     by1, row20, row44, w[0], w[1], w[2], w[3], canaryKept,
+                     (unsigned long long)(bo->size() - 256 * 64), (unsigned long long)us);
+            bool jobs = e == 0 && (tri->vertexStatus() & 0xff) == 1 && (tri->tilerStatus() & 0xff) == 1 &&
+                        (tri->fragmentStatus() & 0xff) == 1;
+            if (fake != nullptr) {
+                say("triangle MEASURE (the fake GPU checks the jobs, does not rasterize: %s) %s",
+                    jobs ? "jobs accepted" : "jobs REFUSED", b);
+                if (!jobs) gFailed++;
+            } else {
+                bool ok = jobs && inRight == inTotal && outRight == outTotal && canaryKept == bo->size() - 256 * 64;
+                verdict("triangle", ok, b);
+                if (!ok || gDump) tri->dump(stdout);
+            }
+        }
+    }
+
     // the time of a submission and its wait, twenty clears of 64x64
     {
         auto bo = gpu.newBo(65536, &why);

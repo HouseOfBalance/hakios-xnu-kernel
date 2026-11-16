@@ -21,12 +21,16 @@
 // clamp in emit_fragment_job avoids); each written target's base and row stride 64-byte aligned (pan_layout.c:
 // format_minimum_alignment, v7) and every row it writes inside one buffer.
 //
-// What it does NOT do: run a shader, rasterize, take a tiler job, or model the caches. A chain it runs is well formed
+// A vertex or tiler job is checked, not run: everything its draw names inside a buffer (the Renderer State and the
+// shader it points at, attributes, varyings, position, viewport, thread storage), dependencies on jobs run before it
+// in the chain, a tiler job's Tiler Context; the fragment job of a frame whose Tiler Context a tiler job named writes
+// the clear colour alone (drawsNotRasterized). What it does NOT do: run a shader, rasterize, or model the caches. A chain it runs is well formed
 // and names only memory the GPU was given; whether the GPU agrees is the phone's to say (mali-probe).
 #pragma once
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -55,6 +59,8 @@ public:
     const std::vector<Fault>& faults() const { return faults_; }
     uint64_t jobsRun() const { return jobsRun_; }
     uint64_t pixelsWritten() const { return pixelsWritten_; }   // by fragment jobs, every target counted
+    // frames whose Tiler Context a tiler job had filled: their primitives are not drawn here, only the clear colour
+    uint64_t drawsNotRasterized() const { return drawsNotRasterized_; }
     size_t liveBuffers() const { return buffers_.size(); }
     size_t mappedBuffers() const;
     // LENGTH bytes at GPU address GPU, inside one buffer, or nullptr: for a test that changes a descriptor in place
@@ -75,13 +81,15 @@ private:
     // 0 when the job is done, or the Exception Status code with *why
     uint32_t runWriteValue(uint8_t* job, std::string* why);
     uint32_t runFragment(uint8_t* job, std::string* why);
+    uint32_t runDraw(uint8_t* job, bool tiler, std::string* why);
 
     std::map<uint32_t, Buffer> buffers_;
     uint32_t nextHandle_ = 1;
     uint64_t nextGpu_ = 0x01000000;     // HakiosMali's first address (mtk_mali.c GPU_ADDRESS_FIRST), 64 KB granules
     uint64_t seq_ = 0;
     uint64_t clockUs_ = 0;
-    uint64_t jobsRun_ = 0, pixelsWritten_ = 0;
+    uint64_t jobsRun_ = 0, pixelsWritten_ = 0, drawsNotRasterized_ = 0;
+    std::set<uint64_t> drawn_;          // Tiler Contexts a tiler job has named
     std::vector<Fault> faults_;
 };
 
