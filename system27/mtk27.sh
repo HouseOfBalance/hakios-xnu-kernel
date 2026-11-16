@@ -9,7 +9,9 @@
 #                          libhakios-gl.dylib and gl_test over it
 #   system27/mtk27.sh libs      inj26.sh: our libraries for the system's processes, arm64e (BUILD=24B119)
 #   system27/mtk27.sh metal     metal27.sh: the Metal driver over that Mesa
+#   system27/mtk27.sh mali      mali27.sh: hakios-mali (our own Mali job descriptors) and mali-probe, into $OBJ/mali
 #   system27/mtk27.sh root      root26-sys.sh: the small image, $REL/root26-sys.apfs, with the Metal driver
+#                          (and mali-probe, when the mali step has made it)
 #   system27/mtk27.sh system    mkimage26.py --prune: the system image, $REL/system27-prune.apfs
 #   system27/mtk27.sh all       all six, in this order
 #
@@ -95,11 +97,17 @@ metal() {
 	env $(common) MESA=$OBJ/libOSMesa.8.dylib bash "$ROOT/system27/userland/metal27.sh"
 }
 
+mali() {
+	log "hakios-mali and mali-probe (mali27.sh)"
+	env $(common) bash "$ROOT/system27/userland/mali27.sh"
+}
+
 root() {
 	log "the small image (root26-sys.sh)"
-	local metal=
+	local metal= mali=
 	[ -f $OBJ/metal/HakiosMetal ] && metal=$OBJ/metal
-	env $(common) METAL27=$metal bash "$ROOT/system27/userland/root26-sys.sh"
+	[ -f $OBJ/mali/mali-probe ] && mali=$OBJ/mali
+	env $(common) METAL27=$metal MALI27=$mali bash "$ROOT/system27/userland/root26-sys.sh"
 }
 
 system() {
@@ -113,8 +121,9 @@ env) make_env ;;
 gl) make_env; gl ;;
 libs) make_env; libs ;;
 metal) make_env; metal ;;
+mali) make_env; mali ;;
 root) make_env; root ;;
 system) make_env; system ;;
 all) make_env; gl; libs; metal; root; system ;;
-*) sed -n '2,20p' "$0"; exit 1 ;;
+*) sed -n '2,22p' "$0"; exit 1 ;;
 esac

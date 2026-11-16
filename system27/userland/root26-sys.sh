@@ -49,6 +49,11 @@ if [ -n "${METAL27:-}" ]; then
 	{ echo "/hakios/bin/tolog /hakios/bin/metal_props on ../../../hakios/lib/HakiosMetal HakiosMetalDevice"; cat $T/etc/rc; } > $T/etc/rc.m
 	mv $T/etc/rc.m $T/etc/rc
 fi
+# MALI27=DIR (the MTK port): hakios-mali's probe (mali27.sh: the Mali's job descriptors written by our own library, no
+# Panfrost), /hakios/bin/mali-probe; the job list runs it (RC_JOBS=userland/rc.jobs.maliprobe), or a shell by hand
+if [ -n "${MALI27:-}" ]; then
+	cp $MALI27/mali-probe $T/bin/mali-probe
+fi
 # the audio server's output device (inj26.sh): arm64e, in place of 16.5's arm64 one, which the audio server cannot load;
 # the system image links /System/Library/Audio/Plug-Ins/HAL/HakiosAudio.driver to it (mkimage26.py)
 if [ -f $OBJ/HakiosAudio ]; then
