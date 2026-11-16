@@ -142,6 +142,11 @@ int Gpu::submit(uint64_t jc, bool fragment, const std::vector<const Bo*>& uses, 
     return error;
 }
 
+int Gpu::show(const void* pixels, uint32_t width, uint32_t height, uint32_t rowBytes) {
+    HakiosShow s = {reinterpret_cast<uint64_t>(pixels), width, height, rowBytes, 0};
+    return t_->call(kHakiosShow, &s, sizeof(s));
+}
+
 int Gpu::wait(const Submission& s, uint64_t timeoutUs) {
     HakiosWait w = {s.seq, static_cast<int64_t>(timeoutUs * 1000)};
     return t_->call(kHakiosWait, &w, sizeof(w));

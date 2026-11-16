@@ -132,6 +132,11 @@ int FakeGpu::call(uint32_t request, void* data, size_t size) {
         return buffers_.count(static_cast<PanfrostWaitBo*>(data)->handle) ? 0 : ENOENT;
     case kMadvise:
         return 0;
+    case kHakiosShow: {
+        auto* sh = static_cast<HakiosShow*>(data);
+        return sh->width == 0 || sh->width > 4096 || sh->height == 0 || sh->height > 4096 || sh->rowBytes < 4 * sh->width
+                   ? EINVAL : 0;
+    }
     default:
         return ENOTSUP;
     }

@@ -28,6 +28,7 @@ enum Request : uint32_t {
     kGetBoOffset = 0x45,
     kMadvise = 0x48,
     kHakiosWait = 0x7d,      // HakiosMali's own: wait for a job chain by the number kSubmit gave back in jc
+    kHakiosShow = 0x7f,      // HakiosMali's own: a test's pixels onto the panel, as they are (no scaling), BGRA
 };
 
 struct DrmGemClose { uint32_t handle, pad; };
@@ -43,9 +44,11 @@ struct PanfrostMmapBo { uint32_t handle, flags; uint64_t offset; };
 struct PanfrostGetParam { uint32_t param, pad; uint64_t value; };
 struct PanfrostGetBoOffset { uint32_t handle, pad; uint64_t offset; };
 struct HakiosWait { uint64_t seq; int64_t timeout_ns; };
+struct HakiosShow { uint64_t pixels; uint32_t width, height, rowBytes, pad; };
 
 static_assert(sizeof(PanfrostSubmit) == 40 && sizeof(PanfrostCreateBo) == 24 && sizeof(PanfrostGetParam) == 16,
               "panfrost_drm.h layout");
+static_assert(sizeof(HakiosShow) == 24, "HakiosMali.cpp layout");
 static_assert(sizeof(PanfrostWaitBo) == 16 && sizeof(PanfrostGetBoOffset) == 16 && sizeof(HakiosWait) == 16,
               "HakiosMali.cpp layout");
 
@@ -146,6 +149,9 @@ public:
     // until the chain is done, or TIMEOUT_US: 0, ETIMEDOUT, or another errno. Done is not "succeeded": the job
     // headers say that (their Exception Status), and the kernel resets the GPU after a chain that failed.
     int wait(const Submission& s, uint64_t timeoutUs);
+
+    // PIXELS (B G R A, ROW_BYTES apart) onto the panel's top left corner, until the window server's next frame
+    int show(const void* pixels, uint32_t width, uint32_t height, uint32_t rowBytes);
 
     Transport& transport() { return *t_; }
 

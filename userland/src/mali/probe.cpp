@@ -3,6 +3,8 @@
 //   mali-probe            every stage against the kernel's HakiosMali (waits up to 60 s for the service)
 //   mali-probe --fake     the same stages against the fake GPU, in this process (any machine)
 //   mali-probe --dump     also print every frame's descriptors as Mesa's printers say them
+//   mali-probe --show N   only the triangle, then it on the panel for N seconds, sixteen times as big (a picture of
+//                         the test for fbgrab: put again five times a second, as the window server draws over it)
 //
 // Each verdict is a line "mali-probe: <stage> PASS|FAIL|MEASURE ..." on standard output (the console, when launchd's
 // job com.hakios.demo runs it from etc/rc.jobs) and, on the phone, the same line with "!!" through kern.hakios.say,
@@ -17,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -32,6 +35,7 @@ using namespace hakios::mali;
 namespace {
 
 bool gDump = false, gFake = false;
+int gShow = 0;
 unsigned gPassed = 0, gFailed = 0;
 
 void say(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -191,8 +195,9 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fake") == 0) gFake = true;
         else if (strcmp(argv[i], "--dump") == 0) gDump = true;
+        else if (strcmp(argv[i], "--show") == 0 && i + 1 < argc) gShow = atoi(argv[++i]);
         else {
-            fprintf(stderr, "usage: mali-probe [--fake] [--dump]\n");
+            fprintf(stderr, "usage: mali-probe [--fake] [--dump] [--show SECONDS]\n");
             return 2;
         }
     }
@@ -239,7 +244,7 @@ int main(int argc, char** argv) {
     }
 
     // 3. a buffer: made, at a GPU address, mapped, written and read back
-    {
+    if (gShow == 0) {
         auto bo = gpu.newBo(65536, &why);
         bool ok = bo != nullptr;
         uint64_t wrong = 0;
@@ -255,7 +260,7 @@ int main(int argc, char** argv) {
     }
 
     // 4. the smallest job: Write Value
-    {
+    if (gShow == 0) {
         auto target = gpu.newBo(4096, &why);
         std::unique_ptr<WriteValue> job;
         if (target) {
@@ -282,6 +287,7 @@ int main(int argc, char** argv) {
     // 5. THE MILESTONE: one Fragment job clears a 64x64 RGBA8 target to a known colour, read back right
     ClearCase clear64 = {"clear64", 64, 64, 256, 0, Format::RGBA8Unorm, {0.2f, 0.4f, 0.6f, 0.8f}, {}, true};
     bool milestone = runClear(device, clear64);
+    if (gShow == 0) {
 
     // 6.. what narrows it down or goes further, each on its own
     ClearCase tiler = {"clear64-tiler", 64, 64, 256, 0, Format::RGBA8Unorm, {1.0f, 0.0f, 0.5f, 1.0f}, {}, true};
@@ -324,6 +330,8 @@ int main(int argc, char** argv) {
     ClearCase noclean = {"clear64-noclean", 64, 64, 256, 0, Format::RGBA8Unorm, {1.0f, 1.0f, 1.0f, 1.0f}, {}, false};
     noclean.options.cleanPixelWrite = false;
     runClear(device, noclean);
+
+    }   // (not with --show)
 
     // the first triangle: shaders compiled by Mesa's Bifrost compiler (shaders_v7.h), a vertex job, a tiler job and the
     // Fragment job, all written here. NDC (-0.5,-0.5) (0.5,-0.5) (0,0.5) land on pixels (16,16) (48,16) (32,48);
@@ -413,6 +421,32 @@ int main(int argc, char** argv) {
                     }
                     printf("mali-picture triangle 64x64 %u/%u: %s\n", l + 1, lines, text.c_str());
                 }
+            }
+            // --show: the target sixteen times as big on the panel (B G R A there), on dark grey, with the clear64
+            // colour as a band under it, for the window server's frames to be drawn over and put back
+            if (gShow > 0 && !gFake) {
+                const uint32_t W = 1080, H = 1200, S = 16, X0 = (W - 64 * S) / 2, Y0 = 40;
+                std::vector<uint8_t> pic(static_cast<size_t>(W) * H * 4, 0x20);
+                for (uint32_t y = 0; y < H; y++) {
+                    for (uint32_t x = 0; x < W; x++) {
+                        uint8_t* q = &pic[(static_cast<size_t>(y) * W + x) * 4];
+                        q[3] = 0xff;
+                        if (x >= X0 && x < X0 + 64 * S && y >= Y0 && y < Y0 + 64 * S) {
+                            const uint8_t* p = bo->cpu() + ((y - Y0) / S) * 256 + 4 * ((x - X0) / S);
+                            q[0] = p[2], q[1] = p[1], q[2] = p[0];
+                        } else if (y >= Y0 + 64 * S + 40 && y < Y0 + 64 * S + 120 && x >= X0 && x < X0 + 64 * S) {
+                            q[0] = 0x99, q[1] = 0x66, q[2] = 0x33;      // clear64's colour, 33 66 99, as B G R
+                        }
+                    }
+                }
+                int shown = 0, first = gpu.show(pic.data(), W, H, W * 4);
+                say("show: the triangle sixteen times as big on the panel for %d s (%s)", gShow,
+                    first == 0 ? "shown" : strerror(first));
+                for (int i = 1; first == 0 && i < gShow * 5; i++) {
+                    usleep(200000);
+                    shown += gpu.show(pic.data(), W, H, W * 4) == 0;
+                }
+                (void)shown;
             }
             bool jobs = e == 0 && (tri->vertexStatus() & 0xff) == 1 && (tri->tilerStatus() & 0xff) == 1 &&
                         (tri->fragmentStatus() & 0xff) == 1;
