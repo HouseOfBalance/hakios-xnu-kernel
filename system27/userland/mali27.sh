@@ -33,9 +33,39 @@ $CC -std=c11 -O2 -I$O/gen -I"$MESA_SRC/src" -I"$MESA_SRC/include" -I"$MESA_SRC/s
 for f in gpu pass draw fake_gpu iokit_transport probe; do
 	$CXX -std=c++17 -O2 -fno-exceptions -fno-rtti -I$S -c $S/$f.cpp -o $O/$f.o
 done
+# the compiler inside the driver (compiler.c): Mesa's Bifrost compiler from the arm64e Mesa build beside MESA_SRC
+# (mk27.sh gl: kernel/deps/build/mesa/build-softpipe-panfrost-arm64e), compiled with that build's own defines, as the
+# structures of compiler.c and of the libraries must agree; MESA_BUILD= another, or NO_COMPILER=1 without it
+MESA_BUILD=${MESA_BUILD:-$(dirname "$MESA_SRC")/build-softpipe-panfrost-arm64e}
+COMPILER_OBJ=; COMPILER_LIBS=(); PROBE_DEFS=
+if [ "${NO_COMPILER:-0}" != 1 ] && [ -f "$MESA_BUILD/compile_commands.json" ]; then
+	DEFS=$(python3 - "$MESA_BUILD/compile_commands.json" <<'PY'
+import json, shlex, sys
+for e in json.load(open(sys.argv[1])):
+    if e['file'].endswith('panfrost/lib/pan_shader.c'):
+        print(' '.join(a for a in shlex.split(e['command']) if a.startswith('-D') and not a.startswith('-DPAN_ARCH')))
+        break
+PY
+)
+	B=$MESA_BUILD/src
+	# shellcheck disable=SC2086
+	$CC -std=c11 -O2 -w -DPAN_ARCH=7 $DEFS -I"$B" -I"$MESA_SRC/src" -I"$MESA_SRC/include" -I"$B/compiler/nir" \
+		-I"$MESA_SRC/src/compiler/nir" -I"$B/compiler" -I"$MESA_SRC/src/compiler" -I"$B/panfrost/lib" \
+		-I"$MESA_SRC/src/panfrost/lib" -I"$B/panfrost/lib/genxml" -I"$MESA_SRC/src/panfrost/lib/genxml" \
+		-I"$MESA_SRC/src/panfrost" -I"$B/util/format" -c $S/compiler.c -o $O/compiler.o
+	COMPILER_OBJ=$O/compiler.o
+	COMPILER_LIBS=($B/panfrost/lib/libpan-arch-v7.a $B/panfrost/lib/libpan-format-v7.a $B/panfrost/lib/libpan-format-v6.a
+		$B/panfrost/lib/libpanfrost_lib.a $B/panfrost/compiler/libpanfrost_bifrost.a
+		$B/panfrost/compiler/libpanfrost_bifrost_disasm.a $B/panfrost/compiler/valhall/libpanfrost_valhall_disasm.a
+		$B/panfrost/util/libpanfrost_util.a $B/panfrost/shared/libpanfrost_shared.a $B/compiler/nir/libnir.a
+		$B/compiler/libcompiler.a $B/util/libmesa_util.a $B/c11/impl/libmesa_util_c11.a $B/util/blake3/libblake3.a -lz)
+	PROBE_DEFS=-DHAKIOS_MALI_COMPILER
+	$CXX -std=c++17 -O2 -fno-exceptions -fno-rtti $PROBE_DEFS -I$S -c $S/probe.cpp -o $O/probe.o
+fi
 rm -f $O/libhakios-mali.a
 ar rcs $O/libhakios-mali.a $O/v7.o $O/gpu.o $O/pass.o $O/draw.o $O/fake_gpu.o $O/iokit_transport.o
-$CXX -o $O/mali-probe $O/probe.o $O/libhakios-mali.a -framework IOKit -framework CoreFoundation -lc++
+$CXX -o $O/mali-probe $O/probe.o $O/libhakios-mali.a $COMPILER_OBJ "${COMPILER_LIBS[@]}" -framework IOKit \
+	-framework CoreFoundation -lc++
 # arm64e code made runnable on a processor without pointer authentication, then signed (root26-sys.sh signs it
 # again, ad hoc, with the rest of the small image)
 $PACSTRIP macho $O/mali-probe $O/mali-probe.strip > /dev/null && mv $O/mali-probe.strip $O/mali-probe

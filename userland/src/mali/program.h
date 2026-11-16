@@ -46,6 +46,7 @@ struct hm_program {
 	uint32_t texture_count, sampler_count;
 	uint32_t can_blend;
 	const uint32_t *fs_rsd_depth;       /* 16 words: depth test Less, depth written (in the tile buffer) */
+	uint32_t vs_work_registers, fs_work_registers;
 };
 
 /* a compute kernel: its code, its Renderer State (the address left 0), the words it pushes, its workgroup size */
@@ -58,4 +59,5 @@ struct hm_kernel {
 	uint32_t push_count;
 	uint32_t local[3];
 	uint32_t tls_size;                  /* bytes of stack a thread (0: none) */
+	uint32_t work_registers;
 };

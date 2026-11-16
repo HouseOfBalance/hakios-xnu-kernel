@@ -30,6 +30,9 @@
 
 #include "fake_gpu.hpp"
 #include "mali.hpp"
+#if defined(HAKIOS_MALI_COMPILER)
+#include "compiler.h"
+#endif
 #include "draw.hpp"
 #include "pass.hpp"
 #include "shaders_v7.h"
@@ -447,6 +450,75 @@ bool runDepth(Device& device, bool test) {
     return ok;
 }
 
+// The compiler inside the driver: the programs compiled here, in this process, by Mesa's Bifrost compiler, held word for
+// word against shaders_v7.h (compiled on the Mac by the same compiler.c), then drawn and dispatched with
+bool runCompiler(Device& device) {
+#if !defined(HAKIOS_MALI_COMPILER)
+    (void)device;
+    say("compiler MEASURE not built in (mali27.sh links Mesa's compiler with HAKIOS_MALI_COMPILER)");
+    return true;
+#else
+    char why[200] = "";
+    uint64_t t0 = device.gpu().transport().nowUs();
+    hm_compile_init();
+    struct hm_program color;
+    if (hm_compile_program("color", static_cast<unsigned>(device.productId()), &color, why, sizeof(why)) != 0)
+        return verdict("compiler", false, why);
+    uint64_t compiled = device.gpu().transport().nowUs() - t0;
+    auto same = [](const void* a, const void* b, size_t n) { return memcmp(a, b, n) == 0; };
+    bool code = color.vs_size == hm_color.vs_size && color.fs_size == hm_color.fs_size &&
+                same(color.vs_code, hm_color.vs_code, color.vs_size) && same(color.fs_code, hm_color.fs_code, color.fs_size);
+    bool states = same(color.vs_rsd, hm_color.vs_rsd, 64) && same(color.fs_rsd, hm_color.fs_rsd, 64) &&
+                  same(color.fs_rsd_depth, hm_color.fs_rsd_depth, 64) && same(color.blend_off, hm_color.blend_off, 16) &&
+                  same(color.blend_over, hm_color.blend_over, 16);
+    bool tables = color.fs_push_count == hm_color.fs_push_count && color.vs_out_count == hm_color.vs_out_count &&
+                  color.fs_in_count == hm_color.fs_in_count &&
+                  same(color.fs_push, hm_color.fs_push, 4 * color.fs_push_count) &&
+                  same(color.vs_out, hm_color.vs_out, sizeof(hm_varying) * color.vs_out_count) &&
+                  same(color.fs_in, hm_color.fs_in, sizeof(hm_varying) * color.fs_in_count);
+    struct hm_kernel fill;
+    bool kernel = hm_compile_kernel("fill", static_cast<unsigned>(device.productId()), &fill, why, sizeof(why)) == 0 &&
+                  fill.size == hm_fill.size && same(fill.code, hm_fill.code, fill.size) && same(fill.rsd, hm_fill.rsd, 64);
+    char detail[260];
+    snprintf(detail, sizeof(detail), "color compiled on the phone in %llu us: vertex %u bytes, fragment %u bytes; code %s, "
+             "states %s, tables %s the Mac's; fill %s", (unsigned long long)compiled, color.vs_size, color.fs_size,
+             code ? "=" : "DIFFERENT from", states ? "=" : "DIFFERENT from", tables ? "=" : "DIFFERENT from",
+             kernel ? "= the Mac's" : why[0] ? why : "DIFFERENT from the Mac's");
+    bool ok = verdict("compiler", code && states && tables && kernel, detail);
+    // and drawn with what was compiled here: the varyings stage again, with the phone's own program
+    {
+        std::string w;
+        auto bo = device.gpu().newBo(256 * 64 + 4096, &w);
+        Target t;
+        t.bo = bo.get();
+        t.width = t.height = 64;
+        t.rowBytes = 256;
+        const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
+        const float rgb[12] = {1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1};
+        const float one[4] = {1, 1, 1, 1};
+        DrawInput in;
+        in.attributes[0] = positions;
+        in.attributes[1] = rgb;
+        in.uniforms = one;
+        in.uniformSize = 16;
+        auto pass = bo ? DrawPass::make(device, t, color, in, &w) : nullptr;
+        Submission ds, fs;
+        int e = pass ? pass->submit(&ds, &fs) : -1;
+        if (e == 0) e = device.gpu().wait(fs, 2000000);
+        const uint8_t* mid = bo ? bo->cpu() + 32 * 256 + 4 * 32 : nullptr;
+        bool drawn = e == 0 && pass && (pass->fragmentStatus() & 0xff) == 1 && mid[3] == 0xff && (mid[0] | mid[1] | mid[2]);
+        char d2[160];
+        snprintf(d2, sizeof(d2), "the phone's color program drawn: fragment %s, pixel (32,32) %02x%02x%02x%02x",
+                 pass ? statusText(pass->fragmentStatus()).c_str() : w.c_str(), mid ? mid[0] : 0, mid ? mid[1] : 0,
+                 mid ? mid[2] : 0, mid ? mid[3] : 0);
+        ok = verdict("compiler-draw", drawn, d2) && ok;
+    }
+    hm_program_free(&color);
+    if (fill.code) hm_kernel_free(&fill);
+    return ok;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -745,6 +817,7 @@ int main(int argc, char** argv) {
         runCompute(device);
         runDepth(device, false);
         runDepth(device, true);
+        runCompiler(device);
     }
 
     // the time of a submission and its wait, twenty clears of 64x64
