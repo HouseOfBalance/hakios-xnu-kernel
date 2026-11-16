@@ -62,7 +62,9 @@ pipelog(const char *label, const struct rwm_render_request *r, const struct rwa_
 bool
 coreanimation_draw(const char *label)
 {
-	static const char prefix[] = "com.apple.coreanimation.draw.";
+	/* 16.5's labels are com.apple.coreanimation.draw.*, the 27 release's com.apple.coreanimation.PBGRA... and the
+	 * like: no pipeline of 27 was recorded as a recipe, so none was built ahead (16 November) */
+	static const char prefix[] = "com.apple.coreanimation.";
 
 	return label != nullptr && strncmp(label, prefix, sizeof(prefix) - 1) == 0;
 }
@@ -303,7 +305,85 @@ rwm_render_compile(struct rwa_device *device, const char *label, const struct rw
 		base.vertex_constants = vc0;
 		base.fragment_constants = fc0;
 	}
-	compile_call call = { device, generic ? &base : r, shape, info, why, why_size, nullptr };
+	/* boot-arg rwm_nonoise=1: CoreAnimation's dither off -- fc_has_noise_scale (8) and fc_has_noise_tex (21) made 0, so
+	 * no draw reads the 32 x 32 noise texture at slot 9 through the shader's own sampler (15 November: the icons' and
+	 * labels' pipelines are the same functions as the glass that shows, and differ from it in the noise) */
+	bool nonoise = false;
+
+	if (boot_arg("rwm_nonoise=1")) {
+		if (base.fragment_constants != fc0) {
+			base.fragment_constant_count = r->fragment_constant_count < 128 ? r->fragment_constant_count : 128;
+			memcpy(fc0, r->fragment_constants, base.fragment_constant_count * sizeof(fc0[0]));
+			base.fragment_constants = fc0;
+		}
+		for (unsigned i = 0; i < base.fragment_constant_count; i++) {
+			if ((fc0[i].index == 8 || fc0[i].index == 21) && fc0[i].bits != 0) {
+				fc0[i].bits = 0;
+				nonoise = true;
+			}
+		}
+	}
+	/* boot-arg rwm_fcset=I:V,I:V...: those fragment constants given those values in every pipeline whose label has
+	 * "Timg" in it (15 November: the icons' pipelines and the glass that shows are the same functions and differ in
+	 * fc_texture_function 28, fc_blend_function 29 and fc_dest_count 35) */
+	{
+		const char *at = strstr(rwm_boot_args(), "rwm_fcset=");
+
+		if (at != nullptr && label != nullptr && strstr(label, "Timg") != nullptr) {
+			if (base.fragment_constants != fc0) {
+				base.fragment_constant_count = r->fragment_constant_count < 128 ? r->fragment_constant_count : 128;
+				memcpy(fc0, r->fragment_constants, base.fragment_constant_count * sizeof(fc0[0]));
+				base.fragment_constants = fc0;
+			}
+			at += 10;
+			while (*at >= '0' && *at <= '9') {
+				char *end;
+				unsigned long index = strtoul(at, &end, 10), value;
+
+				if (*end != ':') {
+					break;
+				}
+				value = strtoul(end + 1, &end, 0);
+				for (unsigned i = 0; i < base.fragment_constant_count; i++) {
+					if (fc0[i].index == index) {
+						fc0[i].bits = value;
+					}
+				}
+				nonoise = true;
+				at = *end == ',' ? end + 1 : end;
+			}
+		}
+	}
+	/* boot-arg rwm_vcset=I:V,...: the same for the vertex constants of "Timg" pipelines (fc_texcoord_count1 is 54) */
+	{
+		const char *at = strstr(rwm_boot_args(), "rwm_vcset=");
+
+		if (at != nullptr && label != nullptr && strstr(label, "Timg") != nullptr) {
+			if (base.vertex_constants != vc0) {
+				base.vertex_constant_count = r->vertex_constant_count < 128 ? r->vertex_constant_count : 128;
+				memcpy(vc0, r->vertex_constants, base.vertex_constant_count * sizeof(vc0[0]));
+				base.vertex_constants = vc0;
+			}
+			at += 10;
+			while (*at >= '0' && *at <= '9') {
+				char *end;
+				unsigned long index = strtoul(at, &end, 10), value;
+
+				if (*end != ':') {
+					break;
+				}
+				value = strtoul(end + 1, &end, 0);
+				for (unsigned i = 0; i < base.vertex_constant_count; i++) {
+					if (vc0[i].index == index) {
+						vc0[i].bits = value;
+					}
+				}
+				nonoise = true;
+				at = *end == ',' ? end + 1 : end;
+			}
+		}
+	}
+	compile_call call = { device, generic || nonoise ? &base : r, shape, info, why, why_size, nullptr };
 
 	if (coreanimation_draw(label)) {
 		rwm_recipe_record(label, shape, r->vertex_name, r->fragment_name, r->vertex_constants,
