@@ -71,7 +71,7 @@ Runs 500 to 502, the 27 release with `mali=1 metal=1`, `mali-probe` as launchd's
     job's tiles, and off the tile grid: what is written is exactly those pixels.
 12. `clear-750x1624`: a frame of the panel's size.
 13. `clear64-noclean`: Clean Pixel Write Enable off on a frame without primitives: nothing written.
-14. `triangle`: the first draw (TrianglePass), judged pixel by pixel away from the edges; the target is also printed
+14. `triangle`: the first draw (`DrawPass` with the `tri` program), judged pixel by pixel away from the edges; the target is also printed
     as `mali-picture` lines (`tools/probe-picture.py LOG OUT.png triangle`).
 15. `timing`: twenty clears of 64x64, a submission and its wait each.
 
