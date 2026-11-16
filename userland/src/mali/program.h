@@ -46,3 +46,15 @@ struct hm_program {
 	uint32_t texture_count, sampler_count;
 	uint32_t can_blend;
 };
+
+/* a compute kernel: its code, its Renderer State (the address left 0), the words it pushes, its workgroup size */
+struct hm_kernel {
+	const char *name;
+	const uint32_t *code;
+	uint32_t size;
+	const uint32_t *rsd;
+	const struct hm_push_word *push;
+	uint32_t push_count;
+	uint32_t local[3];
+	uint32_t tls_size;                  /* bytes of stack a thread (0: none) */
+};

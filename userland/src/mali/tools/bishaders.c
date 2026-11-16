@@ -399,6 +399,39 @@ main(int argc, char **argv)
 		enum pipe_format attrs[] = { PIPE_FORMAT_R32G32B32A32_FLOAT, PIPE_FORMAT_R32G32B32A32_FLOAT };
 		program("tex", v.shader, f.shader, attrs, 2, false);
 	}
+	/* fill: a compute kernel, out[gid] = gid * 3 + k, the buffer's address and k pushed from uniform buffer 0 (words 0
+	 * and 1 the address, word 2 k), 16 invocations a workgroup; the system values lowered as the state tracker does
+	 * (nir_lower_compute_system_values), so that the global id is the workgroup's and the local one, preloaded */
+	{
+		nir_builder c = shader(MESA_SHADER_COMPUTE, "fill_cs");
+		c.shader->info.workgroup_size[0] = 16;
+		c.shader->info.workgroup_size[1] = 1;
+		c.shader->info.workgroup_size[2] = 1;
+		c.shader->info.num_ubos = 1;
+		c.shader->info.first_ubo_is_default_ubo = true;
+		nir_def *gid = nir_channel(&c, nir_load_global_invocation_id(&c, 32), 0);
+		nir_def *ubo = nir_load_ubo(&c, 3, 32, nir_imm_int(&c, 0), nir_imm_int(&c, 0), .align_mul = 16, .align_offset = 0,
+		    .range_base = 0, .range = 12);
+		nir_def *addr = nir_pack_64_2x32_split(&c, nir_channel(&c, ubo, 0), nir_channel(&c, ubo, 1));
+		nir_def *value = nir_iadd(&c, nir_imul_imm(&c, gid, 3), nir_channel(&c, ubo, 2));
+		nir_store_global(&c, nir_iadd(&c, addr, nir_u2u64(&c, nir_imul_imm(&c, gid, 4))), 4, value, 0x1);
+		NIR_PASS(_, c.shader, nir_lower_compute_system_values, NULL);
+
+		struct util_dynarray bin;
+		struct pan_shader_info cs;
+		compile(c.shader, &bin, &cs);
+		struct mali_renderer_state_packed rsd;
+		pan_pack(&rsd, RENDERER_STATE, cfg) {
+			pan_shader_prepare_rsd(&cs, 0, &cfg);
+		}
+		fprintf(out, "\n/* --- fill: compute shader %u bytes, %u work registers, preload %#llx, pushes %u --- */\n", bin.size,
+		    cs.work_reg_count, (unsigned long long)cs.preload, cs.push.count);
+		words("hm_fill_cs_code", (const uint32_t *)bin.data, bin.size / 4);
+		words("hm_fill_cs_rsd", rsd.opaque, 16);
+		pushes("hm_fill_cs_push", &cs);
+		fprintf(out, "static const struct hm_kernel hm_fill = { \"fill\", hm_fill_cs_code, sizeof(hm_fill_cs_code), "
+		    "hm_fill_cs_rsd, hm_fill_cs_push, %u, { 16, 1, 1 }, %u };\n", cs.push.count, cs.tls_size);
+	}
 	/* the texture format of RGBA8Unorm (GENX(panfrost_new_texture): GENX(panfrost_format_from_pipe_format)) and the
 	 * identity swizzle (panfrost_translate_swizzle_4 of XYZW) */
 	{

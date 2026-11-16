@@ -180,6 +180,22 @@ static const struct hm_program hm_tex = {
 	hm_tex_attribute_formats, hm_tex_attribute_sizes, 2, 1, 1, 0,
 };
 
+/* --- fill: compute shader 128 bytes, 32 work registers, preload 0x1000000000000000, pushes 3 --- */
+static const uint32_t hm_fill_cs_code[32] = {
+	0xc0004229, 0x9e074043, 0x00076593, 0x01800000, 0xc0004221, 0x8b88c00b, 0x0c0f6591, 0x58c04002,
+	0x10008001, 0x80cb1828, 0xe0371813, 0xb401c620, 0x00418063, 0x80cb182c, 0x0406caf3, 0x58c2e000,
+	0x10000007, 0x80cb1858, 0xe030b1e3, 0xac01c62f, 0x00000076, 0x00000030, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_fill_cs_rsd[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00002001, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00011000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const struct hm_push_word hm_fill_cs_push[3] = {
+	{ 0, 0 }, { 0, 4 }, { 0, 8 },
+};
+static const struct hm_kernel hm_fill = { "fill", hm_fill_cs_code, sizeof(hm_fill_cs_code), hm_fill_cs_rsd, hm_fill_cs_push, 3, { 16, 1, 1 }, 0 };
+
 /* textures: RGBA8Unorm's format word and the identity swizzle */
 static const uint32_t hm_texture_format_rgba8 = 0x000bb000;
 static const uint32_t hm_texture_swizzle_identity = 0x688;

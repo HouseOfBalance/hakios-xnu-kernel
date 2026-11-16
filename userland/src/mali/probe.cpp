@@ -352,6 +352,43 @@ bool runTexture(Device& device) {
     return ok;
 }
 
+// The fill kernel: 4 workgroups of 16 write out[i] = i * 3 + k for i < 64 into a buffer of canaries; every word right
+// and the canary after them kept
+bool runCompute(Device& device) {
+    const char* stage = "compute";
+    std::string why;
+    auto bo = device.gpu().newBo(4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    uint32_t uniforms[3] = {static_cast<uint32_t>(bo->gpu()), static_cast<uint32_t>(bo->gpu() >> 32), 1000};
+    const unsigned groups[3] = {4, 1, 1};
+    auto pass = ComputePass::make(device, hm_fill, groups, uniforms, sizeof(uniforms), &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission s;
+    uint64_t t0 = device.gpu().transport().nowUs();
+    int e = pass->submit({bo.get()}, &s);
+    if (e == 0) e = device.gpu().wait(s, 2000000);
+    uint64_t us = device.gpu().transport().nowUs() - t0;
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(bo->cpu());
+    unsigned right = 0, kept = 0;
+    for (unsigned i = 0; i < 64; i++) right += w[i] == i * 3 + 1000;
+    for (unsigned i = 64; i < bo->size() / 4; i++) kept += w[i] == 0xa5a5a5a5u;
+    char detail[200];
+    snprintf(detail, sizeof(detail), "job %s%s%s; %u of 64 words i*3+1000 (word 0 %u, word 63 %u), canary %u of %llu kept; %llu us",
+             statusText(pass->status()).c_str(), e ? ", " : "", e ? strerror(e) : "", right, w[0], w[63], kept,
+             (unsigned long long)(bo->size() / 4 - 64), (unsigned long long)us);
+    bool job = e == 0 && (pass->status() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU checks the job, runs no shader: %s) %s", stage, job ? "job accepted" : "job REFUSED", detail);
+        if (!job) gFailed++;
+        return job;
+    }
+    bool ok = job && right == 64 && kept == bo->size() / 4 - 64;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -647,6 +684,7 @@ int main(int argc, char** argv) {
         runColorDraw(device, "uniform", rgb, tint, black, false);
         runColorDraw(device, "blend", white, half, blue, true);
         runTexture(device);
+        runCompute(device);
     }
 
     // the time of a submission and its wait, twenty clears of 64x64

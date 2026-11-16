@@ -237,4 +237,61 @@ void DrawPass::dump(FILE* fp) const {
             g[1], g[2], g[3]);
 }
 
+std::unique_ptr<ComputePass> ComputePass::make(Device& device, const hm_kernel& k, const unsigned groups[3],
+                                               const void* uniforms, uint32_t uniformSize, std::string* why) {
+    auto no = [why, &k](const std::string& s) {
+        if (why) *why = std::string(k.name) + ": " + s;
+        return std::unique_ptr<ComputePass>();
+    };
+    for (int i = 0; i < 3; i++) {
+        if (groups[i] == 0 || groups[i] > 65535) return no("a workgroup count outside 1..65535");
+    }
+    if (k.tls_size != 0) return no("a kernel that spills to thread storage (not served yet)");
+    if (k.size > kUniforms - kCode) return no("the kernel does not fit");
+    if (uniformSize > kSize - kUniforms) return no("the uniform data do not fit");
+    for (uint32_t i = 0; i < k.push_count; i++) {
+        if (k.push[i].ubo != 0 || k.push[i].offset + 4u > uniformSize)
+            return no("the kernel pushes a word the uniform data does not hold");
+    }
+    std::unique_ptr<ComputePass> pass(new ComputePass(device));
+    pass->cmd_ = device.gpu().newBo(kSize, why);
+    if (!pass->cmd_) return nullptr;
+    uint8_t* cpu = pass->cmd_->cpu();
+    uint64_t gpu = pass->cmd_->gpu();
+    memset(cpu, 0, kSize);
+    memcpy(cpu + kCode, k.code, k.size);
+    uint32_t rsd[16];
+    memcpy(rsd, k.rsd, sizeof(rsd));
+    rsd[0] |= static_cast<uint32_t>(gpu + kCode);
+    rsd[1] |= static_cast<uint32_t>((gpu + kCode) >> 32);
+    memcpy(cpu + kRsd, rsd, sizeof(rsd));
+    if (uniformSize != 0) {
+        memcpy(cpu + kUniforms, uniforms, uniformSize);
+        hm_v7_uniform_buffer(cpu + kUbos, gpu + kUniforms, uniformSize);
+    }
+    const uint8_t* u = static_cast<const uint8_t*>(uniforms);
+    for (uint32_t i = 0; i < k.push_count; i++) memcpy(cpu + kPush + 4 * i, u + k.push[i].offset, 4);
+    hm_v7_local_storage(cpu + kLocalStorage);
+    struct hm_v7_draw d = {};
+    d.state = gpu + kRsd;
+    d.thread_storage = gpu + kLocalStorage;
+    d.uniform_buffers = uniformSize ? gpu + kUbos : 0;
+    d.push_uniforms = k.push_count ? gpu + kPush : 0;
+    hm_v7_compute_job(cpu + kJob, 1, 0, groups, k.local, &d);
+    return pass;
+}
+
+int ComputePass::submit(const std::vector<const Bo*>& uses, Submission* out) {
+    std::vector<const Bo*> all = uses;
+    all.push_back(cmd_.get());
+    return device_.gpu().submit(cmd_->gpu() + kJob, false, all, out);
+}
+
+uint32_t ComputePass::status() const { return statusOf(cmd_->cpu() + kJob); }
+
+void ComputePass::dump(FILE* fp) const {
+    fprintf(fp, "Compute job:\n");
+    hm_v7_print_job(fp, cmd_->cpu() + kJob);
+}
+
 }  // namespace hakios::mali

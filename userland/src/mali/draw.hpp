@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "mali.hpp"
 #include "pass.hpp"
@@ -62,6 +63,28 @@ private:
     std::unique_ptr<Bo> cmd_;
     const Bo* heap_ = nullptr;
     const Bo* texture_ = nullptr;
+};
+
+// One dispatch of a compute kernel of shaders_v7.h (struct hm_kernel) as GENX(jm_launch_grid) submits it on v7: one
+// compute job on slot 1, its Renderer State with the code's address merged in, the words it pushes copied out of the
+// uniform data by the kernel's map, the uniform buffer table naming the same data, Local Storage without thread or
+// workgroup storage.
+class ComputePass {
+public:
+    static std::unique_ptr<ComputePass> make(Device& device, const hm_kernel& kernel, const unsigned groups[3],
+                                             const void* uniforms, uint32_t uniformSize, std::string* why);
+    // with the buffers the kernel writes (each remembers the job)
+    int submit(const std::vector<const Bo*>& uses, Submission* out);
+    uint32_t status() const;
+    void dump(FILE* fp) const;
+
+    static constexpr uint32_t kJob = 0x000, kRsd = 0x100, kUbos = 0x140, kPush = 0x180, kLocalStorage = 0x1c0,
+        kCode = 0x400, kUniforms = 0xc00, kSize = 0x1000;
+
+private:
+    ComputePass(Device& device) : device_(device) {}
+    Device& device_;
+    std::unique_ptr<Bo> cmd_;
 };
 
 }  // namespace hakios::mali

@@ -159,6 +159,12 @@ void hm_v7_vertex_job(void *job, unsigned index, uint64_t next, unsigned vertex_
 void hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, unsigned vertex_count,
     uint64_t tiler, const struct hm_v7_draw *draw);
 
+/* A compute job (GENX(jm_launch_grid), v7): GROUPS workgroups of LOCAL invocations each, the Invocation packed as
+ * panfrost_pack_work_groups_compute packs it, Job Task Split the sum of log2ceil(local + 1), a barrier in the header
+ * (pan_jc_add_job's for a compute job); DRAW's state, thread storage, uniforms and push uniforms */
+void hm_v7_compute_job(void *job, unsigned index, uint64_t next, const unsigned groups[3], const unsigned local[3],
+    const struct hm_v7_draw *draw);
+
 /* --- reading (the fake GPU, the probe's dumps) ------------------------------------------------------------- */
 
 struct hm_v7_job {

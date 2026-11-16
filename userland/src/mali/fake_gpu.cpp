@@ -211,6 +211,8 @@ void FakeGpu::runChain(uint64_t jc, bool fragment, uint64_t seq) {
             status = runWriteValue(job, &why);
         } else if (h.type == HM_JOB_FRAGMENT) {
             status = runFragment(job, &why);
+        } else if (h.type == HM_JOB_COMPUTE) {
+            status = runDraw(job, false, &why, true);
         } else if (h.type == HM_JOB_VERTEX || h.type == HM_JOB_TILER) {
             if ((h.dependency_1 != 0 && !done.count(h.dependency_1)) || (h.dependency_2 != 0 && !done.count(h.dependency_2))) {
                 status = kJobConfigFault;
@@ -241,7 +243,7 @@ void FakeGpu::runChain(uint64_t jc, bool fragment, uint64_t seq) {
 // A vertex or tiler job: everything its draw names inside a buffer, its Renderer State's shader too; a tiler job's
 // Tiler Context as a fragment job's. Nothing is run: the fragment job of a frame whose Tiler Context got primitives
 // writes its clear colour alone, and says so (drawsNotRasterized).
-uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why) {
+uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why, bool compute) {
     const struct hm_v7_sizes* sz = hm_v7_sizes();
     const char* invalid = nullptr;
     struct hm_v7_draw_read d;
@@ -249,7 +251,7 @@ uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why) {
         *why = invalid;
         return kJobConfigFault;
     }
-    const char* kind = tiler ? "the tiler job's" : "the vertex job's";
+    const char* kind = tiler ? "the tiler job's" : compute ? "the compute job's" : "the vertex job's";
     struct {
         uint64_t address;
         uint64_t length;
@@ -304,6 +306,8 @@ uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why) {
             return kTranslationFault | kAccessRead;
         }
         drawn_.insert(d.tiler);
+    } else if (compute) {
+        computesNotRun_++;          // the fake runs no shader
     } else if (d.draw.varyings == 0 || d.draw.varying_buffers == 0) {
         *why = "the vertex job writes no varyings (no position for the tiler)";
         return kJobConfigFault;

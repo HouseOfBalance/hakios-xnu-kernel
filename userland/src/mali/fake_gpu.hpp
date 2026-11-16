@@ -81,14 +81,14 @@ private:
     // 0 when the job is done, or the Exception Status code with *why
     uint32_t runWriteValue(uint8_t* job, std::string* why);
     uint32_t runFragment(uint8_t* job, std::string* why);
-    uint32_t runDraw(uint8_t* job, bool tiler, std::string* why);
+    uint32_t runDraw(uint8_t* job, bool tiler, std::string* why, bool compute = false);
 
     std::map<uint32_t, Buffer> buffers_;
     uint32_t nextHandle_ = 1;
     uint64_t nextGpu_ = 0x01000000;     // HakiosMali's first address (mtk_mali.c GPU_ADDRESS_FIRST), 64 KB granules
     uint64_t seq_ = 0;
     uint64_t clockUs_ = 0;
-    uint64_t jobsRun_ = 0, pixelsWritten_ = 0, drawsNotRasterized_ = 0;
+    uint64_t jobsRun_ = 0, pixelsWritten_ = 0, drawsNotRasterized_ = 0, computesNotRun_ = 0;
     std::set<uint64_t> drawn_;          // Tiler Contexts a tiler job has named
     std::vector<Fault> faults_;
 };

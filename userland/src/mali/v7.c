@@ -553,6 +553,51 @@ hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, u
 	}
 }
 
+void
+hm_v7_compute_job(void *job, unsigned index, uint64_t next, const unsigned groups[3], const unsigned local[3],
+    const struct hm_v7_draw *draw)
+{
+	/* panfrost_pack_work_groups_compute (pan_encoder.h), not indirect, no graphics quirk */
+	unsigned values[6] = { local[0], local[1], local[2], groups[0], groups[1], groups[2] };
+	unsigned shifts[7] = { 0 };
+	uint32_t packed = 0;
+
+	for (unsigned i = 0; i < 6; ++i) {
+		packed |= (values[i] - 1) << shifts[i];
+		shifts[i + 1] = shifts[i] + util_logbase2_ceil(values[i]);
+	}
+	pan_section_pack(job, COMPUTE_JOB, INVOCATION, cfg) {
+		cfg.invocations = packed;
+		cfg.size_y_shift = shifts[1];
+		cfg.size_z_shift = shifts[2];
+		cfg.workgroups_x_shift = shifts[3];
+		cfg.workgroups_y_shift = shifts[4];
+		cfg.workgroups_z_shift = shifts[5];
+		/* "for compute, must equal the workgroup X shift for barriers to function correctly" */
+		cfg.thread_group_split = cfg.workgroups_x_shift;
+	}
+	pan_section_pack(job, COMPUTE_JOB, PARAMETERS, cfg) {
+		cfg.job_task_split = util_logbase2_ceil(local[0] + 1) + util_logbase2_ceil(local[1] + 1) +
+		    util_logbase2_ceil(local[2] + 1);
+	}
+	pan_section_pack(job, COMPUTE_JOB, DRAW, cfg) {
+		cfg.state = draw->state;
+		cfg.attributes = draw->attributes;
+		cfg.attribute_buffers = draw->attribute_buffers;
+		cfg.thread_storage = draw->thread_storage;
+		cfg.uniform_buffers = draw->uniform_buffers;
+		cfg.push_uniforms = draw->push_uniforms;
+		cfg.textures = draw->textures;
+		cfg.samplers = draw->samplers;
+	}
+	pan_section_pack(job, COMPUTE_JOB, HEADER, cfg) {
+		cfg.type = MALI_JOB_TYPE_COMPUTE;
+		cfg.index = index;
+		cfg.next = next;
+		cfg.barrier = true;
+	}
+}
+
 /* --- reading ---------------------------------------------------------------------------------------------- */
 
 static int
