@@ -587,6 +587,70 @@ bool runIndexed(Device& device) {
     return ok;
 }
 
+// Several draws in one pass (DrawPass::makeMany): a green quad on the left, a blue triangle on the right, and, over the middle, a near yellow and a far red quad in two more draws with the depth test, the far one
+// last: the left green, the right blue, the middle yellow -- the tile buffer's depth kept across draws of one frame
+bool runMultiDraw(Device& device) {
+    const char* stage = "multidraw";
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    const float one[4] = {1, 1, 1, 1};
+    // left quad: x -1..-0.5 (pixels 0..16), right triangle x 0.5..1, middle quads x -0.25..0.25 (pixels 24..40)
+    const float leftPos[24] = {-1, -1, 0, 1, -0.5f, -1, 0, 1, -1, 1, 0, 1, -1, 1, 0, 1, -0.5f, -1, 0, 1, -0.5f, 1, 0, 1};
+    const float green[24] = {0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1};
+    const float rightPos[12] = {0.5f, -1, 0, 1, 1, -1, 0, 1, 1, 1, 0, 1};
+    const float blue[12] = {0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1};
+    const float nearPos[24] = {-0.25f, -1, -0.5f, 1, 0.25f, -1, -0.5f, 1, -0.25f, 1, -0.5f, 1,
+                               -0.25f, 1, -0.5f, 1, 0.25f, -1, -0.5f, 1, 0.25f, 1, -0.5f, 1};
+    const float yellow[24] = {1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1};
+    float farPos[24];
+    for (int i = 0; i < 24; i++) farPos[i] = (i % 4 == 2) ? 0.5f : nearPos[i];
+    const float red[24] = {1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1};
+    auto draw = [&](const float* pos, const float* col, uint32_t n) {
+        DrawInput in;
+        in.attributes[0] = pos;
+        in.attributes[1] = col;
+        in.vertexCount = n;
+        in.uniforms = one;
+        in.uniformSize = 16;
+        in.depthTest = true;
+        return std::make_pair(&hm_color, in);
+    };
+    auto pass = DrawPass::makeMany(device, t,
+        {draw(leftPos, green, 6), draw(rightPos, blue, 3), draw(nearPos, yellow, 6), draw(farPos, red, 6)}, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    auto at = [&](int x, int y) { return bo->cpu() + y * 256 + 4 * x; };
+    auto is = [](const uint8_t* q, uint8_t r, uint8_t g, uint8_t b) { return q[0] == r && q[1] == g && q[2] == b && q[3] == 0xff; };
+    unsigned left = 0, right = 0, mid = 0, n = 0;
+    for (int y = 4; y < 60; y++) {
+        left += is(at(6, y), 0, 0xff, 0);
+        right += is(at(61, y), 0, 0, 0xff);
+        mid += is(at(32, y), 0xff, 0xff, 0);
+        n++;
+    }
+    char detail[220];
+    snprintf(detail, sizeof(detail), "4 draws, fragment %s; column 6 green %u of %u, column 61 blue %u of %u, column 32 "
+             "yellow (near beat far) %u of %u", statusText(pass->fragmentStatus()).c_str(), left, n, right, n, mid, n);
+    bool jobs = e == 0 && (pass->fragmentStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU does not rasterize: %s) %s", stage, jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && left == n && right == n && mid == n;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
+    return ok;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -888,6 +952,7 @@ int main(int argc, char** argv) {
         runColorDraw(device, "varyings-750x1624", rgb, one, black, false, 750, 1624);
         runColorDraw(device, "varyings-bgra", rgb, one, black, false, 64, 64, true);
         runIndexed(device);
+        runMultiDraw(device);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);

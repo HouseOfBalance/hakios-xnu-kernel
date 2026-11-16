@@ -9,20 +9,23 @@
 
 namespace hakios::mali {
 
-std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const hm_program& p, const DrawInput& in,
-                                         std::string* why) {
-    auto no = [why, &p](const std::string& s) {
-        if (why) *why = std::string(p.name) + ": " + s;
-        return std::unique_ptr<DrawPass>();
-    };
+// One draw's descriptors in a block of the pass's buffer (CPU and GPU addresses CPU, GPU), its vertex job numbered VINDEX
+// and its tiler job VINDEX + 1, depending on the vertex job and (pan_jc_add_job: tiler jobs are chained) on the tiler
+// job PREV_TILER before it, NEXT after it in the chain. 0, or the reason the draw cannot be written.
+static std::string writeDraw(Device& device, const Target& t, const hm_program& p, const DrawInput& in, uint8_t* cpu,
+                             uint64_t gpu, uint64_t tilerCtx, unsigned vIndex, unsigned prevTiler, uint64_t next) {
+    auto no = [&p](const std::string& s) { return std::string(p.name) + ": " + s; };
     const struct hm_v7_sizes* sz = hm_v7_sizes();
-    if (t.bo == nullptr || t.width == 0 || t.height == 0 || t.width > 4096 || t.height > 4096)
-        return no("a draw goes into a target of 1 to 4096 pixels a side");
     const bool bgra = t.format == Format::BGRA8Unorm;
-    uint64_t base = t.bo->gpu() + t.offset;
-    if ((base & 63) != 0 || (t.rowBytes & 63) != 0 || t.rowBytes < 4 * t.width ||
-        t.offset + static_cast<uint64_t>(t.rowBytes) * (t.height - 1) + 4ull * t.width > t.bo->size())
-        return no("the target is not 64-byte aligned rows inside its buffer (pan_layout.c, v7)");
+    using D = DrawPass;
+    constexpr uint32_t kVertexJob = D::kVertexJob, kTilerJob = D::kTilerJob, kVsRsd = D::kVsRsd, kFsRsd = D::kFsRsd,
+        kAttributes = D::kAttributes, kAttributeBuffers = D::kAttributeBuffers, kVaryings = D::kVaryings,
+        kVaryingBuffers = D::kVaryingBuffers, kViewport = D::kViewport, kLocalStorage = D::kLocalStorage,
+        kUbos = D::kUbos, kVsPush = D::kVsPush, kFsPush = D::kFsPush, kVertices = D::kVertices, kGeneral = D::kGeneral,
+        kPositions = D::kPositions, kVsCode = D::kVsCode, kFsCode = D::kFsCode, kUniforms = D::kUniforms,
+        kTexture = D::kTexture, kSurface = D::kSurface, kSampler = D::kSampler, kSysvals = D::kSysvals,
+        kSysvalSize = D::kSysvalSize, kIndices = D::kIndices, kSize = D::kSize;
+    (void)device;
     if (in.indices == nullptr && (in.vertexCount < 3 || in.vertexCount % 3 != 0 || in.vertexCount > 48))
         return no("a vertex count that is not a whole number of triangles, 3 to 48");
     if (in.indices != nullptr) {
@@ -89,17 +92,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     if (stride * in.vertexCount > kPositions - kGeneral) return no("the varyings do not fit");
     if (p.vs_out_count + p.fs_in_count > 16) return no("more than sixteen varying records");
 
-    std::unique_ptr<DrawPass> pass(new DrawPass(device));
-    pass->target_ = t;
-    pass->texture_ = p.texture_count ? in.texture : nullptr;
-    pass->cmd_ = device.gpu().newBo(kSize, why);
-    if (!pass->cmd_) return nullptr;
-    pass->heap_ = device.tilerHeap(why);
-    if (pass->heap_ == nullptr) return nullptr;
-    uint8_t* cpu = pass->cmd_->cpu();
-    uint64_t gpu = pass->cmd_->gpu();
     memset(cpu, 0, kSize);
-
     // the shaders, their Renderer State with their addresses merged in, and the target's Blend descriptor
     memcpy(cpu + kVsCode, p.vs_code, p.vs_size);
     memcpy(cpu + kFsCode, p.fs_code, p.fs_size);
@@ -177,10 +170,6 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     }
     hm_v7_viewport(cpu + kViewport, 0, 0, t.width - 1, t.height - 1, 0.0f, 1.0f);
     hm_v7_local_storage(cpu + kLocalStorage);
-    hm_v7_tiler_heap(cpu + kHeapDesc, pass->heap_->gpu(), static_cast<uint32_t>(pass->heap_->size()));
-    hm_v7_tiler_context(cpu + kTilerCtx, gpu + kHeapDesc, t.width, t.height,
-                        hm_v7_hierarchy_mask(t.width, t.height, device.tilerLevels()));
-
     struct hm_v7_draw vertex = {};
     vertex.state = gpu + kVsRsd;
     vertex.attributes = gpu + kAttributes;
@@ -190,7 +179,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     vertex.thread_storage = gpu + kLocalStorage;
     vertex.push_uniforms = p.vs_push_count ? gpu + kVsPush : 0;
     vertex.uniform_buffers = gpu + kUbos;
-    hm_v7_vertex_job(cpu + kVertexJob, 1, gpu + kTilerJob, in.vertexCount, &vertex);
+    hm_v7_vertex_job(cpu + kVertexJob, vIndex, gpu + kTilerJob, in.vertexCount, &vertex);
     struct hm_v7_draw fragment = {};
     fragment.state = gpu + kFsRsd;
     fragment.position = gpu + kPositions;
@@ -204,11 +193,67 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fragment.samplers = p.sampler_count ? gpu + kSampler : 0;
     if (in.indices != nullptr) {
         memcpy(cpu + kIndices, in.indices, 2 * in.indexCount);
-        hm_v7_tiler_job_indexed(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment, in.indexCount,
+        hm_v7_tiler_job_indexed(cpu + kTilerJob, vIndex + 1, vIndex, next, in.vertexCount, tilerCtx, &fragment, in.indexCount,
                                 gpu + kIndices);
     } else {
-        hm_v7_tiler_job(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment);
+        hm_v7_tiler_job_indexed(cpu + kTilerJob, vIndex + 1, vIndex, next, in.vertexCount, tilerCtx, &fragment, 0, 0);
     }
+
+    if (prevTiler != 0) {
+        // dependency 2: the tiler job before it (pan_jc_add_job), in Job Header word 5 bits 16..31
+        uint32_t w5;
+        memcpy(&w5, cpu + kTilerJob + 20, 4);
+        w5 |= prevTiler << 16;
+        memcpy(cpu + kTilerJob + 20, &w5, 4);
+    }
+    return std::string();
+}
+
+std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const hm_program& p, const DrawInput& in,
+                                         std::string* why) {
+    return makeMany(device, t, {{&p, in}}, why);
+}
+
+std::unique_ptr<DrawPass> DrawPass::makeMany(Device& device, const Target& t,
+                                             const std::vector<std::pair<const hm_program*, DrawInput>>& draws,
+                                             std::string* why) {
+    auto no = [why](const std::string& s) {
+        if (why) *why = s;
+        return std::unique_ptr<DrawPass>();
+    };
+    if (draws.empty() || draws.size() > kMaxDraws) return no("a pass of 1 to " + std::to_string(kMaxDraws) + " draws");
+    if (t.bo == nullptr || t.width == 0 || t.height == 0 || t.width > 4096 || t.height > 4096)
+        return no("a draw goes into a target of 1 to 4096 pixels a side");
+    const bool bgra = t.format == Format::BGRA8Unorm;
+    uint64_t base = t.bo->gpu() + t.offset;
+    if ((base & 63) != 0 || (t.rowBytes & 63) != 0 || t.rowBytes < 4 * t.width ||
+        t.offset + static_cast<uint64_t>(t.rowBytes) * (t.height - 1) + 4ull * t.width > t.bo->size())
+        return no("the target is not 64-byte aligned rows inside its buffer (pan_layout.c, v7)");
+    std::unique_ptr<DrawPass> pass(new DrawPass(device));
+    pass->target_ = t;
+    pass->draws_ = static_cast<uint32_t>(draws.size());
+    for (const auto& d : draws) {
+        if (d.first->texture_count && d.second.texture) pass->textures_.push_back(d.second.texture);
+    }
+    pass->cmd_ = device.gpu().newBo(kSize * draws.size(), why);
+    if (!pass->cmd_) return nullptr;
+    pass->heap_ = device.tilerHeap(why);
+    if (pass->heap_ == nullptr) return nullptr;
+    uint8_t* cpu = pass->cmd_->cpu();
+    uint64_t gpu = pass->cmd_->gpu();
+    // the draws, each in a block of its own, chained vertex, tiler, vertex, tiler...; the frame's own descriptors in
+    // the first block's room for them
+    for (size_t i = 0; i < draws.size(); i++) {
+        uint64_t next = i + 1 < draws.size() ? gpu + (i + 1) * kSize + kVertexJob : 0;
+        unsigned vIndex = static_cast<unsigned>(2 * i + 1);
+        std::string e = writeDraw(device, t, *draws[i].first, draws[i].second, cpu + i * kSize, gpu + i * kSize,
+                                  gpu + kTilerCtx, vIndex, i ? vIndex - 1 : 0, next);
+        if (!e.empty()) return no("draw " + std::to_string(i) + ", " + e);
+    }
+    const DrawInput& in = draws[0].second;
+    hm_v7_tiler_heap(cpu + kHeapDesc, pass->heap_->gpu(), static_cast<uint32_t>(pass->heap_->size()));
+    hm_v7_tiler_context(cpu + kTilerCtx, gpu + kHeapDesc, t.width, t.height,
+                        hm_v7_hierarchy_mask(t.width, t.height, device.tilerLevels()));
 
     struct hm_v7_fb fb = {};
     fb.width = t.width;
@@ -240,7 +285,7 @@ const float* DrawPass::positionsWritten() const { return reinterpret_cast<const 
 
 int DrawPass::submit(Submission* draw, Submission* frame) {
     std::vector<const Bo*> uses = {cmd_.get(), target_.bo, &device_.samplePositions(), heap_};
-    if (texture_ != nullptr) uses.push_back(texture_);
+    for (const Bo* tex : textures_) uses.push_back(tex);
     int error = device_.gpu().submit(cmd_->gpu() + kVertexJob, false, uses, draw);
     if (error == 0) error = device_.gpu().submit(cmd_->gpu() + kFragmentJob, true, uses, frame);
     return error;

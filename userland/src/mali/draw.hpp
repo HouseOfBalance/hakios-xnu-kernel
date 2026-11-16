@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mali.hpp"
@@ -49,6 +50,13 @@ class DrawPass {
 public:
     static std::unique_ptr<DrawPass> make(Device& device, const Target& target, const hm_program& program,
                                           const DrawInput& input, std::string* why);
+    // several draws in one pass: one vertex and tiler job pair each, chained (each tiler job depending on its vertex
+    // job and on the tiler job before it, pan_jc_add_job), all into the one Tiler Context, then the one Fragment job;
+    // the clear colour is the first draw's
+    static constexpr size_t kMaxDraws = 16;
+    static std::unique_ptr<DrawPass> makeMany(Device& device, const Target& target,
+                                              const std::vector<std::pair<const hm_program*, DrawInput>>& draws,
+                                              std::string* why);
     int submit(Submission* draw, Submission* frame);
     uint32_t vertexStatus() const;
     uint32_t tilerStatus() const;
@@ -70,7 +78,8 @@ private:
     Target target_;
     std::unique_ptr<Bo> cmd_;
     const Bo* heap_ = nullptr;
-    const Bo* texture_ = nullptr;
+    std::vector<const Bo*> textures_;
+    uint32_t draws_ = 0;
 };
 
 // One dispatch of a compute kernel of shaders_v7.h (struct hm_kernel) as GENX(jm_launch_grid) submits it on v7: one
