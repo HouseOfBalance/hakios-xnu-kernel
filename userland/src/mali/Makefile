@@ -21,7 +21,7 @@ CXXFLAGS_MALI = -std=c++17 -O1 -g -Wall -Wextra -Werror -I.
 LIBSRC   = gpu.cpp pass.cpp draw.cpp metal.cpp fake_gpu.cpp iokit_transport.cpp
 LIBOBJ   = $(LIBSRC:%.cpp=$(OUT)/%.o) $(OUT)/v7.o
 ifeq ($(shell uname),Darwin)
-LDLIBS   = -framework IOKit -framework CoreFoundation
+LDLIBS   = -framework IOKit -framework CoreFoundation -framework IOSurface
 endif
 
 .PHONY: test clean

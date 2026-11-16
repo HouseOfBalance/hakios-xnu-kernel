@@ -28,6 +28,10 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOSurface/IOSurfaceRef.h>
+#endif
 #include "fake_gpu.hpp"
 #include "mali.hpp"
 #if defined(HAKIOS_MALI_COMPILER)
@@ -740,6 +744,84 @@ bool runMetal(Device& device) {
                    words == 32, detail);
 }
 
+// A draw into an IOSurface, the shape of a CAMetalLayer drawable: a 64x64 BGRA surface made here (IOSurfaceCreate), its
+// memory a buffer of the GPU through HakiosMali (request 0x7e), the varyings triangle drawn into it, then read back
+// through IOSurface's own lock and base address
+bool runSurface(Device& device) {
+    const char* stage = "iosurface";
+#if !defined(__APPLE__)
+    (void)device;
+    say("%s MEASURE no IOSurface here", stage);
+    return true;
+#else
+    if (gFake) {
+        say("%s MEASURE the fake GPU has no IOSurfaces", stage);
+        return true;
+    }
+    CFMutableDictionaryRef props = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks,
+                                                             &kCFTypeDictionaryValueCallBacks);
+    auto num = [](int v) { return CFNumberCreate(nullptr, kCFNumberIntType, &v); };
+    CFNumberRef n;
+    n = num(64); CFDictionarySetValue(props, kIOSurfaceWidth, n); CFRelease(n);
+    n = num(64); CFDictionarySetValue(props, kIOSurfaceHeight, n); CFRelease(n);
+    n = num(4); CFDictionarySetValue(props, kIOSurfaceBytesPerElement, n); CFRelease(n);
+    n = num(256); CFDictionarySetValue(props, kIOSurfaceBytesPerRow, n); CFRelease(n);
+    n = num(0x42475241); CFDictionarySetValue(props, kIOSurfacePixelFormat, n); CFRelease(n);   // 'BGRA'
+    IOSurfaceRef surface = IOSurfaceCreate(props);
+    CFRelease(props);
+    if (surface == nullptr) return verdict(stage, false, "IOSurfaceCreate gave none");
+    std::string why;
+    HakiosSurface info = {};
+    auto bo = device.gpu().surfaceBo(IOSurfaceGetID(surface), &info, &why);
+    if (!bo) {
+        CFRelease(surface);
+        return verdict(stage, false, why);
+    }
+    Target t;
+    t.bo = bo.get();
+    t.offset = info.offset;
+    t.width = info.width;
+    t.height = info.height;
+    t.rowBytes = info.rowBytes;
+    t.format = Format::BGRA8Unorm;
+    const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
+    const float rgb[12] = {1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1};
+    const float one[4] = {1, 1, 1, 1};
+    DrawInput in;
+    in.attributes[0] = positions;
+    in.attributes[1] = rgb;
+    in.uniforms = one;
+    in.uniformSize = 16;
+    in.clear[0] = 0.0f, in.clear[1] = 0.0f, in.clear[2] = 0.5f, in.clear[3] = 1.0f;
+    auto pass = DrawPass::make(device, t, hm_color, in, &why);
+    if (!pass) {
+        CFRelease(surface);
+        return verdict(stage, false, "refused: " + why);
+    }
+    Submission ds, fs;
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    IOSurfaceLock(surface, kIOSurfaceLockReadOnly, nullptr);
+    const uint8_t* base = static_cast<const uint8_t*>(IOSurfaceGetBaseAddress(surface));
+    size_t row = IOSurfaceGetBytesPerRow(surface);
+    const uint8_t* corner = base + 2 * row + 4 * 2;
+    const uint8_t* mid = base + 32 * row + 4 * 32;
+    bool clearOk = corner[0] == 128 && corner[1] == 0 && corner[2] == 0 && corner[3] == 255;   // B G R A
+    bool drawn = mid[3] == 255 && mid[0] > 40 && mid[1] > 40 && mid[2] > 40 && mid[0] < 150;
+    char detail[240];
+    snprintf(detail, sizeof(detail), "surface %u %ux%u row %u offset %u; fragment %s; corner %02x%02x%02x%02x (the clear), "
+             "middle %02x%02x%02x%02x (the three colours mixed), through IOSurface's own mapping",
+             IOSurfaceGetID(surface), info.width, info.height, info.rowBytes, info.offset,
+             statusText(pass->fragmentStatus()).c_str(), corner[2], corner[1], corner[0], corner[3], mid[2], mid[1], mid[0],
+             mid[3]);
+    IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, nullptr);
+    pass.reset();
+    bo.reset();
+    CFRelease(surface);
+    return verdict(stage, e == 0 && clearOk && drawn, detail);
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1043,6 +1125,7 @@ int main(int argc, char** argv) {
         runIndexed(device);
         runMultiDraw(device);
         runMetal(device);
+        runSurface(device);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);

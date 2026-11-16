@@ -65,7 +65,7 @@ fi
 rm -f $O/libhakios-mali.a
 ar rcs $O/libhakios-mali.a $O/v7.o $O/gpu.o $O/pass.o $O/draw.o $O/metal.o $O/fake_gpu.o $O/iokit_transport.o
 $CXX -o $O/mali-probe $O/probe.o $O/libhakios-mali.a $COMPILER_OBJ "${COMPILER_LIBS[@]}" -framework IOKit \
-	-framework CoreFoundation -lc++
+	-framework CoreFoundation -framework IOSurface -lc++
 # arm64e code made runnable on a processor without pointer authentication, then signed (root26-sys.sh signs it
 # again, ad hoc, with the rest of the small image)
 $PACSTRIP macho $O/mali-probe $O/mali-probe.strip > /dev/null && mv $O/mali-probe.strip $O/mali-probe

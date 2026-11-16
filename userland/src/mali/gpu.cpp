@@ -142,6 +142,28 @@ int Gpu::submit(uint64_t jc, bool fragment, const std::vector<const Bo*>& uses, 
     return error;
 }
 
+std::unique_ptr<Bo> Gpu::surfaceBo(uint32_t surfaceId, HakiosSurface* info, std::string* why) {
+    HakiosSurface s = {};
+    s.surface = surfaceId;
+    int error = t_->call(kHakiosSurface, &s, sizeof(s));
+    if (error != 0 || s.handle == 0) {
+        if (why) *why = "the surface's memory as a buffer: " + std::string(std::strerror(error ? error : ENOENT));
+        return nullptr;
+    }
+    PanfrostGetBoOffset offset = {s.handle, 0, 0};
+    error = t_->call(kGetBoOffset, &offset, sizeof(offset));
+    uint64_t mapped = s.size;
+    void* cpu = error == 0 ? t_->map(s.handle, &mapped) : nullptr;
+    if (cpu == nullptr) {
+        if (why) *why = "the surface's buffer cannot be mapped";
+        DrmGemClose close = {s.handle, 0};
+        (void)t_->call(kGemClose, &close, sizeof(close));
+        return nullptr;
+    }
+    *info = s;
+    return std::unique_ptr<Bo>(new Bo(*this, s.handle, mapped, offset.offset, static_cast<uint8_t*>(cpu)));
+}
+
 int Gpu::show(const void* pixels, uint32_t width, uint32_t height, uint32_t rowBytes) {
     HakiosShow s = {reinterpret_cast<uint64_t>(pixels), width, height, rowBytes, 0};
     return t_->call(kHakiosShow, &s, sizeof(s));

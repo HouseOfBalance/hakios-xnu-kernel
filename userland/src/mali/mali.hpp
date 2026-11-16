@@ -28,6 +28,7 @@ enum Request : uint32_t {
     kGetBoOffset = 0x45,
     kMadvise = 0x48,
     kHakiosWait = 0x7d,      // HakiosMali's own: wait for a job chain by the number kSubmit gave back in jc
+    kHakiosSurface = 0x7e,   // HakiosMali's own: an IOSurface's memory as a buffer, by the surface's ID
     kHakiosShow = 0x7f,      // HakiosMali's own: a test's pixels onto the panel, as they are (no scaling), BGRA
 };
 
@@ -45,6 +46,11 @@ struct PanfrostGetParam { uint32_t param, pad; uint64_t value; };
 struct PanfrostGetBoOffset { uint32_t handle, pad; uint64_t offset; };
 struct HakiosWait { uint64_t seq; int64_t timeout_ns; };
 struct HakiosShow { uint64_t pixels; uint32_t width, height, rowBytes, pad; };
+// struct hakios_surface (HakiosMali.cpp surfaceBuffer): SURFACE the IOSurface's ID in; HANDLE back (the same while this
+// client holds the surface's buffer); SIZE the buffer's bytes, OFFSET where the pixels start, ROW_BYTES, the surface's
+// WIDTH, HEIGHT, PIXEL_FORMAT (a FourCC) and PLANES
+struct HakiosSurface { uint32_t surface, handle; uint64_t size; uint32_t offset, rowBytes, width, height, pixelFormat, planes; };
+static_assert(sizeof(HakiosSurface) == 40, "HakiosMali.cpp layout");
 
 static_assert(sizeof(PanfrostSubmit) == 40 && sizeof(PanfrostCreateBo) == 24 && sizeof(PanfrostGetParam) == 16,
               "panfrost_drm.h layout");
@@ -149,6 +155,10 @@ public:
     // until the chain is done, or TIMEOUT_US: 0, ETIMEDOUT, or another errno. Done is not "succeeded": the job
     // headers say that (their Exception Status), and the kernel resets the GPU after a chain that failed.
     int wait(const Submission& s, uint64_t timeoutUs);
+
+    // the memory of IOSurface SURFACE_ID as a buffer (the kernel holds the surface while the buffer lives) and what the
+    // kernel says of it in *info (offset, rowBytes, width, height, pixelFormat in the struct); nullptr with *why
+    std::unique_ptr<Bo> surfaceBo(uint32_t surfaceId, HakiosSurface* info, std::string* why);
 
     // PIXELS (B G R A, ROW_BYTES apart) onto the panel's top left corner, until the window server's next frame
     int show(const void* pixels, uint32_t width, uint32_t height, uint32_t rowBytes);
