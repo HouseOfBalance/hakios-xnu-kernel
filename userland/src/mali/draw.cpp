@@ -380,7 +380,20 @@ std::unique_ptr<ComputePass> ComputePass::makeWith(Device& device, const hm_kern
                              static_cast<uint32_t>(ubos[i].second.size()));
     }
     for (uint32_t i = 0; i < k.push_count; i++) memcpy(cpu + kPush + 4 * i, source(k.push[i]), 4);
-    hm_v7_local_storage(cpu + kLocalStorage);
+    if (k.wls_size != 0) {
+        // panfrost_emit_shared_memory: pan_wls_adjust_size(size) * the instances (the grid to powers of two,
+        // panfrost_choose_wls_instance_count) * the core id range
+        auto pow2 = [](unsigned v) { unsigned p = 1; while (p < v) p <<= 1; return p; };
+        unsigned size = pow2(k.wls_size < 128 ? 128 : k.wls_size);
+        unsigned instances = pow2(groups[0]) * pow2(groups[1]) * pow2(groups[2]);
+        uint64_t bytes = static_cast<uint64_t>(size) * instances * device.coreIdRange();
+        if (bytes > (64u << 20)) return no("more than 64 MB of workgroup storage");
+        pass->wls_ = device.gpu().newBo(bytes, why);
+        if (!pass->wls_) return nullptr;
+        hm_v7_local_storage_wls(cpu + kLocalStorage, pass->wls_->gpu(), size, instances);
+    } else {
+        hm_v7_local_storage(cpu + kLocalStorage);
+    }
     struct hm_v7_draw d = {};
     d.state = gpu + kRsd;
     d.thread_storage = gpu + kLocalStorage;
@@ -393,6 +406,7 @@ std::unique_ptr<ComputePass> ComputePass::makeWith(Device& device, const hm_kern
 int ComputePass::submit(const std::vector<const Bo*>& uses, Submission* out) {
     std::vector<const Bo*> all = uses;
     all.push_back(cmd_.get());
+    if (wls_) all.push_back(wls_.get());
     return device_.gpu().submit(cmd_->gpu() + kJob, false, all, out);
 }
 

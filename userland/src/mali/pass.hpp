@@ -30,6 +30,9 @@ public:
     // half the tile buffer, as Panfrost budgets it (panfrost_query_optimal_tib_size)
     uint32_t tileBufferBudget() const { return model_ ? model_->tileBuffer / 2 : kG52TileBufferBudget; }
     unsigned tilerLevels() const { return tilerLevels_; }
+    // the highest shader core index plus one (panfrost_query_core_count: the last bit of SHADER_PRESENT), what workgroup
+    // storage is multiplied by
+    unsigned coreIdRange() const { return coreIdRange_; }
     const Bo& samplePositions() const { return *samplePositions_; }
     // the tiler heap, made the first time it is asked for (a frame with a Tiler Context names it); nullptr with *why
     const Bo* tilerHeap(std::string* why);
@@ -39,6 +42,7 @@ private:
     uint64_t productId_ = 0;
     const Model* model_ = nullptr;
     unsigned tilerLevels_ = 0;
+    unsigned coreIdRange_ = 1;
     std::unique_ptr<Bo> samplePositions_, tilerHeap_;
 };
 

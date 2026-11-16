@@ -119,18 +119,21 @@ main(int argc, char **argv)
 	program("tri");
 	program("color");
 	program("tex");
-	if (hm_compile_kernel("fill", GPU_ID, &k, why, sizeof(why)) != 0) {
-		fprintf(stderr, "bishaders: %s\n", why);
-		return 1;
+	for (const char **name = (const char *[]){ "fill", "share", NULL }; *name; name++) {
+		if (hm_compile_kernel(*name, GPU_ID, &k, why, sizeof(why)) != 0) {
+			fprintf(stderr, "bishaders: %s\n", why);
+			return 1;
+		}
+		fprintf(out, "\n/* --- %s: compute shader %u bytes, %u work registers, %u bytes of threadgroup memory --- */\n",
+		    *name, k.size, k.work_registers, k.wls_size);
+		words(*name, "cs_code", k.code, k.size / 4);
+		words(*name, "cs_rsd", k.rsd, 16);
+		pushes(*name, "cs_push", k.push, k.push_count);
+		fprintf(out, "static const struct hm_kernel hm_%s = { \"%s\", hm_%s_cs_code, %u, hm_%s_cs_rsd, hm_%s_cs_push, "
+		    "%u, { %u, %u, %u }, %u, %u, %u, %u };\n", *name, *name, *name, k.size, *name, *name, k.push_count, k.local[0],
+		    k.local[1], k.local[2], k.tls_size, k.work_registers, k.ubo_count, k.wls_size);
+		hm_kernel_free(&k);
 	}
-	fprintf(out, "\n/* --- fill: compute shader %u bytes, %u work registers --- */\n", k.size, k.work_registers);
-	words("fill", "cs_code", k.code, k.size / 4);
-	words("fill", "cs_rsd", k.rsd, 16);
-	pushes("fill", "cs_push", k.push, k.push_count);
-	fprintf(out, "static const struct hm_kernel hm_fill = { \"fill\", hm_fill_cs_code, %u, hm_fill_cs_rsd, hm_fill_cs_push, "
-	    "%u, { %u, %u, %u }, %u, %u, %u };\n", k.size, k.push_count, k.local[0], k.local[1], k.local[2], k.tls_size,
-	    k.work_registers, k.ubo_count);
-	hm_kernel_free(&k);
 	fprintf(out, "\n/* textures: RGBA8Unorm's format word and the identity swizzle */\n"
 	    "static const uint32_t hm_texture_format_rgba8 = 0x%08x;\nstatic const uint32_t hm_texture_swizzle_identity = 0x%03x;\n",
 	    hm_compile_texture_format_rgba8(), hm_compile_swizzle_identity());

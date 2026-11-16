@@ -432,6 +432,17 @@ hm_v7_sampler(void *out, bool nearest)
 	}
 }
 
+void
+hm_v7_local_storage_wls(void *out, uint64_t pointer, unsigned wls_size, unsigned instances)
+{
+	/* GENX(pan_emit_tls), info->wls.size != 0 */
+	pan_cast_and_pack(out, LOCAL_STORAGE, cfg) {
+		cfg.wls_base_pointer = pointer;
+		cfg.wls_instances = instances;
+		cfg.wls_size_scale = util_logbase2(wls_size) + 1;
+	}
+}
+
 uint32_t
 hm_v7_constant_format(void)
 {

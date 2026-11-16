@@ -108,6 +108,7 @@ private:
     ComputePass(Device& device) : device_(device) {}
     Device& device_;
     std::unique_ptr<Bo> cmd_;
+    std::unique_ptr<Bo> wls_;        // the workgroup storage, when the kernel has threadgroup memory
 };
 
 }  // namespace hakios::mali

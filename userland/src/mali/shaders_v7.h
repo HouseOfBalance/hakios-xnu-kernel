@@ -230,7 +230,7 @@ static const struct hm_program hm_tex = {
 	hm_tex_fs_rsd_depth, 32, 32, hm_tex_blend_off_bgra, hm_tex_blend_over_bgra,
 };
 
-/* --- fill: compute shader 128 bytes, 32 work registers --- */
+/* --- fill: compute shader 128 bytes, 32 work registers, 0 bytes of threadgroup memory --- */
 static const uint32_t hm_fill_cs_code[32] = {
 	0xc0004229, 0x9e074043, 0x00076593, 0x01800000, 0xc0004221, 0x8b88c00b, 0x0c0f6591, 0x58c04002,
 	0x10008001, 0x80cb1828, 0xe0371813, 0xb401c620, 0x00418063, 0x80cb182c, 0x0406caf3, 0x58c2e000,
@@ -244,7 +244,28 @@ static const uint32_t hm_fill_cs_rsd[16] = {
 static const struct hm_push_word hm_fill_cs_push[3] = {
 	{ 0, 0 }, { 0, 4 }, { 0, 8 },
 };
-static const struct hm_kernel hm_fill = { "fill", hm_fill_cs_code, 128, hm_fill_cs_rsd, hm_fill_cs_push, 3, { 16, 1, 1 }, 0, 32, 1 };
+static const struct hm_kernel hm_fill = { "fill", hm_fill_cs_code, 128, hm_fill_cs_rsd, hm_fill_cs_push, 3, { 16, 1, 1 }, 0, 32, 1, 0 };
+
+/* --- share: compute shader 288 bytes, 32 work registers, 256 bytes of threadgroup memory --- */
+static const uint32_t hm_share_cs_code[72] = {
+	0x70000029, 0x80cb1843, 0xc0073323, 0x4181f838, 0x00005025, 0x8b8af82c, 0x0a0718ad, 0x56014002,
+	0x00000004, 0x00000020, 0x62e00000, 0x60002ca3, 0x00000073, 0x00000010, 0x00000000, 0x00000000,
+	0x0000422d, 0x8b8accf2, 0xc007180d, 0x2a3c0808, 0x00410025, 0x80cb1828, 0x02175813, 0x47c2e000,
+	0x00000044, 0x00000060, 0x62e00000, 0xc0017874, 0x0000402d, 0x80cb1840, 0xc00718a3, 0x31400808,
+	0x00000003, 0x80cb185c, 0x0000329f, 0x60000000, 0x00000071, 0x00000fc0, 0x00000000, 0x00000000,
+	0x90004229, 0x9e074043, 0x00076593, 0x01800000, 0x00004225, 0x8b88cd82, 0x040718c1, 0x58c16000,
+	0x00418001, 0x80cb182c, 0xe036caf3, 0xac01c634, 0x00008065, 0x80cb185c, 0x000718bf, 0x58c2c080,
+	0x00000046, 0x00003e80, 0xe0300000, 0x60002c78, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+};
+static const uint32_t hm_share_cs_rsd[16] = {
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00002001, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00008280, 0x00000000, 0x00000000, 0x00000000,
+};
+static const struct hm_push_word hm_share_cs_push[2] = {
+	{ 0, 0 }, { 0, 4 },
+};
+static const struct hm_kernel hm_share = { "share", hm_share_cs_code, 288, hm_share_cs_rsd, hm_share_cs_push, 2, { 64, 1, 1 }, 0, 32, 1, 256 };
 
 /* textures: RGBA8Unorm's format word and the identity swizzle */
 static const uint32_t hm_texture_format_rgba8 = 0x000bb000;

@@ -38,6 +38,10 @@ int Device::init(std::string* why) {
         if (why) *why = "TILER_FEATURES says " + std::to_string(tilerLevels_) + " hierarchy levels (Panfrost asserts >= 2)";
         return -1;
     }
+    uint64_t cores = 0;
+    if (gpu_.param(kParamShaderPresent, &cores) == 0 && cores != 0) {
+        coreIdRange_ = 64 - static_cast<unsigned>(__builtin_clzll(cores));
+    }
     samplePositions_ = gpu_.newBo(hm_v7_sizes()->sample_positions, why);
     if (!samplePositions_) {
         return -1;

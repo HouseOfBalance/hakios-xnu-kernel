@@ -404,9 +404,65 @@ hm_compile_program(const char *name, unsigned gpu_id, struct hm_program *out, ch
 	return -1;
 }
 
+/* share: threadgroup memory and a barrier -- 64 threads a workgroup, each writes s[lid] = lid * 2 + 1, all wait, each
+ * reads s[63 - lid] and writes out[gid] = that + 1000 * the workgroup's x; the buffer's address pushed from uniform
+ * buffer 0 (words 0 and 1) */
+static int
+share_kernel(unsigned gpu_id, struct hm_kernel *out)
+{
+	nir_builder c = shader(MESA_SHADER_COMPUTE, "share_cs");
+	c.shader->info.workgroup_size[0] = 64;
+	c.shader->info.workgroup_size[1] = 1;
+	c.shader->info.workgroup_size[2] = 1;
+	c.shader->info.num_ubos = 1;
+	c.shader->info.first_ubo_is_default_ubo = true;
+	c.shader->info.shared_size = 256;
+	nir_def *lid = nir_channel(&c, nir_load_local_invocation_id(&c), 0);
+	nir_def *wg = nir_channel(&c, nir_load_workgroup_id(&c), 0);
+	nir_def *gid = nir_iadd(&c, nir_imul_imm(&c, wg, 64), lid);
+	nir_store_shared(&c, nir_iadd_imm(&c, nir_imul_imm(&c, lid, 2), 1), nir_imul_imm(&c, lid, 4), .base = 0,
+	    .align_mul = 4);
+	nir_barrier(&c, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_WORKGROUP,
+	    .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_shared);
+	nir_def *other = nir_load_shared(&c, 1, 32, nir_imul_imm(&c, nir_isub(&c, nir_imm_int(&c, 63), lid), 4), .base = 0,
+	    .align_mul = 4);
+	nir_def *ubo = nir_load_ubo(&c, 2, 32, nir_imm_int(&c, 0), nir_imm_int(&c, 0), .align_mul = 16, .align_offset = 0,
+	    .range_base = 0, .range = 8);
+	nir_def *addr = nir_pack_64_2x32(&c, ubo);
+	nir_store_global(&c, nir_iadd(&c, addr, nir_u2u64(&c, nir_imul_imm(&c, gid, 4))), 4,
+	    nir_iadd(&c, other, nir_imul_imm(&c, wg, 1000)), 0x1);
+	NIR_PASS(_, c.shader, nir_lower_compute_system_values, NULL);
+
+	struct util_dynarray bin;
+	struct pan_shader_info cs;
+	compile(c.shader, gpu_id, &bin, &cs);
+	struct mali_renderer_state_packed rsd;
+	pan_pack(&rsd, RENDERER_STATE, cfg) {
+		pan_shader_prepare_rsd(&cs, 0, &cfg);
+	}
+	memset(out, 0, sizeof(*out));
+	out->name = "share";
+	out->code = copy(bin.data, bin.size);
+	out->size = bin.size;
+	out->rsd = copy(rsd.opaque, 64);
+	out->push = push_table(&cs);
+	out->push_count = cs.push.count;
+	out->local[0] = 64, out->local[1] = 1, out->local[2] = 1;
+	out->tls_size = cs.tls_size;
+	out->work_registers = cs.work_reg_count;
+	out->ubo_count = cs.ubo_count;
+	out->wls_size = cs.wls_size;
+	util_dynarray_fini(&bin);
+	ralloc_free(c.shader);
+	return 0;
+}
+
 int
 hm_compile_kernel(const char *name, unsigned gpu_id, struct hm_kernel *out, char *why, size_t why_size)
 {
+	if (strcmp(name, "share") == 0) {
+		return share_kernel(gpu_id, out);
+	}
 	if (strcmp(name, "fill") != 0) {
 		snprintf(why, why_size, "no kernel %s", name);
 		return -1;
@@ -447,6 +503,7 @@ hm_compile_kernel(const char *name, unsigned gpu_id, struct hm_kernel *out, char
 		out->tls_size = cs.tls_size;
 		out->work_registers = cs.work_reg_count;
 		out->ubo_count = cs.ubo_count;
+		out->wls_size = cs.wls_size;
 		util_dynarray_fini(&bin);
 		ralloc_free(c.shader);
 	}
@@ -633,18 +690,13 @@ hm_compile_air_kernel(const void *lib, size_t size, const char *entry, unsigned 
 		if (r->kind == AIR_RESOURCE_CONSTANT_BUFFER && r->index < HM_AIR_SYSVAL_UBO) {
 			*constant_buffers |= 1u << r->index;
 		} else if (r->kind == AIR_RESOURCE_TEXTURE || r->kind == AIR_RESOURCE_IMAGE || r->kind == AIR_RESOURCE_SAMPLER ||
-		    r->kind == AIR_RESOURCE_THREADGROUP_BUFFER || (r->kind == AIR_RESOURCE_CONSTANT_BUFFER && !r->unused)) {
+		    (r->kind == AIR_RESOURCE_CONSTANT_BUFFER && !r->unused)) {
 			if (r->kind != AIR_RESOURCE_CONSTANT_BUFFER) {
-				snprintf(why, why_size, "%s binds a texture, image, sampler or threadgroup memory (not served yet)", entry);
+				snprintf(why, why_size, "%s binds a texture, image or sampler (not served yet)", entry);
 				ralloc_free(mem);
 				return -1;
 			}
 		}
-	}
-	if (info.threadgroup_bytes != 0) {
-		snprintf(why, why_size, "%s uses %u bytes of threadgroup memory (not served yet)", entry, info.threadgroup_bytes);
-		ralloc_free(mem);
-		return -1;
 	}
 	if (getenv("HM_PRINT_NIR") != NULL) {
 		nir_print_shader(s, stderr);
@@ -686,6 +738,7 @@ hm_compile_air_kernel(const void *lib, size_t size, const char *entry, unsigned 
 	out->tls_size = cs.tls_size;
 	out->work_registers = cs.work_reg_count;
 	out->ubo_count = cs.ubo_count;
+	out->wls_size = cs.wls_size;
 	util_dynarray_fini(&bin);
 	ralloc_free(mem);
 	return 0;

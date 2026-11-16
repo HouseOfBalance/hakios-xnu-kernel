@@ -142,6 +142,10 @@ void hm_v7_surface_with_stride(void *out, uint64_t pointer, int32_t row_stride, 
 void hm_v7_sampler(void *out, bool nearest);
 /* Local Storage with no thread or workgroup storage (GENX(pan_emit_tls) with both sizes 0) */
 void hm_v7_local_storage(void *out);
+/* ... with workgroup storage (threadgroup memory): WLS_SIZE bytes a workgroup (pan_wls_adjust_size: a power of two of
+ * at least 128), INSTANCES of them (pan_wls_instances: the grid's sizes to powers of two, multiplied), at POINTER
+ * (4 KB aligned, inside one 4 GB range) */
+void hm_v7_local_storage_wls(void *out, uint64_t pointer, unsigned wls_size, unsigned instances);
 
 struct hm_v7_draw {
 	uint64_t state;                   /* the stage's Renderer State (followed by its Blend descriptors: fragment) */

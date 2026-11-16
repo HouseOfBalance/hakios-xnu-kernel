@@ -918,6 +918,37 @@ bool runAppleKernels(Device& device) {
 #endif
 }
 
+// Threadgroup memory and a barrier: the share kernel, 4 threadgroups of 64; out[64 wg + lid] must be what thread 63 - lid
+// of the same group wrote before the barrier, (63 - lid) * 2 + 1, plus 1000 wg
+bool runShared(Device& device) {
+    const char* stage = "shared";
+    std::string why;
+    auto out = device.gpu().newBo(4096, &why);
+    if (!out) return verdict(stage, false, why);
+    memset(out->cpu(), kCanary, out->size());
+    uint32_t uniforms[2] = {static_cast<uint32_t>(out->gpu()), static_cast<uint32_t>(out->gpu() >> 32)};
+    const unsigned groups[3] = {4, 1, 1};
+    auto pass = ComputePass::make(device, hm_share, groups, uniforms, sizeof(uniforms), &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission s;
+    int e = pass->submit({out.get()}, &s);
+    if (e == 0) e = device.gpu().wait(s, 2000000);
+    const uint32_t* w = reinterpret_cast<const uint32_t*>(out->cpu());
+    unsigned right = 0;
+    for (unsigned g = 0; g < 4; g++)
+        for (unsigned l = 0; l < 64; l++) right += w[64 * g + l] == (63 - l) * 2 + 1 + 1000 * g;
+    char detail[200];
+    snprintf(detail, sizeof(detail), "job %s; %u of 256 words read across the barrier right (word 0 %u, word 255 %u), "
+             "%u bytes of threadgroup memory", statusText(pass->status()).c_str(), right, w[0], w[255], hm_share.wls_size);
+    if (gFake) {
+        bool job = e == 0 && (pass->status() & 0xff) == 1;
+        say("%s MEASURE (the fake GPU runs no shader: %s) %s", stage, job ? "job accepted" : "job REFUSED", detail);
+        if (!job) gFailed++;
+        return job;
+    }
+    return verdict(stage, e == 0 && (pass->status() & 0xff) == 1 && right == 256, detail);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1225,6 +1256,7 @@ int main(int argc, char** argv) {
         runAppleKernels(device);
         runTexture(device);
         runCompute(device);
+        runShared(device);
         runDepth(device, false);
         runDepth(device, true);
         runCompiler(device);
