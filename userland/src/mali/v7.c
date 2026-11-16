@@ -386,6 +386,67 @@ hm_v7_viewport(void *out, unsigned min_x, unsigned min_y, unsigned max_x, unsign
 }
 
 void
+hm_v7_texture_2d(void *out, uint32_t format, uint32_t swizzle, uint32_t width, uint32_t height, uint64_t surfaces)
+{
+	pan_cast_and_pack(out, TEXTURE, cfg) {
+		cfg.dimension = MALI_TEXTURE_DIMENSION_2D;
+		cfg.format = format;
+		cfg.width = width;
+		cfg.height = height;
+		cfg.sample_count = 1;
+		cfg.swizzle = swizzle;
+		cfg.texel_ordering = MALI_TEXTURE_LAYOUT_LINEAR;
+		cfg.levels = 1;
+		cfg.array_size = 1;
+		cfg.surfaces = surfaces;
+		cfg.minimum_lod = 0;
+		cfg.maximum_lod = 0;            /* cfg.levels - 1 */
+	}
+}
+
+void
+hm_v7_surface_with_stride(void *out, uint64_t pointer, int32_t row_stride, int32_t surface_stride)
+{
+	pan_cast_and_pack(out, SURFACE_WITH_STRIDE, cfg) {
+		cfg.pointer = pointer;
+		cfg.row_stride = row_stride;
+		cfg.surface_stride = surface_stride;
+	}
+}
+
+void
+hm_v7_sampler(void *out, bool nearest)
+{
+	pan_cast_and_pack(out, SAMPLER, cfg) {
+		cfg.magnify_nearest = nearest;
+		cfg.minify_nearest = nearest;
+		cfg.mipmap_mode = MALI_MIPMAP_MODE_NONE;
+		cfg.normalized_coordinates = true;
+		cfg.minimum_lod = 0;
+		cfg.maximum_lod = 0;
+		cfg.wrap_mode_s = MALI_WRAP_MODE_CLAMP_TO_EDGE;
+		cfg.wrap_mode_t = MALI_WRAP_MODE_CLAMP_TO_EDGE;
+		cfg.wrap_mode_r = MALI_WRAP_MODE_CLAMP_TO_EDGE;
+	}
+}
+
+uint32_t
+hm_v7_constant_format(void)
+{
+	return MALI_CONSTANT << 12;
+}
+
+void
+hm_v7_uniform_buffer(void *out, uint64_t pointer, uint32_t size)
+{
+	/* panfrost_emit_ubo: entries of 16 bytes, rounded up */
+	pan_cast_and_pack(out, UNIFORM_BUFFER, cfg) {
+		cfg.pointer = pointer;
+		cfg.entries = (size + 15) / 16;
+	}
+}
+
+void
 hm_v7_local_storage(void *out)
 {
 	pan_cast_and_pack(out, LOCAL_STORAGE, cfg) {
@@ -425,6 +486,10 @@ hm_v7_vertex_job(void *job, unsigned index, uint64_t next, unsigned vertex_count
 		cfg.thread_storage = draw->thread_storage;
 		cfg.offset_start = 0;
 		cfg.instance_size = 1;
+		cfg.push_uniforms = draw->push_uniforms;          /* jm_emit_draw_descs */
+		cfg.uniform_buffers = draw->uniform_buffers;
+		cfg.textures = draw->textures;
+		cfg.samplers = draw->samplers;
 	}
 	pan_section_pack(job, COMPUTE_JOB, HEADER, cfg) {
 		cfg.type = MALI_JOB_TYPE_VERTEX;
@@ -474,6 +539,10 @@ hm_v7_tiler_job(void *job, unsigned index, unsigned dependency, uint64_t next, u
 		cfg.thread_storage = draw->thread_storage;
 		cfg.offset_start = 0;
 		cfg.instance_size = 1;
+		cfg.push_uniforms = draw->push_uniforms;
+		cfg.uniform_buffers = draw->uniform_buffers;
+		cfg.textures = draw->textures;
+		cfg.samplers = draw->samplers;
 	}
 	pan_section_pack(job, TILER_JOB, HEADER, cfg) {
 		cfg.type = MALI_JOB_TYPE_TILER;
@@ -677,6 +746,8 @@ hm_v7_read_draw(const void *job, bool tiler, struct hm_v7_draw_read *out, const 
 		out->draw.position = d.position;
 		out->draw.viewport = d.viewport;
 		out->draw.thread_storage = d.thread_storage;
+		out->draw.push_uniforms = d.push_uniforms;
+		out->draw.uniform_buffers = d.uniform_buffers;
 	} else {
 		pan_section_unpack(job, COMPUTE_JOB, INVOCATION, inv);
 		pan_section_unpack(job, COMPUTE_JOB, DRAW, d);
@@ -689,6 +760,8 @@ hm_v7_read_draw(const void *job, bool tiler, struct hm_v7_draw_read *out, const 
 		out->draw.position = d.position;
 		out->draw.viewport = d.viewport;
 		out->draw.thread_storage = d.thread_storage;
+		out->draw.push_uniforms = d.push_uniforms;
+		out->draw.uniform_buffers = d.uniform_buffers;
 	}
 	return said(why);
 }

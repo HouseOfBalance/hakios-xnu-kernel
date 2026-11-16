@@ -126,6 +126,18 @@ uint32_t hm_v7_position_format(void);
 /* A Viewport (panfrost_emit_viewport, v7): the scissor [MIN, MAX] inclusive in pixels, depth [MIN_Z, MAX_Z]; the
  * x and y limits v7.xml's defaults (-inf, +inf) */
 void hm_v7_viewport(void *out, unsigned min_x, unsigned min_y, unsigned max_x, unsigned max_y, float min_z, float max_z);
+/* a varying record no consumer reads (panfrost_emit_varying: MALI_CONSTANT << 12, buffer 0) */
+uint32_t hm_v7_constant_format(void);
+/* A Uniform Buffer table entry (panfrost_emit_ubo): SIZE bytes at POINTER, 16-byte aligned */
+void hm_v7_uniform_buffer(void *out, uint64_t pointer, uint32_t size);
+/* A 2D texture of one level, one layer, one sample, linear (GENX(panfrost_new_texture) on v7): FORMAT the Mali format
+ * word (Mesa's table), SWIZZLE (panfrost_translate_swizzle_4), the surfaces at SURFACES (hm_v7_surface_with_stride) */
+void hm_v7_texture_2d(void *out, uint32_t format, uint32_t swizzle, uint32_t width, uint32_t height, uint64_t surfaces);
+/* The surface a texture names (panfrost_emit_surface_with_stride): the first texel, row and surface strides */
+void hm_v7_surface_with_stride(void *out, uint64_t pointer, int32_t row_stride, int32_t surface_stride);
+/* A Sampler (panfrost_create_sampler_state on v7): NEAREST or linear filtering both ways, no mipmapping (levels 0..0),
+ * every wrap mode Clamp to Edge, normalized coordinates */
+void hm_v7_sampler(void *out, bool nearest);
 /* Local Storage with no thread or workgroup storage (GENX(pan_emit_tls) with both sizes 0) */
 void hm_v7_local_storage(void *out);
 
@@ -136,6 +148,7 @@ struct hm_v7_draw {
 	uint64_t position;                /* the tiler's: the position varying buffer */
 	uint64_t viewport;                /* the tiler's */
 	uint64_t thread_storage;
+	uint64_t push_uniforms, uniform_buffers, textures, samplers;
 };
 /* A vertex job: Compute Job's layout with type Vertex (jm_emit_vertex_job), VERTEX_COUNT vertices of one instance
  * (jm_launch_draw's Invocation for instance_count 1), Job Task Split 5 */

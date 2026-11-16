@@ -1,0 +1,60 @@
+// A draw of any program of shaders_v7.h (program.h) into a 64x64 RGBA8Unorm target, as Panfrost submits a batch with
+// one draw on v7 without IDVS: the vertex job and the tiler job that depends on it (slot 1), then the Fragment job
+// (slot 0) over the frame whose Tiler Context they filled. What the draw needs at draw time is written here through
+// Mesa's packers (v7.h):
+//   - the vertex attributes, one buffer each, of the program's formats (panfrost_emit_vertex_data);
+//   - the varyings linked as panfrost_emit_varying_descs links them: the general buffer laid out by the fragment
+//     shader's inputs (pan_assign_varyings, in the vertex shader's order, the consumer's format and size), the position
+//     buffer (MALI_SNAP_4), a record of MALI_CONSTANT for an output nobody reads;
+//   - the words each stage pushes, copied out of the uniform data by the program's map (panfrost_emit_const_buf), and
+//     the uniform buffer table naming the same data (panfrost_emit_ubo);
+//   - the Renderer States with the shaders' addresses merged in, the target's Blend descriptor (off, or source-over).
+#pragma once
+
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <string>
+
+#include "mali.hpp"
+#include "pass.hpp"
+#include "program.h"
+
+namespace hakios::mali {
+
+struct DrawInput {
+    // per attribute of the program, VERTEX_COUNT of its elements (four floats each for the programs here)
+    const float* attributes[4] = {nullptr, nullptr, nullptr, nullptr};
+    uint32_t vertexCount = 3;
+    // uniform buffer 0: what the program's pushed words are read from (bytes)
+    const void* uniforms = nullptr;
+    uint32_t uniformSize = 0;
+    float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    bool blendOver = false;     // Metal's source-over, premultiplied: One, OneMinusSourceAlpha
+};
+
+class DrawPass {
+public:
+    static std::unique_ptr<DrawPass> make(Device& device, const Target& target, const hm_program& program,
+                                          const DrawInput& input, std::string* why);
+    int submit(Submission* draw, Submission* frame);
+    uint32_t vertexStatus() const;
+    uint32_t tilerStatus() const;
+    uint32_t fragmentStatus() const;
+    void dump(FILE* fp) const;
+
+    static constexpr uint32_t kVertexJob = 0x000, kTilerJob = 0x100, kFragmentJob = 0x200, kFbd = 0x240,
+        kHeapDesc = 0x300, kTilerCtx = 0x340, kVsRsd = 0x400, kFsRsd = 0x440, kAttributes = 0x4c0,
+        kAttributeBuffers = 0x500, kVaryings = 0x5c0, kVaryingBuffers = 0x640, kViewport = 0x680,
+        kLocalStorage = 0x6c0, kUbos = 0x700, kVsPush = 0x740, kFsPush = 0x7c0, kVertices = 0x800,
+        kGeneral = 0xc00, kPositions = 0xe00, kVsCode = 0x1000, kFsCode = 0x1800, kUniforms = 0x2000, kSize = 0x4000;
+
+private:
+    DrawPass(Device& device) : device_(device) {}
+    Device& device_;
+    Target target_;
+    std::unique_ptr<Bo> cmd_;
+    const Bo* heap_ = nullptr;
+};
+
+}  // namespace hakios::mali

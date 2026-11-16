@@ -30,7 +30,9 @@
 
 #include "fake_gpu.hpp"
 #include "mali.hpp"
+#include "draw.hpp"
 #include "pass.hpp"
+#include "shaders_v7.h"
 
 using namespace hakios::mali;
 
@@ -187,6 +189,99 @@ bool runClear(Device& device, const ClearCase& c) {
     if (!ok || gDump) {
         pass->dump(stdout);
     }
+    return ok;
+}
+
+// One DrawPass of the color program (a varying from the vertices, a uniform tint pushed from buffer 0), judged pixel by
+// pixel: more than a pixel inside the triangle the colour interpolated in screen space (w is 1) times the tint, through
+// the blend when there is one; more than a pixel outside the clear; within 2/255 a channel (8-bit rounding, dithering)
+bool runColorDraw(Device& device, const char* stage, const float colors[12], const float tint[4], const float clear[4],
+                  bool over) {
+    std::string why;
+    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    if (!bo) return verdict(stage, false, why);
+    memset(bo->cpu(), kCanary, bo->size());
+    Target t;
+    t.bo = bo.get();
+    t.width = t.height = 64;
+    t.rowBytes = 256;
+    const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
+    DrawInput in;
+    in.attributes[0] = positions;
+    in.attributes[1] = colors;
+    in.uniforms = tint;
+    in.uniformSize = 16;
+    memcpy(in.clear, clear, sizeof(in.clear));
+    in.blendOver = over;
+    auto pass = DrawPass::make(device, t, hm_color, in, &why);
+    if (!pass) return verdict(stage, false, "refused: " + why);
+    Submission ds, fs;
+    uint64_t t0 = device.gpu().transport().nowUs();
+    int e = pass->submit(&ds, &fs);
+    if (e == 0) e = device.gpu().wait(fs, 2000000);
+    uint64_t us = device.gpu().transport().nowUs() - t0;
+    const float vx[3] = {16, 48, 32}, vy[3] = {16, 16, 48};
+    float area = (vx[1] - vx[0]) * (vy[2] - vy[0]) - (vx[2] - vx[0]) * (vy[1] - vy[0]);
+    unsigned inRight = 0, inTotal = 0, outRight = 0, outTotal = 0, worst = 0;
+    uint8_t clearPx[4];
+    for (int c = 0; c < 4; c++) clearPx[c] = unorm8(clear[c]);
+    char firstBad[120] = "";
+    for (uint32_t y = 0; y < 64; y++) {
+        for (uint32_t x = 0; x < 64; x++) {
+            float px = x + 0.5f, py = y + 0.5f, b[3], d = 1e9f;
+            for (int k = 0; k < 3; k++) {
+                int i = (k + 1) % 3, j = (k + 2) % 3;
+                b[k] = ((vx[j] - vx[i]) * (py - vy[i]) - (px - vx[i]) * (vy[j] - vy[i])) / area;
+                float ex = vx[j] - vx[i], ey = vy[j] - vy[i];
+                float dist = std::fabs(b[k] * area) / std::sqrt(ex * ex + ey * ey);
+                d = dist < d ? dist : d;
+            }
+            bool inside = b[0] > 0 && b[1] > 0 && b[2] > 0;
+            if (d <= 1.0f) continue;
+            const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
+            uint8_t want[4];
+            if (inside) {
+                float src[4];
+                for (int c = 0; c < 4; c++) src[c] = (b[0] * colors[c] + b[1] * colors[4 + c] + b[2] * colors[8 + c]) * tint[c];
+                for (int c = 0; c < 4; c++) {
+                    float v = over ? src[c] + clear[c] * (1.0f - src[3]) : src[c];
+                    want[c] = unorm8(v);
+                }
+            } else {
+                memcpy(want, clearPx, 4);
+            }
+            unsigned diff = 0;
+            for (int c = 0; c < 4; c++) {
+                unsigned dd = q[c] > want[c] ? q[c] - want[c] : want[c] - q[c];
+                diff = dd > diff ? dd : diff;
+            }
+            bool good = diff <= 2;
+            worst = inside && diff > worst ? diff : worst;
+            (inside ? inTotal : outTotal)++;
+            (inside ? inRight : outRight) += good;
+            if (!good && firstBad[0] == 0)
+                snprintf(firstBad, sizeof(firstBad), "; first wrong (%u,%u): %02x%02x%02x%02x, want %02x%02x%02x%02x", x, y,
+                         q[0], q[1], q[2], q[3], want[0], want[1], want[2], want[3]);
+        }
+    }
+    const uint8_t* mid = bo->cpu() + 32 * 256 + 4 * 32;
+    char detail[360];
+    snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s%s%s; inside %u of %u right (largest difference %u), "
+             "outside %u of %u the clear; pixel (32,32) %02x%02x%02x%02x; %llu us%s",
+             statusText(pass->vertexStatus()).c_str(), statusText(pass->tilerStatus()).c_str(),
+             statusText(pass->fragmentStatus()).c_str(), e ? ", " : "", e ? strerror(e) : "", inRight, inTotal, worst,
+             outRight, outTotal, mid[0], mid[1], mid[2], mid[3], (unsigned long long)us, firstBad);
+    bool jobs = e == 0 && (pass->vertexStatus() & 0xff) == 1 && (pass->tilerStatus() & 0xff) == 1 &&
+                (pass->fragmentStatus() & 0xff) == 1;
+    if (gFake) {
+        say("%s MEASURE (the fake GPU checks the jobs, does not rasterize: %s) %s", stage,
+            jobs ? "jobs accepted" : "jobs REFUSED", detail);
+        if (!jobs) gFailed++;
+        return jobs;
+    }
+    bool ok = jobs && inRight == inTotal && outRight == outTotal;
+    verdict(stage, ok, detail);
+    if (!ok || gDump) pass->dump(stdout);
     return ok;
 }
 
@@ -473,6 +568,17 @@ int main(int argc, char** argv) {
                 if (!ok || gDump) tri->dump(stdout);
             }
         }
+    }
+
+    // the color program (draw.hpp, shaders_v7.h): a varying, a pushed uniform, blending
+    if (gShow == 0) {
+        const float rgb[12] = {1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1};
+        const float white[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+        const float one[4] = {1, 1, 1, 1}, tint[4] = {0.5f, 1.0f, 0.25f, 1.0f}, half[4] = {0.5f, 0.5f, 0.5f, 0.5f};
+        const float black[4] = {0, 0, 0, 1}, blue[4] = {0, 0, 1, 1};
+        runColorDraw(device, "varyings", rgb, one, black, false);
+        runColorDraw(device, "uniform", rgb, tint, black, false);
+        runColorDraw(device, "blend", white, half, blue, true);
     }
 
     // the time of a submission and its wait, twenty clears of 64x64

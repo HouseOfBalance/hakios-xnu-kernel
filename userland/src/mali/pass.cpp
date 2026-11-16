@@ -199,11 +199,11 @@ std::unique_ptr<TrianglePass> TrianglePass::make(Device& device, const Target& t
     rsd[0] |= static_cast<uint32_t>(gpu + kFsCode);
     rsd[1] |= static_cast<uint32_t>((gpu + kFsCode) >> 32);
     memcpy(cpu + kFsRsd, rsd, sizeof(rsd));
-    memcpy(cpu + kFsRsd + hm_v7_sizes()->renderer_state, hm_tri_fs_blend, sizeof(hm_tri_fs_blend));
+    memcpy(cpu + kFsRsd + hm_v7_sizes()->renderer_state, hm_tri_blend_off, 16);
 
     // the vertices: attribute 0 from buffer 0, four floats a vertex (panfrost_emit_vertex_data), and the table's end
     memcpy(cpu + kVertices, positions, 12 * sizeof(float));
-    hm_v7_attribute(cpu + kAttribute, 0, hm_tri_attribute_format, 0, true);
+    hm_v7_attribute(cpu + kAttribute, 0, hm_tri_attribute_formats[0], 0, true);
     hm_v7_attribute_buffer(cpu + kAttributeBuffers, gpu + kVertices, 16, 48);
     hm_v7_attribute_buffer(cpu + kAttributeBuffers + 16, 0, 0, 0);
     // the varyings (panfrost_emit_varying_descriptor): buffers GENERAL (empty: no varying but the position) and

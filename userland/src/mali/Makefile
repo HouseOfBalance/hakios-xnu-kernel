@@ -18,7 +18,7 @@ GEN      = $(OUT)/gen/genxml/v7_pack.h
 V7FLAGS  = -std=c11 -O1 -g -Wall -Wextra -Wno-unused-parameter -Wno-shift-count-overflow -Werror \
            -I$(OUT)/gen -I$(MESA)/src -I$(MESA)/include -I$(MESA)/src/panfrost/lib
 CXXFLAGS_MALI = -std=c++17 -O1 -g -Wall -Wextra -Werror -I.
-LIBSRC   = gpu.cpp pass.cpp fake_gpu.cpp iokit_transport.cpp
+LIBSRC   = gpu.cpp pass.cpp draw.cpp fake_gpu.cpp iokit_transport.cpp
 LIBOBJ   = $(LIBSRC:%.cpp=$(OUT)/%.o) $(OUT)/v7.o
 ifeq ($(shell uname),Darwin)
 LDLIBS   = -framework IOKit -framework CoreFoundation
@@ -37,7 +37,7 @@ $(OUT)/v7.o: v7.c v7.h $(GEN)
 	@mkdir -p $(OUT)
 	$(CC) $(V7FLAGS) -c v7.c -o $@
 
-$(OUT)/%.o: %.cpp mali.hpp pass.hpp fake_gpu.hpp v7.h
+$(OUT)/%.o: %.cpp mali.hpp pass.hpp draw.hpp program.h shaders_v7.h fake_gpu.hpp v7.h
 	@mkdir -p $(OUT)
 	$(CXX) $(CXXFLAGS_MALI) -c $< -o $@
 

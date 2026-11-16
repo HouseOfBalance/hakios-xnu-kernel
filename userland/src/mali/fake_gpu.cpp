@@ -263,6 +263,8 @@ uint32_t FakeGpu::runDraw(uint8_t* job, bool tiler, std::string* why) {
         {d.draw.position, 16ull * (d.invocations + 1), "Position"},
         {d.draw.viewport, sz->viewport, "Viewport"},
         {d.draw.thread_storage, sz->local_storage, "Thread Storage"},
+        {d.draw.push_uniforms, 4, "Push Uniforms"},
+        {d.draw.uniform_buffers, 8, "Uniform Buffers"},
     };
     for (const auto& n : named) {
         if (n.address != 0 && at(n.address, n.length) == nullptr) {
