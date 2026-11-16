@@ -5,12 +5,13 @@
 #pragma once
 #include "program.h"
 
-/* --- tri: vertex shader 160 bytes, 32 work registers; fragment shader 176 bytes, 32 work registers --- */
-static const uint32_t hm_tri_vs_code[40] = {
-	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020023, 0x30800888,
-	0x0000402b, 0x20070406, 0x00018004, 0x01800000, 0x10004020, 0x20070008, 0x0a8000bc, 0x38004102,
-	0x00834001, 0x0009c078, 0x08076590, 0x0401002f, 0x10004061, 0x00084086, 0x0a876590, 0x42043102,
-	0x41820007, 0x80cb198a, 0x00027a23, 0x3801d964, 0x20000076, 0x70000004, 0x3f00000c, 0x47000000,
+/* --- tri: vertex shader 192 bytes, 32 work registers; fragment shader 176 bytes, 32 work registers --- */
+static const uint32_t hm_tri_vs_code[48] = {
+	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800808, 0x3000002b, 0x80cb1840, 0xc0018003, 0x30800888,
+	0x00004020, 0x80cb185c, 0x180000bf, 0x58d41106, 0x00000044, 0x70000000, 0xe030000c, 0xc0008008,
+	0x30004028, 0x80cb1840, 0x000400a3, 0x01800000, 0x00c30021, 0x2007c028, 0x00076590, 0x32043080,
+	0x20410001, 0x20064086, 0x08076590, 0x2401d964, 0x00828061, 0x000b0008, 0x040f6590, 0x58004080,
+	0x204182c9, 0x000b0008, 0x00076590, 0x0001d964, 0x4182005e, 0x80cb198a, 0x00027a23, 0x47000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_tri_fs_code[44] = {
@@ -22,8 +23,8 @@ static const uint32_t hm_tri_fs_code[44] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_tri_vs_rsd[16] = {
-	0x00000000, 0x00000000, 0x00000000, 0x00010001, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00006000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00010001, 0x00002002, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0001e000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_tri_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x41582200, 0x00000000, 0x00000000, 0x00000000,
@@ -43,7 +44,8 @@ static const uint32_t hm_tri_blend_off[4] = {
 static const uint32_t hm_tri_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
-static const struct hm_push_word hm_tri_vs_push[1] = { { 0, 0 }
+static const struct hm_push_word hm_tri_vs_push[6] = {
+	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
 static const struct hm_push_word hm_tri_fs_push[1] = { { 0, 0 }
 };
@@ -61,20 +63,21 @@ static const uint32_t hm_tri_attribute_sizes[1] = {
 };
 static const struct hm_program hm_tri = {
 	"tri",
-	hm_tri_vs_code, 160, hm_tri_fs_code, 176,
+	hm_tri_vs_code, 192, hm_tri_fs_code, 176,
 	hm_tri_vs_rsd, hm_tri_fs_rsd, hm_tri_fs_rsd_blended, hm_tri_blend_off, hm_tri_blend_over,
-	hm_tri_vs_push, 0, hm_tri_fs_push, 0,
+	hm_tri_vs_push, 6, hm_tri_fs_push, 0,
 	hm_tri_vs_out, 1, hm_tri_fs_in, 0,
 	hm_tri_attribute_formats, hm_tri_attribute_sizes, 1, 0, 0, 0,
 	hm_tri_fs_rsd_depth, 32, 32,
 };
 
-/* --- color: vertex shader 288 bytes, 32 work registers; fragment shader 160 bytes, 32 work registers --- */
-static const uint32_t hm_color_vs_code[72] = {
-	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020023, 0x30800888,
-	0x0000402b, 0x20070406, 0xc0018004, 0x11800018, 0x10004020, 0x20070008, 0x0a8000bc, 0x38004102,
-	0x00834001, 0x0009c078, 0x08076590, 0x0401002f, 0x10004061, 0x00084086, 0x0a876590, 0x42043102,
-	0x41820007, 0x80cb198a, 0x00027a23, 0x3801d964, 0x20000076, 0x70000004, 0x3f00000c, 0x47000000,
+/* --- color: vertex shader 320 bytes, 32 work registers; fragment shader 160 bytes, 32 work registers --- */
+static const uint32_t hm_color_vs_code[80] = {
+	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800808, 0x3000002b, 0x80cb1840, 0xc0018003, 0x30800888,
+	0x00004020, 0x80cb185c, 0x180000bf, 0x58d41106, 0x00000044, 0x70000000, 0xe030000c, 0xc0008008,
+	0x30004028, 0x80cb1840, 0xc00400a3, 0x11800018, 0x00c30021, 0x2007c028, 0x00076590, 0x32043080,
+	0x20410001, 0x20064086, 0x08076590, 0x2401d964, 0x00828061, 0x000b0008, 0x040f6590, 0x58004080,
+	0x204182c9, 0x000b0008, 0x00076590, 0x0001d964, 0x4182005e, 0x80cb198a, 0x00027a23, 0x47000000,
 	0x2000004a, 0x80cb1c02, 0xc000e123, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020123, 0x30800888,
 	0x4186004e, 0x80cb1e0a, 0x00027a23, 0x01800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -89,8 +92,8 @@ static const uint32_t hm_color_fs_code[40] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_color_vs_rsd[16] = {
-	0x00000000, 0x00000000, 0x00000000, 0x00020002, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00006000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00020002, 0x00002002, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0001e000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_color_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00010000, 0x41582201, 0x00000000, 0x00000000, 0x00000000,
@@ -110,7 +113,8 @@ static const uint32_t hm_color_blend_off[4] = {
 static const uint32_t hm_color_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
-static const struct hm_push_word hm_color_vs_push[1] = { { 0, 0 }
+static const struct hm_push_word hm_color_vs_push[6] = {
+	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
 static const struct hm_push_word hm_color_fs_push[4] = {
 	{ 0, 0 }, { 0, 4 }, { 0, 8 }, { 0, 12 },
@@ -130,20 +134,21 @@ static const uint32_t hm_color_attribute_sizes[2] = {
 };
 static const struct hm_program hm_color = {
 	"color",
-	hm_color_vs_code, 288, hm_color_fs_code, 160,
+	hm_color_vs_code, 320, hm_color_fs_code, 160,
 	hm_color_vs_rsd, hm_color_fs_rsd, hm_color_fs_rsd_blended, hm_color_blend_off, hm_color_blend_over,
-	hm_color_vs_push, 0, hm_color_fs_push, 4,
+	hm_color_vs_push, 6, hm_color_fs_push, 4,
 	hm_color_vs_out, 2, hm_color_fs_in, 1,
 	hm_color_attribute_formats, hm_color_attribute_sizes, 2, 0, 0, 1,
 	hm_color_fs_rsd_depth, 32, 32,
 };
 
-/* --- tex: vertex shader 288 bytes, 32 work registers; fragment shader 144 bytes, 32 work registers --- */
-static const uint32_t hm_tex_vs_code[72] = {
-	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020023, 0x30800888,
-	0x0000402b, 0x20070406, 0xc0018004, 0x11800018, 0x10004020, 0x20070008, 0x0a8000bc, 0x38004102,
-	0x00834001, 0x0009c078, 0x08076590, 0x0401002f, 0x10004061, 0x00084086, 0x0a876590, 0x42043102,
-	0x41820007, 0x80cb198a, 0x00027a23, 0x3801d964, 0x20000076, 0x70000004, 0x3f00000c, 0x47000000,
+/* --- tex: vertex shader 320 bytes, 32 work registers; fragment shader 144 bytes, 32 work registers --- */
+static const uint32_t hm_tex_vs_code[80] = {
+	0x2000004a, 0x80cb1c02, 0xc000e023, 0x10800808, 0x3000002b, 0x80cb1840, 0xc0018003, 0x30800888,
+	0x00004020, 0x80cb185c, 0x180000bf, 0x58d41106, 0x00000044, 0x70000000, 0xe030000c, 0xc0008008,
+	0x30004028, 0x80cb1840, 0xc00400a3, 0x11800018, 0x00c30021, 0x2007c028, 0x00076590, 0x32043080,
+	0x20410001, 0x20064086, 0x08076590, 0x2401d964, 0x00828061, 0x000b0008, 0x040f6590, 0x58004080,
+	0x204182c9, 0x000b0008, 0x00076590, 0x0001d964, 0x4182005e, 0x80cb198a, 0x00027a23, 0x47000000,
 	0x2000004a, 0x80cb1c02, 0xc000a123, 0x10800008, 0x2000004e, 0x80cb1c02, 0xc0020123, 0x30800848,
 	0x2104004e, 0x80cb1e06, 0x00026a23, 0x01800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
@@ -158,8 +163,8 @@ static const uint32_t hm_tex_fs_code[36] = {
 	0x00000000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_tex_vs_rsd[16] = {
-	0x00000000, 0x00000000, 0x00000000, 0x00020002, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00006000, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00020002, 0x00002002, 0x00000000, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0001e000, 0x00000000, 0x00000000, 0x00000000,
 };
 static const uint32_t hm_tex_fs_rsd[16] = {
 	0x00000000, 0x00000000, 0x00010001, 0x00010000, 0x41582200, 0x00000000, 0x00000000, 0x00000000,
@@ -179,7 +184,8 @@ static const uint32_t hm_tex_blend_off[4] = {
 static const uint32_t hm_tex_blend_over[4] = {
 	0x00000201, 0xf0d32d32, 0x0000005a, 0x010ed000,
 };
-static const struct hm_push_word hm_tex_vs_push[1] = { { 0, 0 }
+static const struct hm_push_word hm_tex_vs_push[6] = {
+	{ 1, 0 }, { 1, 16 }, { 1, 4 }, { 1, 20 }, { 1, 8 }, { 1, 24 },
 };
 static const struct hm_push_word hm_tex_fs_push[1] = { { 0, 0 }
 };
@@ -198,9 +204,9 @@ static const uint32_t hm_tex_attribute_sizes[2] = {
 };
 static const struct hm_program hm_tex = {
 	"tex",
-	hm_tex_vs_code, 288, hm_tex_fs_code, 144,
+	hm_tex_vs_code, 320, hm_tex_fs_code, 144,
 	hm_tex_vs_rsd, hm_tex_fs_rsd, hm_tex_fs_rsd_blended, hm_tex_blend_off, hm_tex_blend_over,
-	hm_tex_vs_push, 0, hm_tex_fs_push, 0,
+	hm_tex_vs_push, 6, hm_tex_fs_push, 0,
 	hm_tex_vs_out, 2, hm_tex_fs_in, 1,
 	hm_tex_attribute_formats, hm_tex_attribute_sizes, 2, 1, 1, 0,
 	hm_tex_fs_rsd_depth, 32, 32,

@@ -40,7 +40,8 @@ enum hm_job_type {
 struct hm_v7_sizes {
 	unsigned job_header, fragment_job, write_value_job, framebuffer, render_target, zs_crc_extension,
 	    tiler_context, tiler_heap, sample_positions, job_align, framebuffer_align, tiler_align;
-	unsigned vertex_job, tiler_job, renderer_state, blend, attribute, attribute_buffer, viewport, local_storage;
+	unsigned vertex_job, tiler_job, renderer_state, blend, attribute, attribute_buffer, viewport, local_storage,
+	    uniform_buffer;
 };
 const struct hm_v7_sizes *hm_v7_sizes(void);
 

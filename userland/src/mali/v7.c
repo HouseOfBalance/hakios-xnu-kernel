@@ -77,6 +77,7 @@ hm_v7_sizes(void)
 		.attribute_buffer = pan_size(ATTRIBUTE_BUFFER),
 		.viewport = pan_size(VIEWPORT),
 		.local_storage = pan_size(LOCAL_STORAGE),
+		.uniform_buffer = pan_size(UNIFORM_BUFFER),
 	};
 	return &sizes;
 }

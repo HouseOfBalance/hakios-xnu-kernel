@@ -90,41 +90,6 @@ private:
     uint8_t expected_[4] = {0, 0, 0, 0};
 };
 
-// The first triangle: one draw of three vertices into a 64x64 RGBA8 target cleared first, with the shaders of
-// shaders_v7.h (Mesa's Bifrost compiler: gl_Position from attribute 0, colour 0 constant red; their Renderer State as
-// Panfrost prepares it). As Panfrost submits a batch with a draw on v7 without IDVS: a chain of a vertex job and a
-// tiler job that depends on it (slot 1), then the Fragment job (slot 0) over a Framebuffer Descriptor that names the
-// Tiler Context the tiler job filled. POSITIONS are four floats a vertex in normalized device coordinates; the
-// shader's viewport puts (x, y) on pixel (32 + 32x, 32 + 32y).
-class TrianglePass {
-public:
-    static std::unique_ptr<TrianglePass> make(Device& device, const Target& target, const float positions[12],
-                                              const float clear[4], std::string* why);
-    // the two chains, each with its number: the draw's (vertex and tiler), then the frame's (fragment)
-    int submit(Submission* draw, Submission* frame);
-    // the jobs' Exception Status, as the GPU left them
-    uint32_t vertexStatus() const;
-    uint32_t tilerStatus() const;
-    uint32_t fragmentStatus() const;
-    uint64_t commandAddress() const { return cmd_->gpu(); }
-    // what the vertex job wrote into the position varying buffer: four floats a vertex, in pixels after the viewport
-    const float* positionsWritten() const { return reinterpret_cast<const float*>(cmd_->cpu() + kPositions); }
-    void dump(FILE* fp) const;
-
-    // where each thing is in the command buffer
-    static constexpr uint32_t kVertexJob = 0x000, kTilerJob = 0x100, kFragmentJob = 0x200, kFbd = 0x240,
-        kHeapDesc = 0x300, kTilerCtx = 0x340, kVsRsd = 0x400, kFsRsd = 0x440, kAttribute = 0x4c0,
-        kAttributeBuffers = 0x500, kVaryings = 0x540, kVaryingBuffers = 0x580, kViewport = 0x5c0,
-        kLocalStorage = 0x600, kVertices = 0x640, kPositions = 0x680, kVsCode = 0x800, kFsCode = 0x900;
-
-private:
-    TrianglePass(Device& device) : device_(device) {}
-    Device& device_;
-    Target target_;
-    std::unique_ptr<Bo> cmd_;
-    const Bo* heap_ = nullptr;
-};
-
 // One Write Value job: the GPU writes VALUE (32 bits) at byte OFFSET of TARGET. Its job in a buffer of its own; done
 // when submit's chain is (wait), status() then 1.
 class WriteValue {

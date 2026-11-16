@@ -199,15 +199,17 @@ bool runClear(Device& device, const ClearCase& c) {
 // pixel: more than a pixel inside the triangle the colour interpolated in screen space (w is 1) times the tint, through
 // the blend when there is one; more than a pixel outside the clear; within 2/255 a channel (8-bit rounding, dithering)
 bool runColorDraw(Device& device, const char* stage, const float colors[12], const float tint[4], const float clear[4],
-                  bool over) {
+                  bool over, uint32_t W = 64, uint32_t H = 64) {
     std::string why;
-    auto bo = device.gpu().newBo(256 * 64 + 4096, &why);
+    const uint32_t R = (4 * W + 63) & ~63u;
+    auto bo = device.gpu().newBo(static_cast<uint64_t>(R) * H + 4096, &why);
     if (!bo) return verdict(stage, false, why);
     memset(bo->cpu(), kCanary, bo->size());
     Target t;
     t.bo = bo.get();
-    t.width = t.height = 64;
-    t.rowBytes = 256;
+    t.width = W;
+    t.height = H;
+    t.rowBytes = R;
     const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
     DrawInput in;
     in.attributes[0] = positions;
@@ -223,14 +225,15 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
     int e = pass->submit(&ds, &fs);
     if (e == 0) e = device.gpu().wait(fs, 2000000);
     uint64_t us = device.gpu().transport().nowUs() - t0;
-    const float vx[3] = {16, 48, 32}, vy[3] = {16, 16, 48};
+    // the viewport: NDC (x, y) at pixel (W/2 + W/2 x, H/2 + H/2 y)
+    const float vx[3] = {W * 0.25f, W * 0.75f, W * 0.5f}, vy[3] = {H * 0.25f, H * 0.25f, H * 0.75f};
     float area = (vx[1] - vx[0]) * (vy[2] - vy[0]) - (vx[2] - vx[0]) * (vy[1] - vy[0]);
     unsigned inRight = 0, inTotal = 0, outRight = 0, outTotal = 0, worst = 0;
     uint8_t clearPx[4];
     for (int c = 0; c < 4; c++) clearPx[c] = unorm8(clear[c]);
     char firstBad[120] = "";
-    for (uint32_t y = 0; y < 64; y++) {
-        for (uint32_t x = 0; x < 64; x++) {
+    for (uint32_t y = 0; y < H; y++) {
+        for (uint32_t x = 0; x < W; x++) {
             float px = x + 0.5f, py = y + 0.5f, b[3], d = 1e9f;
             for (int k = 0; k < 3; k++) {
                 int i = (k + 1) % 3, j = (k + 2) % 3;
@@ -241,7 +244,7 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
             }
             bool inside = b[0] > 0 && b[1] > 0 && b[2] > 0;
             if (d <= 1.0f) continue;
-            const uint8_t* q = bo->cpu() + y * 256 + 4 * x;
+            const uint8_t* q = bo->cpu() + y * R + 4 * x;
             uint8_t want[4];
             if (inside) {
                 float src[4];
@@ -267,7 +270,7 @@ bool runColorDraw(Device& device, const char* stage, const float colors[12], con
                          q[0], q[1], q[2], q[3], want[0], want[1], want[2], want[3]);
         }
     }
-    const uint8_t* mid = bo->cpu() + 32 * 256 + 4 * 32;
+    const uint8_t* mid = bo->cpu() + (H / 2) * R + 4 * (W / 2);
     char detail[360];
     snprintf(detail, sizeof(detail), "vertex %s tiler %s fragment %s%s%s; inside %u of %u right (largest difference %u), "
              "outside %u of %u the clear; pixel (32,32) %02x%02x%02x%02x; %llu us%s",
@@ -687,10 +690,13 @@ int main(int argc, char** argv) {
         t.rowBytes = 256;
         const float positions[12] = {-0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.5f, 0.0f, 1.0f};
         const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-        std::unique_ptr<TrianglePass> tri;
+        std::unique_ptr<DrawPass> tri;
         if (bo) {
             memset(bo->cpu(), kCanary, bo->size());
-            tri = TrianglePass::make(device, t, positions, black, &why);
+            DrawInput din;
+            din.attributes[0] = positions;
+            memcpy(din.clear, black, sizeof(din.clear));
+            tri = DrawPass::make(device, t, hm_tri, din, &why);
         }
         if (!tri) {
             verdict("triangle", false, "refused: " + why);
@@ -813,6 +819,8 @@ int main(int argc, char** argv) {
         runColorDraw(device, "varyings", rgb, one, black, false);
         runColorDraw(device, "uniform", rgb, tint, black, false);
         runColorDraw(device, "blend", white, half, blue, true);
+        runColorDraw(device, "varyings-160x96", rgb, one, black, false, 160, 96);
+        runColorDraw(device, "varyings-750x1624", rgb, one, black, false, 750, 1624);
         runTexture(device);
         runCompute(device);
         runDepth(device, false);

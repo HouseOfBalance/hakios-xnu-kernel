@@ -4,9 +4,9 @@
  * shaders_v7.h on the Mac (tools/bishaders.c) and compiles on the phone, so the two can be compared word for word.
  *
  * Every vertex shader goes through pan_shader_preprocess (bifrost_preprocess_nir), which puts in the viewport transform
- * as load_viewport_scale/offset; Panfrost turns those into system values pushed from a buffer (panfrost_nir_lower_sysvals).
- * Here they become constants of a 64x64 viewport (scale and offset 32, 32, 0.5): NDC (x, y) lands on pixel
- * (32 + 32x, 32 + 32y). No IDVS (inputs.no_idvs): a vertex job and a tiler job. The fragment shader's Renderer State
+ * as load_viewport_scale/offset; Panfrost turns those into system values pushed from a buffer (panfrost_nir_lower_sysvals),
+ * and so does this: uniform buffer 1, pushed (viewport_sysvals). NDC (x, y) lands on pixel
+ * (w/2 + w/2 x, h/2 + h/2 y) of a w x h target. No IDVS (inputs.no_idvs): a vertex job and a tiler job. The fragment shader's Renderer State
  * is merged for a fixed state -- no stencil, MSAA, alpha-to-coverage or query, one RGBA8Unorm target -- without depth,
  * with Metal's Less and writes, and with forward pixel kill off for a blend that reads the destination; the Blend
  * descriptor of the target off and source-over (One, OneMinusSourceAlpha).
@@ -30,26 +30,38 @@
 
 #include "compiler.h"
 
-/* load_viewport_scale/offset of a 64x64 viewport, as constants */
+/*
+ * load_viewport_scale/offset as system values in uniform buffer 1, which the compiler pushes: words 0..2 the scale,
+ * 4..6 the offset (panfrost_nir_lower_sysvals puts Panfrost's own in a uniform buffer after the user's, pushed the
+ * same way). The driver fills them for the target: scale (w/2, h/2, 0.5), offset (w/2, h/2, 0.5).
+ */
+#define HM_SYSVAL_UBO 1
 static bool
-viewport_constants(nir_builder *b, nir_intrinsic_instr *intr, void *data)
+viewport_sysvals(nir_builder *b, nir_intrinsic_instr *intr, void *data)
 {
 	if (intr->intrinsic != nir_intrinsic_load_viewport_scale && intr->intrinsic != nir_intrinsic_load_viewport_offset) {
 		return false;
 	}
+	unsigned offset = intr->intrinsic == nir_intrinsic_load_viewport_scale ? 0 : 16;
+
 	b->cursor = nir_before_instr(&intr->instr);
-	nir_def_replace(&intr->def, nir_imm_vec3(b, 32.0f, 32.0f, 0.5f));
+	nir_def_replace(&intr->def, nir_load_ubo(b, 3, 32, nir_imm_int(b, HM_SYSVAL_UBO), nir_imm_int(b, offset),
+	    .align_mul = 16, .align_offset = 0, .range_base = offset, .range = 12));
 	return true;
 }
 
 static void
 compile(nir_shader *s, unsigned gpu_id, struct util_dynarray *binary, struct pan_shader_info *info)
 {
-	struct panfrost_compile_inputs inputs = { .gpu_id = gpu_id, .no_idvs = true, .pushable_ubos = 1 };
+	struct panfrost_compile_inputs inputs = { .gpu_id = gpu_id, .no_idvs = true,
+		.pushable_ubos = (1u << 0) | (1u << HM_SYSVAL_UBO) };
 
 	bifrost_preprocess_nir(s, gpu_id);       /* pan_shader_preprocess for an architecture of 6 or more */
 	if (s->info.stage == MESA_SHADER_VERTEX) {
-		NIR_PASS(_, s, nir_shader_intrinsics_pass, viewport_constants, nir_metadata_control_flow, NULL);
+		NIR_PASS(_, s, nir_shader_intrinsics_pass, viewport_sysvals, nir_metadata_control_flow, NULL);
+		if (s->info.num_ubos < HM_SYSVAL_UBO + 1) {
+			s->info.num_ubos = HM_SYSVAL_UBO + 1;
+		}
 		/* panfrost_shader_compile: no varying is noperspective (key->vs.noperspective_varyings 0) */
 		NIR_PASS(_, s, pan_nir_lower_static_noperspective, 0);
 	}

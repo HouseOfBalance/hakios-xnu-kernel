@@ -16,12 +16,12 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
         return std::unique_ptr<DrawPass>();
     };
     const struct hm_v7_sizes* sz = hm_v7_sizes();
-    // the programs' viewport is 64x64 (tools/bishaders.c)
-    if (t.bo == nullptr || t.width != 64 || t.height != 64 || t.format != Format::RGBA8Unorm)
-        return no("a draw goes into a 64x64 RGBA8Unorm target only (the programs' viewport)");
+    if (t.bo == nullptr || t.width == 0 || t.height == 0 || t.width > 4096 || t.height > 4096 ||
+        t.format != Format::RGBA8Unorm)
+        return no("a draw goes into an RGBA8Unorm target of 1 to 4096 pixels a side");
     uint64_t base = t.bo->gpu() + t.offset;
-    if ((base & 63) != 0 || (t.rowBytes & 63) != 0 || t.rowBytes < 256 ||
-        t.offset + static_cast<uint64_t>(t.rowBytes) * 63 + 256 > t.bo->size())
+    if ((base & 63) != 0 || (t.rowBytes & 63) != 0 || t.rowBytes < 4 * t.width ||
+        t.offset + static_cast<uint64_t>(t.rowBytes) * (t.height - 1) + 4ull * t.width > t.bo->size())
         return no("the target is not 64-byte aligned rows inside its buffer (pan_layout.c, v7)");
     if (in.vertexCount < 3 || in.vertexCount % 3 != 0 || in.vertexCount > 48)
         return no("a vertex count that is not a whole number of triangles, 3 to 48");
@@ -46,13 +46,15 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
             return no("the texture is not 64-byte aligned rows of RGBA8 inside its buffer (pan_layout.c, v7)");
     }
     if (in.blendOver && !p.can_blend) return no("the program has no blended state");
+    // uniform buffer 0 is the caller's, 1 the system values (compiler.c: the viewport's scale and offset)
+    auto pushable = [&](const hm_push_word& w) {
+        return (w.ubo == 0 && w.offset + 4u <= in.uniformSize) || (w.ubo == 1 && w.offset + 4u <= kSysvalSize);
+    };
     for (uint32_t i = 0; i < p.vs_push_count; i++) {
-        if (p.vs_push[i].ubo != 0 || p.vs_push[i].offset + 4u > in.uniformSize)
-            return no("the vertex shader pushes a word the uniform data does not hold");
+        if (!pushable(p.vs_push[i])) return no("the vertex shader pushes a word the uniform data does not hold");
     }
     for (uint32_t i = 0; i < p.fs_push_count; i++) {
-        if (p.fs_push[i].ubo != 0 || p.fs_push[i].offset + 4u > in.uniformSize)
-            return no("the fragment shader pushes a word the uniform data does not hold");
+        if (!pushable(p.fs_push[i])) return no("the fragment shader pushes a word the uniform data does not hold");
     }
     if (in.uniformSize > kTexture - kUniforms) return no("the uniform data do not fit");
     if (p.vs_size > kFsCode - kVsCode || p.fs_size > kUniforms - kFsCode - 128) return no("the shaders do not fit");
@@ -141,14 +143,21 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     hm_v7_attribute_buffer(cpu + kVaryingBuffers + sz->attribute_buffer, gpu + kPositions, 16, 16 * in.vertexCount);
     hm_v7_attribute_buffer(cpu + kVaryingBuffers + 2 * sz->attribute_buffer, 0, 0, 0);
 
-    // the uniforms: buffer 0, its table, and each stage's pushed words
+    // the uniforms: buffer 0 the caller's, buffer 1 the system values -- the viewport transform's scale and offset
+    // (w/2, h/2, 0.5), as panfrost_upload_sysvals gives PAN_SYSVAL_VIEWPORT_SCALE and _OFFSET for a viewport of the whole
+    // target with depth 0..1 -- the table naming both, and each stage's pushed words (panfrost_emit_const_buf)
     if (in.uniformSize != 0) {
         memcpy(cpu + kUniforms, in.uniforms, in.uniformSize);
         hm_v7_uniform_buffer(cpu + kUbos, gpu + kUniforms, in.uniformSize);
     }
-    const uint8_t* u = static_cast<const uint8_t*>(in.uniforms);
-    for (uint32_t i = 0; i < p.vs_push_count; i++) memcpy(cpu + kVsPush + 4 * i, u + p.vs_push[i].offset, 4);
-    for (uint32_t i = 0; i < p.fs_push_count; i++) memcpy(cpu + kFsPush + 4 * i, u + p.fs_push[i].offset, 4);
+    float sysvals[8] = {t.width / 2.0f, t.height / 2.0f, 0.5f, 0.0f, t.width / 2.0f, t.height / 2.0f, 0.5f, 0.0f};
+    memcpy(cpu + kSysvals, sysvals, sizeof(sysvals));
+    hm_v7_uniform_buffer(cpu + kUbos + sz->uniform_buffer, gpu + kSysvals, sizeof(sysvals));
+    auto word = [&](const hm_push_word& w) {
+        return w.ubo == 0 ? static_cast<const uint8_t*>(in.uniforms) + w.offset : cpu + kSysvals + w.offset;
+    };
+    for (uint32_t i = 0; i < p.vs_push_count; i++) memcpy(cpu + kVsPush + 4 * i, word(p.vs_push[i]), 4);
+    for (uint32_t i = 0; i < p.fs_push_count; i++) memcpy(cpu + kFsPush + 4 * i, word(p.fs_push[i]), 4);
 
     // texture 0 and sampler 0 (GENX(panfrost_new_texture), panfrost_create_sampler_state)
     if (p.texture_count != 0) {
@@ -157,10 +166,11 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
                          in.textureHeight, gpu + kSurface);
         hm_v7_sampler(cpu + kSampler, in.nearest);
     }
-    hm_v7_viewport(cpu + kViewport, 0, 0, 63, 63, 0.0f, 1.0f);
+    hm_v7_viewport(cpu + kViewport, 0, 0, t.width - 1, t.height - 1, 0.0f, 1.0f);
     hm_v7_local_storage(cpu + kLocalStorage);
     hm_v7_tiler_heap(cpu + kHeapDesc, pass->heap_->gpu(), static_cast<uint32_t>(pass->heap_->size()));
-    hm_v7_tiler_context(cpu + kTilerCtx, gpu + kHeapDesc, 64, 64, hm_v7_hierarchy_mask(64, 64, device.tilerLevels()));
+    hm_v7_tiler_context(cpu + kTilerCtx, gpu + kHeapDesc, t.width, t.height,
+                        hm_v7_hierarchy_mask(t.width, t.height, device.tilerLevels()));
 
     struct hm_v7_draw vertex = {};
     vertex.state = gpu + kVsRsd;
@@ -170,7 +180,7 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     vertex.varying_buffers = gpu + kVaryingBuffers;
     vertex.thread_storage = gpu + kLocalStorage;
     vertex.push_uniforms = p.vs_push_count ? gpu + kVsPush : 0;
-    vertex.uniform_buffers = in.uniformSize ? gpu + kUbos : 0;
+    vertex.uniform_buffers = gpu + kUbos;
     hm_v7_vertex_job(cpu + kVertexJob, 1, gpu + kTilerJob, in.vertexCount, &vertex);
     struct hm_v7_draw fragment = {};
     fragment.state = gpu + kFsRsd;
@@ -180,14 +190,16 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     fragment.varying_buffers = gpu + kVaryingBuffers;
     fragment.thread_storage = gpu + kLocalStorage;
     fragment.push_uniforms = p.fs_push_count ? gpu + kFsPush : 0;
-    fragment.uniform_buffers = in.uniformSize ? gpu + kUbos : 0;
+    fragment.uniform_buffers = gpu + kUbos;
     fragment.textures = p.texture_count ? gpu + kTexture : 0;
     fragment.samplers = p.sampler_count ? gpu + kSampler : 0;
     hm_v7_tiler_job(cpu + kTilerJob, 2, 1, 0, in.vertexCount, gpu + kTilerCtx, &fragment);
 
     struct hm_v7_fb fb = {};
-    fb.width = fb.height = 64;
-    fb.bound_max_x = fb.bound_max_y = 63;
+    fb.width = t.width;
+    fb.height = t.height;
+    fb.bound_max_x = t.width - 1;
+    fb.bound_max_y = t.height - 1;
     fb.sample_locations = device.samplePositions().gpu();
     fb.tiler = gpu + kTilerCtx;
     hm_v7_tile_size(4, device.tileBufferBudget(), &fb.tile_size, &fb.cbuf_allocation);
@@ -205,9 +217,11 @@ std::unique_ptr<DrawPass> DrawPass::make(Device& device, const Target& t, const 
     const char* refused = nullptr;
     uint64_t fbd = hm_v7_framebuffer(cpu + kFbd, gpu + kFbd, &fb, &rt, &refused);
     if (fbd == 0) return no(refused);
-    hm_v7_fragment_job(cpu + kFragmentJob, 1, 0, fbd, 0, 0, 3, 3);
+    hm_v7_fragment_job(cpu + kFragmentJob, 1, 0, fbd, 0, 0, (t.width - 1) >> 4, (t.height - 1) >> 4);
     return pass;
 }
+
+const float* DrawPass::positionsWritten() const { return reinterpret_cast<const float*>(cmd_->cpu() + kPositions); }
 
 int DrawPass::submit(Submission* draw, Submission* frame) {
     std::vector<const Bo*> uses = {cmd_.get(), target_.bo, &device_.samplePositions(), heap_};

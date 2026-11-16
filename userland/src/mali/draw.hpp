@@ -1,4 +1,4 @@
-// A draw of any program of shaders_v7.h (program.h) into a 64x64 RGBA8Unorm target, as Panfrost submits a batch with
+// A draw of any program of shaders_v7.h (program.h) into an RGBA8Unorm target of any size, as Panfrost submits a batch with
 // one draw on v7 without IDVS: the vertex job and the tiler job that depends on it (slot 1), then the Fragment job
 // (slot 0) over the frame whose Tiler Context they filled. What the draw needs at draw time is written here through
 // Mesa's packers (v7.h):
@@ -51,13 +51,15 @@ public:
     uint32_t tilerStatus() const;
     uint32_t fragmentStatus() const;
     void dump(FILE* fp) const;
+    // what the vertex job wrote into the position varying buffer: four floats a vertex, in pixels after the viewport
+    const float* positionsWritten() const;
 
     static constexpr uint32_t kVertexJob = 0x000, kTilerJob = 0x100, kFragmentJob = 0x200, kFbd = 0x240,
         kHeapDesc = 0x300, kTilerCtx = 0x340, kVsRsd = 0x400, kFsRsd = 0x440, kAttributes = 0x4c0,
         kAttributeBuffers = 0x500, kVaryings = 0x5c0, kVaryingBuffers = 0x640, kViewport = 0x680,
         kLocalStorage = 0x6c0, kUbos = 0x700, kVsPush = 0x740, kFsPush = 0x7c0, kVertices = 0x800,
         kGeneral = 0xc00, kPositions = 0xe00, kVsCode = 0x1000, kFsCode = 0x1800, kUniforms = 0x2000, kTexture = 0x3000,
-        kSurface = 0x3040, kSampler = 0x3080, kSize = 0x4000;
+        kSurface = 0x3040, kSampler = 0x3080, kSysvals = 0x3100, kSysvalSize = 32, kSize = 0x4000;
 
 private:
     DrawPass(Device& device) : device_(device) {}
