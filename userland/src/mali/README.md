@@ -22,11 +22,13 @@ that names what is wrong, and a probe that measures on the phone what the fake c
 | `compiler.h`, `compiler.c` | The compiler inside the driver: the library's programs (`tri`, `color`: a varying and a pushed uniform, `tex`: a texture at a varying) and kernels (`fill`) built as NIR and compiled in the process by Mesa's Bifrost compiler (`bifrost_preprocess_nir`, `GENX(pan_shader_compile)`, no IDVS), with what Panfrost prepares for them: Renderer States (`pan_shader_prepare_rsd`; the fragment shader's merged as `panfrost_emit_frag_shader` merges it, without depth, with Metal's Less and writes, and for a blend that reads the destination), Blend descriptors (`panfrost_emit_blend`: off and source-over, RGBA8 and BGRA8), the words each stage pushes, the varyings to link. The viewport transform's scale and offset are system values in uniform buffer 1, pushed as Panfrost pushes its own | on the phone, stage `compiler`: compiled there, word for word the Mac's |
 | `program.h`, `shaders_v7.h`, `tools/bishaders.c`, `tools/mk-shaders.sh` | The same programs compiled on the Mac (`mk-shaders.sh MESA_HOST_BUILD=...`) and written out, for a phone build without the compiler and for the comparison | the stages below |
 | `draw.hpp`, `draw.cpp` | `DrawPass`: any program into a target of any size, RGBA8 or BGRA8, as Panfrost submits a batch on v7: one vertex and tiler job pair per draw (`makeMany`: up to 16, chained as `pan_jc_add_job` chains them, all into one Tiler Context), then the Fragment job; attributes (`panfrost_emit_vertex_data`), varyings linked (`panfrost_emit_varying_descs`), pushed words and the uniform buffer table (`panfrost_emit_const_buf`, `panfrost_emit_ubo`), a texture and sampler (`GENX(panfrost_new_texture)`, `panfrost_create_sampler_state`), 16-bit indices (`jm_emit_primitive`), blending, the depth test in the tile buffer. `ComputePass`: one dispatch as `GENX(jm_launch_grid)` submits it (`panfrost_pack_work_groups_compute`) | the fake GPU checks every job and address; on the phone, the draw and compute stages |
+| `compiler.c` `hm_compile_air_kernel`, `tools/airkernels.c` | Apple's compute functions: a function of a `.metallib` through the AIR frontend (`tools/mesa/air`), its device buffers made global memory at addresses pushed from uniform buffer 15, the grid's sizes system values there too, threadgroup memory as workgroup storage, then Bifrost | stage `apple-kernels` |
 | `metal.hpp`, `metal.cpp` | Metal's command model over the passes: `Texture`, `RenderPipeline`, `ComputePipeline`, `CommandBuffer` with render command encoders and dispatches, commit in order, `waitUntilCompleted`, Metal's statuses (an Error naming the first job not DONE); `Gpu::surfaceBo`: an IOSurface's memory as a target (request 0x7e), a drawable's shape | stages `metal-api`, `iosurface` |
 
-Not yet, refused by name where it would be asked for: the `MTLDevice` plug-in itself and Apple's shaders (AIR), stencil,
-depth written to memory, MSAA, mipmaps, AFBC and tiled images, formats other than RGBA8Unorm and BGRA8Unorm, sRGB,
-several colour targets, load action Load, compute with shared memory or thread storage, presenting a drawable.
+Not yet, refused by name where it would be asked for: the `MTLDevice` plug-in itself, Apple's vertex and fragment
+functions and its kernels' textures and samplers, stencil, depth written to memory, MSAA, mipmaps, AFBC and tiled
+images, formats other than RGBA8Unorm and BGRA8Unorm, sRGB, several colour targets, load action Load, compute with
+thread storage (spilling), presenting a drawable.
 
 ## What the phone said
 
@@ -52,6 +54,12 @@ Runs 500 to 502, the 27 release with `mali=1 metal=1`, `mali-probe` as launchd's
   160x96 and the panel's 750x1624 (150210 of 150210 pixels within 1/255), BGRA8, an indexed quad; four draws in one pass
   with the tile buffer's depth kept across them; and `compiler`: the programs compiled on the phone, word for word the
   Mac's, in 33 ms, and drawn with.
+- Runs 510 to 512: `metal-api` (one command buffer of Metal's model: a textured quad and a source-over triangle into a
+  BGRA8 texture, an empty pass, a dispatch, Completed in 152 us, every result right), `iosurface` (a draw into an
+  IOSurface made with IOSurfaceCreate, read back through IOSurface's own lock), `shared` (256 of 256 words read across
+  a barrier from threadgroup memory), and Apple's own kernels: 16 of the 36 compute functions of the 27 release's
+  PortraitFilters compiled on the phone through the AIR frontend (`hm_compile_air_kernel`), and three of them
+  dispatched, each writing exactly what its NIR says. 36 of 36 stages.
 
 ## mali-probe's stages
 
