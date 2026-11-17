@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/qos.h>
 #include <sys/sysctl.h>
 
 namespace {
@@ -358,7 +359,7 @@ prebuild_main(void *context)
 		call.g = g;
 		call.vertex = v->vertex;
 		call.fragment = v->fragment;
-		rwm_compile_lock();
+		rwm_compile_lock_background();
 		rwm_on_big_stack(variant_main, &call);
 		rwm_compile_unlock();
 		pthread_mutex_lock(&generic_lock);
@@ -395,6 +396,7 @@ prebuild_start(struct generic_record *g)
 	pthread_attr_init(&attr);
 	pthread_attr_setstacksize(&attr, 1u << 20);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	pthread_attr_set_qos_class_np(&attr, QOS_CLASS_UTILITY, 0);   /* (the frames' threads first) */
 	if (pthread_create(&thread, &attr, prebuild_main, g) != 0) {
 		rwm_print("no thread to build %s's variants ahead\n", g->label);
 	}
@@ -426,13 +428,14 @@ config_of(struct rwa_buffer *buffer, size_t offset, unsigned size, uint8_t *out)
 
 extern "C" bool
 rwm_render_prepare(const char *label, struct rwa_render_shape *shape, bool has_vertex_descriptor,
+		   const struct rwa_constant *vc, unsigned nv, const struct rwa_constant *fc, unsigned nf,
 		   struct rwa_render **render, struct rwa_render_info *info)
 {
 	/* what it asks for, said before the source-over that CoreAnimation's in-shader blends are given, so that the
 	 * lines say what was asked (src/metal/shape.cpp) */
 	rwm_shape_say(label, shape, has_vertex_descriptor);
 	rwm_xm_blend_apply(label, shape);
-	if (coreanimation_draw(label) && rwm_warm_take(label, shape, render, info)) {
+	if (coreanimation_draw(label) && rwm_warm_take(label, shape, vc, nv, fc, nf, render, info)) {
 		rwm_area_label(*render, label);
 		if (shape->color_count > 0) {
 			rwm_blend_result(info->blend_enabled_mask, info->color_write_masks);

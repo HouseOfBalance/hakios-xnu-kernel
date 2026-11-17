@@ -206,10 +206,35 @@ say_recipe(const char *text, size_t n, bool to_host)
 
 } // namespace
 
+/*
+ * Two ways into the lock. A build a draw waits for (rwm_compile_lock) goes first: the warm-up and the builds ahead
+ * (rwm_compile_lock_background) take the lock only while no such build is waiting, and give it back if one came
+ * meanwhile. Run 260 (185 recipes, 134 variants ahead) had the window server's own builds behind theirs, a second and
+ * more each, and 2 frames in 101 s.
+ */
+static volatile int compile_urgent;
+
 extern "C" void
 rwm_compile_lock(void)
 {
+	__atomic_add_fetch(&compile_urgent, 1, __ATOMIC_SEQ_CST);
 	pthread_mutex_lock(&compile_lock);
+	__atomic_sub_fetch(&compile_urgent, 1, __ATOMIC_SEQ_CST);
+}
+
+extern "C" void
+rwm_compile_lock_background(void)
+{
+	for (;;) {
+		while (__atomic_load_n(&compile_urgent, __ATOMIC_SEQ_CST) > 0) {
+			usleep(2000);
+		}
+		pthread_mutex_lock(&compile_lock);
+		if (__atomic_load_n(&compile_urgent, __ATOMIC_SEQ_CST) == 0) {
+			return;
+		}
+		pthread_mutex_unlock(&compile_lock);
+	}
 }
 
 extern "C" void
@@ -440,7 +465,7 @@ rwm_warm_build(unsigned index, struct rwa_device *device, const void *vertex, si
 		return;
 	}
 	w = &warms[index];
-	pthread_mutex_lock(&compile_lock);
+	rwm_compile_lock_background();
 	if (w->state == 0 && found && air->render_create != nullptr) {
 		char why[256] = { 0 };
 
@@ -480,8 +505,28 @@ rwm_warm_report(uint64_t elapsed_ns)
 }
 
 /* a built recipe for this request, if one is ready: its render and info, and it is the caller's */
+/* the same set: every index of one with the same value in the other, field by field (struct rwa_constant has four
+ * bytes of padding that nobody clears) and in any order (Metal's constant values come out of a dictionary, whose order
+ * is not the same from one process to the next: run 259 matched none) */
+static bool
+same_constants(const struct rwa_constant *a, const struct rwa_constant *b, unsigned n)
+{
+	for (unsigned i = 0; i < n; i++) {
+		unsigned k = 0;
+
+		while (k < n && b[k].index != a[i].index) {
+			k++;
+		}
+		if (k == n || b[k].bits != a[i].bits) {
+			return false;
+		}
+	}
+	return true;
+}
+
 extern "C" bool
-rwm_warm_take(const char *label, const struct rwa_render_shape *shape, struct rwa_render **render,
+rwm_warm_take(const char *label, const struct rwa_render_shape *shape, const struct rwa_constant *vc, unsigned nv,
+	      const struct rwa_constant *fc, unsigned nf, struct rwa_render **render,
 	      struct rwa_render_info *info)
 {
 	bool taken = false;
@@ -494,6 +539,14 @@ rwm_warm_take(const char *label, const struct rwa_render_shape *shape, struct rw
 		warm *w = &warms[i];
 
 		if (strcmp(w->label, label) != 0 || memcmp(&w->shape, shape, sizeof(*shape)) != 0) {
+			continue;
+		}
+		/* and the same function constants: one label and shape is asked for with other constants too (the
+		 * 27 release's, with the wallpaper as a picture or as PosterBoard's paths), and a pipeline built for
+		 * the others drew 126 ms a frame on the Mali (run 256, 17 November); a recipe without its constants
+		 * (the pipeline library's) still matches by label and shape alone */
+		if ((w->nv != 0 || w->nf != 0) && (w->nv != nv || w->nf != nf || !same_constants(w->vc, vc, nv) ||
+						    !same_constants(w->fc, fc, nf))) {
 			continue;
 		}
 		if (w->state == 1) {

@@ -211,6 +211,13 @@ rwm_render_color(struct rwm_render_state *s, unsigned index, unsigned level, voi
 	}
 	s->color[index] = rwm_bound_texture{ object, core };
 	s->color_level[index] = level;
+	/* MTLStoreActionDontCare (0): what the pass draws there is not kept (rwa_draw.discard_mask); boot-arg
+	 * rwm_keepall=1: everything kept, as before */
+	if ((store == 0 || rwm_texture_memoryless(core)) && strstr(rwm_boot_args(), "rwm_keepall=1") == nullptr) {
+		s->discard_mask |= 1u << index;
+	} else {
+		s->discard_mask &= ~(1u << index);
+	}
 	if (core != nullptr && passlog_on()) {
 		const struct rwa_texture_shape *sh = rwm_texture_shape(core);
 
@@ -569,6 +576,7 @@ rwm_render_draw(struct rwm_render_state *s, const struct rwm_draw_call *call, st
 	for (unsigned i = 0; i < s->color_count; i++) {
 		d->color[i] = mesa_of(s->color[i].core);
 		d->color_level[i] = s->color_level[i];
+		d->discard_mask = s->discard_mask;
 	}
 	memcpy(w->clear_color, s->clear_color, sizeof(w->clear_color));
 	d->clear_color = s->clears ? w->clear_color : nullptr;

@@ -8108,6 +8108,8 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
    }
    if (flush_on_switch) {
       static struct pipe_surface *last_cbuf, *last_zs;
+      static struct pipe_resource *last_discard[PIPE_MAX_COLOR_BUFS];
+      static unsigned last_discard_count;
       if ((fb.nr_cbufs ? fb.cbufs[0] : NULL) != last_cbuf || fb.zsbuf != last_zs) {
          /* boot-arg rwa_syncpass=1: and the GPU waited for at each switch -- whether a pass that samples what the
           * passes before it drew reads them unfinished (15 November: the draws of the passes that load draw nothing) */
@@ -8123,6 +8125,13 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
                syncpass = strstr(args, "rwa_syncpass=1") != NULL;
 #endif
          }
+         /* the attachments the pass before did not keep (rwa_draw.discard_mask): not written back, and not loaded
+          * by a later pass, since what they hold is undefined (Gallium's invalidate_resource, with panfrost's
+          * patch to forget the level's contents as well) */
+         if (last_discard_count && pipe->invalidate_resource) {
+            for (unsigned k = 0; k < last_discard_count; k++)
+               pipe->invalidate_resource(pipe, last_discard[k]);
+         }
          if ((last_cbuf || last_zs) && syncpass) {
             struct pipe_fence_handle *fence = NULL;
 
@@ -8135,6 +8144,10 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
             pipe->flush(pipe, NULL, 0);
          last_cbuf = fb.nr_cbufs ? fb.cbufs[0] : NULL;
          last_zs = fb.zsbuf;
+         last_discard_count = 0;
+         for (unsigned k = 0; k < fb.nr_cbufs; k++)
+            if ((draw->discard_mask >> k) & 1 && fb.cbufs[k])
+               last_discard[last_discard_count++] = fb.cbufs[k]->texture;
       }
    }
    pipe->set_framebuffer_state(pipe, &fb);

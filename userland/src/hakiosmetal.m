@@ -981,6 +981,7 @@ rw_warm_start(id metal_device, struct rwa_device *device)
 
 		pthread_attr_init(&attr);
 		pthread_attr_setstacksize(&attr, 16 << 20);    /* the library's recursion, as rw_on_big_stack */
+		pthread_attr_set_qos_class_np(&attr, QOS_CLASS_UTILITY, 0);   /* (the frames' threads first) */
 		if (pthread_create(&thread, &attr, rw_warm_main, device) == 0) {
 			pthread_detach(thread);
 		}
@@ -1504,7 +1505,10 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	struct rwa_constant vc[128], fc[128];
 	char why[512] = { 0 };
 
-	if (!rwm_render_prepare(label, &shape, vd != nil, &render, &info)) {
+	const unsigned nv = from_plib ? 0 : rw_function_constants(vertex, vc, 128);
+	const unsigned nf = from_plib ? 0 : rw_function_constants(fragment, fc, 128);
+
+	if (!rwm_render_prepare(label, &shape, vd != nil, vc, nv, fc, nf, &render, &info)) {
 		struct rwm_render_request request = {
 			.vertex = vertex_air != nil ? [vertex_air bytes] : NULL,
 			.vertex_size = vertex_air != nil ? [vertex_air length] : 0,
@@ -1514,8 +1518,8 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 			.fragment_name = !from_plib && fragment != nil ? [[fragment name] UTF8String] : NULL,
 			.vertex_constants = vc,
 			.fragment_constants = fc,
-			.vertex_constant_count = from_plib ? 0 : rw_function_constants(vertex, vc, 128),
-			.fragment_constant_count = from_plib ? 0 : rw_function_constants(fragment, fc, 128),
+			.vertex_constant_count = nv,
+			.fragment_constant_count = nf,
 		};
 
 		render = rwm_render_compile(_mesa, label, &request, &shape, &info, why, sizeof(why));
@@ -1770,9 +1774,14 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	rwm_uploads[0]++;
 	rwm_uploads[1] += shape.width <= 512 && shape.height <= 512;
 	rw_apply_descriptor_swizzle(texture, descriptor);
-	return [[HakiosMetalTexture alloc] initWithHakiosDevice:self
-							 texture:texture
-							   shape:&shape];
+	HakiosMetalTexture *made = [[HakiosMetalTexture alloc] initWithHakiosDevice:self
+									     texture:texture
+									       shape:&shape];
+	/* MTLStorageModeMemoryless (3): its passes keep none of it (src/metal/texture.cpp) */
+	if ([descriptor storageMode] == 3) {
+		rwm_texture_set_memoryless([made hakiosCore], true);
+	}
+	return made;
 }
 
 /* The sampler's own base class exists and owes its protocol nothing, so this is the cheapest
@@ -4263,11 +4272,26 @@ rw_core_of(id texture)
 		});
 		[self retain];
 		[scheduled release];
+		/* boot-arg rwm_early_done=1, a measurement and not a mode: the completed handlers at once, before the GPU
+		 * is done -- does the window server wait for a frame's completion before it starts the next one? (run 264:
+		 * every buffer completed some 10 ms after its commit, and half the frames came a refresh late) */
+		static int early = -1;
+
+		if (early < 0) {
+			early = rwm_boot_arg("rwm_early_done=1") ? 1 : 0;
+		}
+		if (early) {
+			for (id handler in completed) {
+				[self hakiosDeliver:(void (^)(id))handler];
+			}
+		}
 		dispatch_async(completions, ^{
 			[self waitUntilCompleted];
 			[self hakiosReleaseSampled];
-			for (id handler in completed) {
-				[self hakiosDeliver:(void (^)(id))handler];
+			if (!early) {
+				for (id handler in completed) {
+					[self hakiosDeliver:(void (^)(id))handler];
+				}
 			}
 			[completed release];
 			[self release];

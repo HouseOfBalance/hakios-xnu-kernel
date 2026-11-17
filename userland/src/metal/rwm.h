@@ -191,6 +191,8 @@ bool rwm_texture_read_depth(struct rwm_texture *texture, const unsigned origin[3
 			    float *depth, uint8_t *stencil);
 /* the surface a texture laid over its memory lies over (src/metal/import.cpp), drawn in place; 0: none */
 uint32_t rwm_texture_in_place(const struct rwm_texture *texture);
+void rwm_texture_set_memoryless(struct rwm_texture *texture, bool memoryless);
+bool rwm_texture_memoryless(const struct rwm_texture *texture);
 void rwm_texture_set_in_place(struct rwm_texture *texture, uint32_t surface);
 /* what the frames sample and which of it is empty (src/metal/texture.cpp, said by rwm_perf_report) */
 void rwm_texture_note_filled(struct rwm_texture *texture);
@@ -255,6 +257,7 @@ struct rwm_draw {
 	unsigned stream_mask;           /* the pipeline's: which vertex buffer indices are streams */
 	unsigned stream_count;          /* ... and the highest it fetches from, plus one */
 	struct rwa_texture *color[8];
+	unsigned discard_mask;          /* rwa_draw.discard_mask */
 	unsigned color_level[8];        /* the mip level of each (rwa_draw.color_level) */
 	unsigned color_count;
 	const float *clear_color;       /* NULL: kept, not cleared */
@@ -374,6 +377,7 @@ struct rwm_bound_buffer {
 };
 struct rwm_render_state {
 	struct rwa_device *device;
+	unsigned discard_mask;           /* colour attachments stored with MTLStoreActionDontCare */
 	unsigned color_level[8];          /* the mip level each colour attachment is drawn into */
 	struct rwm_bound_texture color[8];
 	unsigned color_count;
@@ -671,6 +675,7 @@ struct rwm_render_request {
 };
 
 bool rwm_render_prepare(const char *label, struct rwa_render_shape *shape, bool has_vertex_descriptor,
+			const struct rwa_constant *vc, unsigned nv, const struct rwa_constant *fc, unsigned nf,
 			struct rwa_render **render, struct rwa_render_info *info);
 struct rwa_render *rwm_render_compile(struct rwa_device *device, const char *label,
 				      const struct rwm_render_request *request, struct rwa_render_shape *shape,
@@ -702,6 +707,7 @@ bool rwm_plib_modules_for(const char *label, bool allow_near, const void **verte
  * rwa_render_constants is global state in the library, and the warm-up thread builds too.
  */
 void rwm_compile_lock(void);
+void rwm_compile_lock_background(void);    /* the warm-up's and the builds ahead: after any a draw waits for */
 void rwm_compile_unlock(void);
 /* CoreAnimation's draw.PBGRAXm_ pipelines given the fixed function's premultiplied source-over (the Mali reads
  * [[color(0)]] as 0); boot-arg rwm_xm_blend=0 leaves them */
@@ -725,7 +731,8 @@ void rwm_warm_build(unsigned index, struct rwa_device *device, const void *verte
 		    const void *fragment, size_t fragment_size, bool found);
 void rwm_warm_report(uint64_t elapsed_ns);
 /* a built recipe for this label and shape, if one is ready: its render and info, and it is the caller's */
-bool rwm_warm_take(const char *label, const struct rwa_render_shape *shape, struct rwa_render **render,
+bool rwm_warm_take(const char *label, const struct rwa_render_shape *shape, const struct rwa_constant *vc, unsigned nv,
+		   const struct rwa_constant *fc, unsigned nf, struct rwa_render **render,
 		   struct rwa_render_info *info);
 
 #ifdef __cplusplus

@@ -1903,6 +1903,21 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			measured++;
 			hakios_keep("MiniIOMobileFramebuffer: core %d runs at %u MHz", core, mhz);
 		}
+		/* boot-arg fbstats=1: the same, short, into the host's kept lines (the first 60): frames a second while the
+		 * picture moves, for a run nobody watches (17 November) */
+		{
+			static int keep = -1;
+			static unsigned kept;
+
+			if (keep < 0) {
+				keep = PE_parse_boot_argn("fbstats", &keep, sizeof(keep)) ? keep : 0;
+			}
+			if (keep == 1 && kept < 60) {
+				kept++;
+				hakios_keep("fbstats: %u frames in %llu ms, %llu us each waiting for the GPU", fStatFrames,
+				    nanos / NSEC_PER_MSEC, (unsigned long long)(waiting / fStatFrames / NSEC_PER_USEC));
+			}
+		}
 		IOLog("MiniIOMobileFramebuffer: %u frames in %llu ms (%llu a second), %llu us each in the driver, after %llu us "
 		    "waiting for the GPU and, %u of them, %llu us for the next refresh; %u swaps waited for the frame before, "
 		    "%u gave up; %u swaps came a refresh late themselves\n", fStatFrames, nanos / NSEC_PER_MSEC,

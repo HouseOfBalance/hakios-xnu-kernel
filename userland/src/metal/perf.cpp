@@ -11,6 +11,7 @@
 #include <mach/mach_time.h>
 #include <mach/thread_act.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <sys/sysctl.h>
@@ -90,6 +91,106 @@ area_report(void)
 			 (unsigned long long)(top[k].pixels / 1000000));
 		say(line);
 	}
+}
+
+/*
+ * Where the process's processor time goes, every five seconds ("rwm threads"): the whole task (threads that ended
+ * included) and its six busiest threads by name, in ms of processor a second. The window server gave a buffer every
+ * 93 ms with the GPU 15 % busy and this driver 5 ms a buffer (run 257): whether the rest is CoreAnimation working or
+ * waiting is what this says.
+ */
+struct thread_cpu {
+	uint64_t id, ns;
+	bool seen;
+};
+thread_cpu thread_cpus[96];
+uint64_t task_cpu_last;
+
+void
+threads_report(uint64_t span)
+{
+	thread_act_array_t threads;
+	mach_msg_type_number_t count = 0;
+	struct {
+		char name[40];
+		uint64_t id, ns;
+	} top[6] = {};
+	char line[320];
+	size_t at;
+	uint64_t task_ns = 0;
+
+	{
+		task_absolutetime_info_data_t info;
+		mach_msg_type_number_t n = TASK_ABSOLUTETIME_INFO_COUNT;
+		mach_timebase_info_data_t tb;
+
+		mach_timebase_info(&tb);
+		if (task_info(mach_task_self(), TASK_ABSOLUTETIME_INFO, (task_info_t)&info, &n) == KERN_SUCCESS) {
+			task_ns = (info.total_user + info.total_system) * tb.numer / tb.denom;
+		}
+	}
+	if (task_threads(mach_task_self(), &threads, &count) != KERN_SUCCESS) {
+		return;
+	}
+	for (thread_cpu &t : thread_cpus) {
+		t.seen = false;
+	}
+	for (mach_msg_type_number_t i = 0; i < count; i++) {
+		thread_extended_info_data_t ext;
+		thread_identifier_info_data_t ident;
+		mach_msg_type_number_t n = THREAD_EXTENDED_INFO_COUNT, m = THREAD_IDENTIFIER_INFO_COUNT;
+
+		if (thread_info(threads[i], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &n) == KERN_SUCCESS &&
+		    thread_info(threads[i], THREAD_IDENTIFIER_INFO, (thread_info_t)&ident, &m) == KERN_SUCCESS) {
+			const uint64_t ns = ext.pth_user_time + ext.pth_system_time;
+			thread_cpu *slot = nullptr, *free_slot = nullptr;
+			uint64_t delta;
+
+			for (thread_cpu &t : thread_cpus) {
+				if (t.id == ident.thread_id) {
+					slot = &t;
+					break;
+				}
+				if (t.id == 0 && free_slot == nullptr) {
+					free_slot = &t;
+				}
+			}
+			if (slot == nullptr && free_slot != nullptr) {
+				slot = free_slot;
+				slot->id = ident.thread_id;
+				slot->ns = 0;
+			}
+			delta = slot != nullptr && ns >= slot->ns ? ns - slot->ns : 0;
+			if (slot != nullptr) {
+				slot->ns = ns;
+				slot->seen = true;
+			}
+			for (unsigned k = 0; k < 6; k++) {
+				if (delta > top[k].ns) {
+					memmove(&top[k + 1], &top[k], (5 - k) * sizeof(top[0]));
+					snprintf(top[k].name, sizeof(top[k].name), "%s", ext.pth_name[0] ? ext.pth_name : "-");
+					top[k].id = ident.thread_id;
+					top[k].ns = delta;
+					break;
+				}
+			}
+		}
+		mach_port_deallocate(mach_task_self(), threads[i]);
+	}
+	vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(threads[0]));
+	for (thread_cpu &t : thread_cpus) {
+		if (!t.seen) {
+			t.id = 0;       /* (an ended thread: its place for another) */
+		}
+	}
+	at = (size_t)snprintf(line, sizeof(line), "rwm threads %s: %u, the task %.0f ms/s;", getprogname(), count,
+			      task_cpu_last != 0 && task_ns >= task_cpu_last ? (task_ns - task_cpu_last) * 1e3 / span : 0.0);
+	task_cpu_last = task_ns;
+	for (unsigned k = 0; k < 6 && top[k].ns != 0 && at < sizeof(line); k++) {
+		at += (size_t)snprintf(line + at, sizeof(line) - at, " %.24s#%llu %.0f", top[k].name,
+				       (unsigned long long)(top[k].id & 0xffff), top[k].ns * 1e3 / span);
+	}
+	say(line);
 }
 } // namespace
 
@@ -211,6 +312,7 @@ rwm_perf_report(uint64_t now)
 		}
 	}
 	area_report();
+	threads_report(span);
 	rwm_texture_sample_report(say);
 	{
 		char up[200];
