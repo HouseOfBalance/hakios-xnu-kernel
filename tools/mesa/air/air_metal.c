@@ -7318,15 +7318,27 @@ rwa_render_create(struct rwa_device *device,
    /* Compile both stages now. A failure here is a creation failure and says so; the
     * stages are linked later, at the draw.
     */
+   /* Every stage, not only a configured one, has its decided branches taken away, outside the lock: a stage
+    * specialized by function constants is the uber shader with all its branches still in it (the icon's: some 6900
+    * values, 225 instructions once compiled), and panfrost keeps that NIR for the pipeline's life -- 16 to 32 MB a
+    * pipeline, 2.3 GB of the phone's 4 in backboardd after the warm-up's 200 (run 276), jetsam ending 150 processes
+    * and the GPU failing chains (runs 270, 273, 274). Boot-arg rwa_shrink=0: as before, configured stages only. */
+   static int shrink_all = -1;
+   if (shrink_all < 0) {
+      char args[1024] = { 0 };
+      size_t size = sizeof(args) - 1;
+
+      shrink_all = !(sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "rwa_shrink=0"));
+   }
+   if (fragment_config_size || shrink_all)
+      shrink_decided(fs);
+   if ((vertex_config_size || shrink_all) && !render->generated_vertex)
+      shrink_decided(vs);
    int64_t made_translated = os_time_get_nano();
    if (unlocked) {
       pthread_mutex_lock(&rwa_lock);
       unlocked = false;
    }
-   if (fragment_config_size)
-      shrink_decided(fs);
-   if (vertex_config_size && !render->generated_vertex)
-      shrink_decided(vs);
    render->fs_cso = make_stage_cso(device, fs, &render->finfo, why, why_size);
    if (!render->fs_cso)
       goto fail;

@@ -570,7 +570,26 @@ struct rwm_command {
 	volatile bool queued, processed;   /* handed to the driver's worker at -commit, and done there */
 	struct rwm_drawn drawn;         /* the surfaces it draws into in place, pending meanwhile */
 	struct rwm_sampled sampled;     /* the surfaces it reads in place, in use until the GPU is done */
+	const struct rwa_render *renders[32];   /* its pipelines, the first 32 (boot-arg rwm_failnames=1) */
+	unsigned nrenders;
 };
+
+/* boot-arg rwm_failnames=1: after each buffer the GPU finished, kern.hakios.mali_failed read; when it went up, the
+ * buffer's pipelines said, each marked w (built by the warm-up), v (a variant built ahead) or - (built at the draw) */
+bool rwm_failnames(void);
+void rwm_command_note_render(const struct rwa_render *render);
+bool rwm_warm_owns(const struct rwa_render *render);
+/* before a pipeline's render is destroyed: what is kept by its address forgets it -- the generic record whose base
+ * it is (whose variants a later pipeline at the same address would otherwise be given), its label, the warm-up's
+ * entry (src/metal/pipeline.cpp) */
+void rwm_render_forget(const struct rwa_render *render);
+void rwm_area_forget(const struct rwa_render *render);
+void rwm_warm_forget(const struct rwa_render *render);
+/* the task's memory as jetsam counts it (phys_footprint), in MB (src/metal/perf.cpp) */
+unsigned rwm_footprint_mb(void);
+/* the warm-up's label of a pipeline it built (short, without com.apple.coreanimation.), NULL for another */
+const char *rwm_warm_label(const struct rwa_render *render);
+bool rwm_variant_ahead(const struct rwa_render *render);
 
 void rwm_command_begin(struct rwm_command *command);
 /* -commit, on the thread that makes the buffer: the making counted, that thread put on a big core once (bigcore=1),

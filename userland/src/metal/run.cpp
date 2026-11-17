@@ -183,6 +183,9 @@ rwm_run_works(struct rwa_device *device, struct rwm_work *const *works, unsigned
 				before = draw_target_bytes(w, dtarget, &bbytes);
 			}
 			failed = rwm_run_draw(&w->draw, why, why_size);
+			if (rwm_failnames()) {
+				rwm_command_note_render(w->draw.render);
+			}
 			/* boot-arg rwm_drawfail=1: the GPU finished after every draw, and a draw whose job chain the Mali failed
 			 * (kern.hakios.mali_failed went up) named -- 20 to 40 % of the chains fail with slot status 0x51 since
 			 * the 27 release's home screen draws (runs 199 to 222), and which pipeline's shader it is is the question

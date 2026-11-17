@@ -675,20 +675,28 @@ static LCK_MTX_DECLARE(mali_job_lock, &mali_lock_group);
 static int mali_wait_event;
 static LCK_MTX_DECLARE(mali_wait_lock, &mali_lock_group);
 
+/* `want` 0: any of the bits of `mask` (a job that is done or failed -- a failure used to be seen only when the
+ * second for a job was over: 65 failed chains, a second each, made run 270's frames one a second) */
+static inline bool
+job_bits_are(uint32_t value, uint32_t mask, uint32_t want)
+{
+	return want != 0 ? (value & mask) == want : (value & mask) != 0;
+}
+
 static bool
 wait_job(uint32_t at, uint32_t mask, uint32_t want, uint32_t ms)
 {
 	uint64_t deadline;
 
 	for (int i = 0; i < 20; i++) {
-		if ((rd(mali, at) & mask) == want) {
+		if (job_bits_are(rd(mali, at), mask, want)) {
 			return true;
 		}
 		delay(10);
 	}
 	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
 	while (mach_absolute_time() < deadline) {
-		if ((rd(mali, at) & mask) == want) {
+		if (job_bits_are(rd(mali, at), mask, want)) {
 			return true;
 		}
 		uint64_t nap;
@@ -698,7 +706,7 @@ wait_job(uint32_t at, uint32_t mask, uint32_t want, uint32_t ms)
 		(void)lck_mtx_sleep_deadline(&mali_wait_lock, LCK_SLEEP_DEFAULT, (event_t)&mali_wait_event, THREAD_UNINT, nap);
 		lck_mtx_unlock(&mali_wait_lock);
 	}
-	return (rd(mali, at) & mask) == want;
+	return job_bits_are(rd(mali, at), mask, want);
 }
 
 #define MMU_INT_RAWSTAT     0x2000
@@ -1297,8 +1305,10 @@ mtk_mali_submit(uint64_t chain, bool fragment)
 	wr(mali, js + JS_CONFIG_NEXT, JS_CONFIG);
 	wr(mali, js + JS_COMMAND_NEXT, 1);
 	lck_mtx_unlock(&mali_lock);
-	finished = wait_job(JOB_INT_RAWSTAT, (1u << slot) | (1u << (slot + 16)), 1u << slot, 1000);
+	finished = wait_job(JOB_INT_RAWSTAT, (1u << slot) | (1u << (slot + 16)), 0, 1000);
 	lck_mtx_lock(&mali_lock);
+	raw = rd(mali, JOB_INT_RAWSTAT);
+	finished = finished && (raw & (1u << slot)) != 0 && (raw & (1u << (slot + 16))) == 0;
 	if (!finished) {
 		raw = rd(mali, JOB_INT_RAWSTAT);
 		status = (raw & (1u << (slot + 16))) ? rd(mali, js + JS_STATUS) : 0xff;

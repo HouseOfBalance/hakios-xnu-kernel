@@ -46,7 +46,7 @@ struct area_entry {
 	char label[72];
 	uint64_t draws, pixels;
 };
-area_entry areas[128];
+area_entry areas[512];   /* (128 were full after the warm-up's 200: later pipelines went unnamed, run 277) */
 pthread_mutex_t areas_lock = PTHREAD_MUTEX_INITIALIZER;
 
 area_entry *
@@ -183,8 +183,20 @@ threads_report(uint64_t span)
 			t.id = 0;       /* (an ended thread: its place for another) */
 		}
 	}
-	at = (size_t)snprintf(line, sizeof(line), "rwm threads %s: %u, the task %.0f ms/s;", getprogname(), count,
-			      task_cpu_last != 0 && task_ns >= task_cpu_last ? (task_ns - task_cpu_last) * 1e3 / span : 0.0);
+	/* and the task's memory, as jetsam counts it: the warm-up's pipelines keep their NIR (run 274: 128 processes
+	 * ended by jetsam, and the GPU failing chains from then on) */
+	uint64_t footprint = 0;
+	{
+		task_vm_info_data_t vm;
+		mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+
+		if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &n) == KERN_SUCCESS) {
+			footprint = vm.phys_footprint;
+		}
+	}
+	at = (size_t)snprintf(line, sizeof(line), "rwm threads %s: %u, the task %.0f ms/s, %llu MB;", getprogname(), count,
+			      task_cpu_last != 0 && task_ns >= task_cpu_last ? (task_ns - task_cpu_last) * 1e3 / span : 0.0,
+			      (unsigned long long)(footprint >> 20));
 	task_cpu_last = task_ns;
 	for (unsigned k = 0; k < 6 && top[k].ns != 0 && at < sizeof(line); k++) {
 		at += (size_t)snprintf(line + at, sizeof(line) - at, " %.24s#%llu %.0f", top[k].name,
@@ -232,6 +244,19 @@ rwm_thread_cpu_ns(void)
 	}
 	mach_port_deallocate(mach_task_self(), self);
 	return ns;
+}
+
+/* the task's memory as jetsam counts it (phys_footprint), in MB */
+extern "C" unsigned
+rwm_footprint_mb(void)
+{
+	task_vm_info_data_t vm;
+	mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+
+	if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &n) != KERN_SUCCESS) {
+		return 0;
+	}
+	return (unsigned)(vm.phys_footprint >> 20);
 }
 
 extern "C" uint64_t
@@ -334,6 +359,20 @@ rwm_perf_report(uint64_t now)
 	}
 	memset(&p, 0, sizeof(p));
 	p.since = now;
+}
+
+extern "C" void
+rwm_area_forget(const struct rwa_render *render)
+{
+	pthread_mutex_lock(&areas_lock);
+	for (area_entry &e : areas) {
+		if (e.render == render) {
+			e.render = nullptr;
+			e.label[0] = 0;
+			e.draws = e.pixels = 0;
+		}
+	}
+	pthread_mutex_unlock(&areas_lock);
 }
 
 extern "C" void

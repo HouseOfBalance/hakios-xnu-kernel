@@ -123,6 +123,7 @@ struct generic_variant {
 	uint8_t vertex[8], fragment[64];
 	struct rwa_render *render;      /* NULL: the build failed, said once */
 	bool building;                  /* being built (by a draw or ahead, prebuild_main): wait for generic_cond */
+	bool ahead;                     /* built by prebuild_main */
 };
 
 struct generic_record {
@@ -147,6 +148,7 @@ void prebuild_start(struct generic_record *g);
 thread_local unsigned last_variant;
 struct generic_record *generics[64];
 unsigned ngenerics;
+unsigned generics_forgotten, generics_adopted, renders_forgotten;
 
 bool
 boot_arg(const char *what)
@@ -221,6 +223,24 @@ generic_keep(struct rwa_device *device, const char *label, const struct rwm_rend
 	struct generic_record *kept = nullptr;
 
 	pthread_mutex_lock(&generic_lock);
+	/* the same generic pipeline made again after its first was let go (rwm_render_forget): its record and the
+	 * variants built for it are taken up again rather than built a second time */
+	for (unsigned i = 0; i < ngenerics; i++) {
+		struct generic_record *old = generics[i];
+
+		if (old->base == nullptr && strcmp(old->label, g->label) == 0 && memcmp(&old->shape, &g->shape,
+		    sizeof(g->shape)) == 0 && old->nv == g->nv && old->nf == g->nf &&
+		    memcmp(old->vc, g->vc, g->nv * sizeof(g->vc[0])) == 0 && memcmp(old->fc, g->fc, g->nf * sizeof(g->fc[0])) == 0 &&
+		    old->vertex_size == g->vertex_size && old->fragment_size == g->fragment_size) {
+			old->base = base;
+			generics_adopted++;
+			pthread_mutex_unlock(&generic_lock);
+			free(g->vertex);
+			free(g->fragment);
+			free(g);
+			return;
+		}
+	}
 	if (ngenerics < sizeof(generics) / sizeof(generics[0])) {
 		generics[ngenerics++] = g;
 		kept = g;
@@ -348,6 +368,7 @@ prebuild_main(void *context)
 			memcpy(v->fragment, c->fragment, sizeof(v->fragment));
 			v->render = nullptr;
 			v->building = true;
+			v->ahead = true;
 		}
 		pthread_mutex_unlock(&generic_lock);
 		if (v == nullptr) {
@@ -372,8 +393,8 @@ prebuild_main(void *context)
 	if (built != 0) {
 		char line[200];
 
-		snprintf(line, sizeof(line), "!!rwm prebuilt %u variants of %s in %llu ms", built, label,
-			 (unsigned long long)((rwm_ns() - began) / 1000000));
+		snprintf(line, sizeof(line), "!!rwm prebuilt %u variants of %s in %llu ms; %u MB", built, label,
+			 (unsigned long long)((rwm_ns() - began) / 1000000), rwm_footprint_mb());
 		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
 	}
 	return nullptr;
@@ -425,6 +446,57 @@ config_of(struct rwa_buffer *buffer, size_t offset, unsigned size, uint8_t *out)
 }
 
 } // namespace
+
+extern "C" void
+rwm_render_forget(const struct rwa_render *render)
+{
+	unsigned forgot = 0;
+
+	if (render == nullptr) {
+		return;
+	}
+	pthread_mutex_lock(&generic_lock);
+	renders_forgotten++;
+	for (unsigned i = 0; i < ngenerics; i++) {
+		if (generics[i]->base == render) {
+			/* (its variants stay: a buffer not yet run may draw with them, and the same pipeline made again takes
+			 * them up) */
+			generics[i]->base = nullptr;
+			forgot++;
+		}
+	}
+	generics_forgotten += forgot;
+	const unsigned total = renders_forgotten, gf = generics_forgotten, ga = generics_adopted;
+	pthread_mutex_unlock(&generic_lock);
+	rwm_area_forget(render);
+	rwm_warm_forget(render);
+	if (forgot != 0 || (total & (total - 1)) == 0) {
+		char line[160];
+
+		snprintf(line, sizeof(line), "!rwm pipelines let go: %u, %u of them generic (%u made again and their variants "
+			 "taken up)", total, gf, ga);
+		sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+	}
+}
+
+extern "C" bool
+rwm_variant_ahead(const struct rwa_render *render)
+{
+	bool ahead = false;
+
+	pthread_mutex_lock(&generic_lock);
+	for (unsigned i = 0; render != nullptr && i < ngenerics && !ahead; i++) {
+		for (unsigned k = 0; k < generics[i]->nvariants; k++) {
+			if (generics[i]->variants[k].render == render) {
+				ahead = generics[i]->variants[k].ahead;
+				break;
+			}
+		}
+	}
+	pthread_mutex_unlock(&generic_lock);
+	return ahead;
+}
+
 
 extern "C" bool
 rwm_render_prepare(const char *label, struct rwa_render_shape *shape, bool has_vertex_descriptor,
@@ -570,7 +642,17 @@ rwm_render_compile(struct rwa_device *device, const char *label, const struct rw
 	if (shape->color_count > 0) {
 		rwm_blend_result(info->blend_enabled_mask, info->color_write_masks);
 	}
-	rwm_area_label(call.render, label);
+	/* a pipeline without a label is named by its functions (run 277: three of them were in every buffer whose chains
+	 * the Mali failed, and in no other, and the reports could only say "?") */
+	{
+		char named[72];
+
+		if (label == nullptr || label[0] == '\0') {
+			snprintf(named, sizeof(named), "no label: %s/%s", r->vertex_name != nullptr ? r->vertex_name : "-",
+				 r->fragment_name != nullptr ? r->fragment_name : "-");
+		}
+		rwm_area_label(call.render, label == nullptr || label[0] == '\0' ? named : label);
+	}
 	rwm_capture_pipeline(label, r, shape, call.render);
 	pipelog(label, r, shape, call.render, info);
 	if (generic && !boot_arg("rwm_specialize=0") && rwm_air()->render_config != nullptr) {
@@ -639,6 +721,7 @@ rwm_generic_variant(struct rwa_render *base, struct rwa_buffer *vertex, size_t v
 	memcpy(v->fragment, fcfg, sizeof(fcfg));
 	v->render = nullptr;
 	v->building = true;
+	v->ahead = false;
 	pthread_mutex_unlock(&generic_lock);
 
 	call.g = g;

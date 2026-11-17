@@ -3332,6 +3332,7 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 	 * descriptor, for the reason the compute one learned at its own line 1504 */
 	self = [super initWithDevice:device pipelineStateDescriptor:descriptor];
 	if (self == nil) {
+		rwm_render_forget(render);
 		mesa.render_destroy(render);
 		return nil;
 	}
@@ -3360,6 +3361,10 @@ rw_in_place(void *context, struct rwa_device *device, IOSurfaceRef surface, unsi
 - (void)dealloc
 {
 	if (_render != NULL) {
+		/* forgotten first: a later pipeline may be given the same address, and the generic record that knew this
+		 * one by it would hand that one its variants (the Mali failing chains with status 0x58 and 0x5b, runs 270
+		 * to 277) */
+		rwm_render_forget(_render);
 		mesa.render_destroy(_render);
 	}
 	[super dealloc];
