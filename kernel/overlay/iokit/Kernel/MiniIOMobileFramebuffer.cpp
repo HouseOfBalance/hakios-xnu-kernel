@@ -1386,7 +1386,8 @@ IOMobileFramebuffer::keepShot(void)
 	}
 	IOLockLock(fLock);
 	shot_keep = true;
-	shot_pixels(from, w, h, fRowBytes, 60, 0, 1);
+	/* fbshot_w=N: N pixels wide instead of 60 (a crop's detail: what an icon's name says, 16 November) */
+	shot_pixels(from, w, h, fRowBytes, gShotWidth >= 16 && gShotWidth <= 240 ? gShotWidth : 60, 0, 1);
 	shot_keep = false;
 	IOLockUnlock(fLock);
 }
