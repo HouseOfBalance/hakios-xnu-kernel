@@ -290,7 +290,11 @@ rwm_recipe_record(const char *label, const struct rwa_render_shape *shape, const
 			/* and at once to the kernel's buffer for the host, which comes back whole however long the
 			 * run (kern.hakios.host_keep): the log's middle is lost, and with it a long run's recipes
 			 * (run 352) */
-			say_recipe(recipes[nrecipes - 1], nrecipes - 1, true);
+			/* (only with boot-arg rwm_recipes=1 now that the 27 release's are in userland/share: a hundred of
+			 * them filled the 64 KB the kernel keeps for the host, and the run's last picture was cut, run 231) */
+			if (strstr(rwm_boot_args(), "rwm_recipes=1") != nullptr) {
+				say_recipe(recipes[nrecipes - 1], nrecipes - 1, true);
+			}
 		}
 	}
 	pthread_mutex_unlock(&compile_lock);
