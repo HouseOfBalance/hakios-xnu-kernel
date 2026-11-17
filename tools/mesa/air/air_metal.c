@@ -604,6 +604,30 @@ rwa_device_open(char *why, size_t why_size)
    bool software = debug_get_bool_option("RWA_SOFTWARE", false);
    device->software = software;
 
+#ifdef __APPLE__
+   /* boot-args pan_debug=FLAGS and bi_debug=FLAGS: PAN_MESA_DEBUG and BIFROST_MESA_DEBUG for a process nobody gives an
+    * environment (the window server), read once before the screen is made -- pan_debug=sync stops it at the first job
+    * the Mali fails, after the passes before it were said (16 November: 20 to 40 % of job chains fail with slot status
+    * 0x51 since the home screen draws) */
+   {
+      char args[1024] = "";
+      size_t size = sizeof(args) - 1;
+      const char *at;
+      char value[128];
+
+      if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+         if ((at = strstr(args, "pan_debug=")) != NULL && !getenv("PAN_MESA_DEBUG")) {
+            snprintf(value, sizeof(value), "%.*s", (int)strcspn(at + 10, " "), at + 10);
+            setenv("PAN_MESA_DEBUG", value, 1);
+         }
+         if ((at = strstr(args, "bi_debug=")) != NULL && !getenv("BIFROST_MESA_DEBUG")) {
+            snprintf(value, sizeof(value), "%.*s", (int)strcspn(at + 9, " "), at + 9);
+            setenv("BIFROST_MESA_DEBUG", value, 1);
+         }
+      }
+   }
+#endif
+
 #ifdef GALLIUM_FREEDRENO
    if (!software) {
       int fd = drmOpenWithType("msm", NULL, DRM_NODE_RENDER);

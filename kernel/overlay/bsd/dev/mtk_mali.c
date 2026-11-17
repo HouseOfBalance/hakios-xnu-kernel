@@ -287,6 +287,9 @@ SYSCTL_PROC(_kern_hakios, OID_AUTO, bind_cpu, CTLTYPE_INT | CTLFLAG_WR | CTLFLAG
 SYSCTL_UINT(_kern_hakios, OID_AUTO, mali_gl, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY, &gl_said, 0, "");
 SYSCTL_UINT(_kern_hakios, OID_AUTO, mali_gl_middle, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY, &gl_middle, 0, "");
 SYSCTL_UINT(_kern_hakios, OID_AUTO, mali_id, CTLFLAG_RD | CTLFLAG_LOCKED, &gpu_id, 0, "GPU_ID");
+/* how many job chains the GPU did not finish (DONE), for a program that waits on each of its own and wants to know
+ * which of them it was (userland's rwm_drawfail=1) */
+SYSCTL_UINT(_kern_hakios, OID_AUTO, mali_failed, CTLFLAG_RD | CTLFLAG_LOCKED, &gMaliFailed, 0, "");
 
 static inline uint32_t
 rd(vm_offset_t base, uint32_t at)

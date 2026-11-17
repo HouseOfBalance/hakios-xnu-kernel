@@ -252,6 +252,30 @@ main(int argc, char **argv)
 	struct rwa_device *dev = rwa_device_open(why, sizeof(why));
 	if (!dev) { fprintf(stderr, "device: %s\n", why); return 1; }
 	printf("device %s\n", rwa_device_name(dev));
+	/* RWA_FCSET=I:V,I:V...: those fragment constants given those values (added when the capture has none) -- which of
+	 * a pipeline's constants makes the Mali fail it */
+	if (getenv("RWA_FCSET")) {
+		const char *at = getenv("RWA_FCSET");
+		unsigned idx;
+		unsigned long long val;
+		int used;
+
+		while (sscanf(at, "%u:%llx%n", &idx, &val, &used) == 2) {
+			unsigned k;
+
+			for (k = 0; k < nfconst && fconst[k].index != idx; k++)
+				;
+			if (k == nfconst && nfconst < 64)
+				fconst[nfconst++].index = idx;
+			if (k < nfconst)
+				fconst[k].bits = val;
+			printf("fragment constant %u = %llx\n", idx, val);
+			at += used;
+			if (*at != ',')
+				break;
+			at++;
+		}
+	}
 	rwa_render_constants(vconst, nvconst, fconst, nfconst);
 	/* no entry names, as userland/src/metal/pipeline.cpp makes it */
 	struct rwa_render *render = rwa_render_create(dev, vbc, vsz, NULL, fbc, fsz, NULL, &shape, &info, why, sizeof(why));
@@ -353,8 +377,15 @@ main(int argc, char **argv)
 	d.fragment_buffer_table_count = nf;
 	d.viewport = have_viewport ? viewport : NULL;
 	d.scissor = have_scissor ? scissor : NULL;
+	unsigned failed_before = 0, failed_after = 0;
+	size_t fcsz = sizeof(failed_before);
+	/* on the phone: whether the Mali failed the draw's job chains (kern.hakios.mali_failed) */
+	sysctlbyname("kern.hakios.mali_failed", &failed_before, &fcsz, NULL, 0);
 	if (rwa_render_draw(render, &d, why, sizeof(why)) != 0) { fprintf(stderr, "draw: %s\n", why); return 1; }
 	if (rwa_finish(dev, why, sizeof(why)) != 0) { fprintf(stderr, "finish: %s\n", why); return 1; }
+	fcsz = sizeof(failed_after);
+	if (sysctlbyname("kern.hakios.mali_failed", &failed_after, &fcsz, NULL, 0) == 0)
+		printf("the GPU failed %u job chain(s) of this draw\n", failed_after - failed_before);
 
 	uint32_t *px = malloc(750 * 1624 * 4);
 	unsigned o[3] = { 0, 0, 0 }, z[3] = { 750, 1624, 1 };

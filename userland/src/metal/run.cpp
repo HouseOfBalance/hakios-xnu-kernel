@@ -183,6 +183,40 @@ rwm_run_works(struct rwa_device *device, struct rwm_work *const *works, unsigned
 				before = draw_target_bytes(w, dtarget, &bbytes);
 			}
 			failed = rwm_run_draw(&w->draw, why, why_size);
+			/* boot-arg rwm_drawfail=1: the GPU finished after every draw, and a draw whose job chain the Mali failed
+			 * (kern.hakios.mali_failed went up) named -- 20 to 40 % of the chains fail with slot status 0x51 since
+			 * the 27 release's home screen draws (runs 199 to 222), and which pipeline's shader it is is the question
+			 * (16 November). Slow: every draw becomes a pass of its own. */
+			{
+				static int dfail = -1;
+				static unsigned dfails;
+
+				if (dfail < 0) {
+					dfail = strstr(rwm_boot_args(), "rwm_drawfail=1") != nullptr;
+				}
+				if (dfail == 1 && dfails < 40) {
+					uint32_t before_failed = 0, after_failed = 0;
+					size_t sz = sizeof(before_failed);
+					uint64_t s1 = 0;
+					char r1[128];
+
+					sysctlbyname("kern.hakios.mali_failed", &before_failed, &sz, NULL, 0);
+					rwm_submit(device, true, &s1, r1, sizeof(r1));
+					sz = sizeof(after_failed);
+					sysctlbyname("kern.hakios.mali_failed", &after_failed, &sz, NULL, 0);
+					if (after_failed != before_failed) {
+						char line[240];
+						const char *lab = rwm_area_label_of(w->draw.render);
+
+						dfails++;
+						snprintf(line, sizeof(line), "!!rwm drawfail %u: %s (render %p, %u vertices, %u instances): "
+							 "the Mali failed %u chain(s)", dfails, lab != nullptr ? lab : "?",
+							 (void *)w->draw.render, w->draw.vertex_count, w->draw.instance_count,
+							 after_failed - before_failed);
+						sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+					}
+				}
+			}
 			if (dthis) {
 				uint64_t s0 = 0;
 				char r0[128], line[220];

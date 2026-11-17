@@ -2358,7 +2358,8 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
        * buffer at all, their [[color(n)]] read as zeros; attachment 0 is read as before -- the pipelines that read all
        * three draw nothing in a pass that loads, those that read none or only 0 draw (15 November, runs 90, 125, 156) */
       const bool skip_fetch = ((tint_mode() == 14 || tint_mode() == 15) && n >= 1) || (tint_mode() == 16 && n == 2) || tint_mode() == 21 ||
-                              ((tint_mode() == 17 || tint_mode() == 18) && n == 1);
+                              ((tint_mode() == 17 || tint_mode() == 18) && n == 1) ||
+                              tint_mode() == 28;   /* rwa_tint=28: no attachment read at all, the colour as computed */
       nir_def *fetched = skip_fetch ? nir_imm_vec4(&c->b, 0.0, 0.0, 0.0, 0.0)
                                     : nir_load_output(&c->b, 4, 32, nir_imm_int(&c->b, 0),
                                                       .dest_type = nir_type_float32,

@@ -144,7 +144,8 @@ PY
 # airplayd: the audio server starts it to look for AirPlay routes, and it dies at once (SIGSEGV), every 5 s.
 # PerfPowerServices is refused by the kernel (its busy loop does not work here). Do not leave its
 # Mach services advertised: PLClientLogger's synchronous permission request otherwise waits forever.
-for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServices; do
+# NO_JOBS="LABEL ...": more of them left out, for a run (a test of what a job does)
+for job in com.apple.ScreenTimeAgent com.apple.airplayd com.apple.PerfPowerServices ${NO_JOBS:-}; do
 	rm -f "$J/$job.plist" && echo "  no job $job"
 done
 # The last migration: darwin-renoir's skeleton says 20F66 (16.5), so the 26 release took itself for just updated
