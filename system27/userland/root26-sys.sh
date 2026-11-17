@@ -46,6 +46,10 @@ if [ -n "${METAL27:-}" ]; then
 	cp $METAL27/libOSMesa.8.dylib $T/lib/
 	ln -sf libOSMesa.8.dylib $T/lib/libhakiosair.dylib
 	cp $METAL27/QuartzCore-default.metallib $T/share/
+	# the 27 release's CoreAnimation pipelines, built ahead by each process's warm-up thread (tools/rwm-recipes.py)
+	[ -f "$(dirname "$RN")/userland/share/rwm-recipes27.txt" ] && cp "$(dirname "$RN")/userland/share/rwm-recipes27.txt" $T/share/rwm-recipes.txt
+	# ... and the generic pipelines' variants, built ahead the same way (tools/rwm-variants.py)
+	[ -f "$(dirname "$RN")/userland/share/rwm-variants27.txt" ] && cp "$(dirname "$RN")/userland/share/rwm-variants27.txt" $T/share/rwm-variants.txt
 	{ echo "/hakios/bin/tolog /hakios/bin/metal_props on ../../../hakios/lib/HakiosMetal HakiosMetalDevice"; cat $T/etc/rc; } > $T/etc/rc.m
 	mv $T/etc/rc.m $T/etc/rc
 	# RWA_REPLAY_DIR=DIR: captured draws (capNNN.txt) and the two shader modules (vspc.bc, fcph.bc) drawn again on the
