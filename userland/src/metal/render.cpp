@@ -211,11 +211,11 @@ rwm_render_color(struct rwm_render_state *s, unsigned index, unsigned level, voi
 	}
 	s->color[index] = rwm_bound_texture{ object, core };
 	s->color_level[index] = level;
-	/* MTLStoreActionDontCare (0) or a memoryless texture: what the pass draws there is not kept (rwa_draw.discard_mask)
-	 * -- only with boot-arg rwm_discard=1. By default everything is kept: with the discards the Mali failed fragment
-	 * chains (status 0x58 and 0x5b) every frame from the CoreAnimation blur's passes on (runs 256 to 282: up to 2153
-	 * chains a run; run 281 without them: 0 of 28875), and they gave no frames (runs 249, 250) */
-	if ((store == 0 || rwm_texture_memoryless(core)) && strstr(rwm_boot_args(), "rwm_discard=1") != nullptr) {
+	/* MTLStoreActionDontCare (0) or a memoryless texture: what the pass draws there is not kept (rwa_draw.discard_mask);
+	 * boot-arg rwm_keepall=1: everything kept. (Off from c562659 to 77b07a2 for failures that were an empty sampler
+	 * slot; without the discards every full-screen pass wrote its RGBA16F and R32F targets back, and the GPU waited
+	 * 16 to 23 ms a frame instead of 8: run 335 against 268) */
+	if ((store == 0 || rwm_texture_memoryless(core)) && strstr(rwm_boot_args(), "rwm_keepall=1") == nullptr) {
 		s->discard_mask |= 1u << index;
 	} else {
 		s->discard_mask &= ~(1u << index);

@@ -406,11 +406,9 @@ prebuild_start(struct generic_record *g)
 	pthread_t thread;
 	pthread_attr_t attr;
 
-	/* Only with boot-arg rwm_prebuild=1. With the builds ahead the Mali failed a fragment chain a frame (status 0x58
-	 * and 0x5b, the home screen then without most of its icons and the dock) in nearly every run, 256 to 296;
-	 * without them in none: 257, 262 to 267 (no warm-up either), 290 and 291 (the warm-up on). Why is not known
-	 * yet -- not the array of variants filling up (294 to 296 with room for 160 failed as well). */
-	if (!boot_arg("rwm_prebuild=1")) {
+	/* (on again since 77b07a2: what failed the Mali's fragment chains with the builds ahead was an empty sampler slot,
+	 * not the builds) */
+	if (boot_arg("rwm_prebuild=0")) {
 		return;
 	}
 	pthread_once(&prebuilt_once, prebuilt_load);
