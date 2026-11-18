@@ -1146,6 +1146,17 @@ dump_fragment(const char *what, uint64_t chain)
 
 	snprintf(name, sizeof(name), "%s-job", what);
 	dump_gpu(name, chain, 128);
+	/* and what the job's header names as the fault: 128 bytes before it and 128 from it (runs 284, 286 and 329 had
+	 * it at the same place in each batch's pool, +0x3b60 from the framebuffer descriptor, 32 bytes aligned) */
+	{
+		uint64_t fault = 0;
+
+		if (gpu_read(chain + 8, &fault, sizeof(fault)) && fault != 0) {
+			hakios_host_keep_add("mali dump %s: fault pointer %#llx", what, fault);
+			snprintf(name, sizeof(name), "%s-fault", what);
+			dump_gpu(name, (fault & ~31ull) - 128, 256);
+		}
+	}
 	if (gpu_read(chain + 40, &fbd, sizeof(fbd))) {
 		uint64_t params[8] = { 0 };
 

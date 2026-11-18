@@ -117,6 +117,15 @@ for side in sorted({w.split('-')[0] for w in blobs}):
             for k in range(3):
                 if 64 + (k + 1) * 16 <= len(blob) and 'Blend' in structs:
                     print(' Blend %d' % k); print('\n'.join(decode('Blend', blob[64 + k * 16:])))
+    fault = blobs.get(side + '-fault')
+    if fault:
+        # 128 bytes before the fault pointer and 128 from it: as texture and sampler descriptors, the 32-byte ones a
+        # pointer aligned so would name
+        for k in range(len(fault) // 32):
+            off = k * 32 - 128
+            print(' at fault %+d: %s' % (off, fault[k * 32:k * 32 + 32].hex()))
+        print(' Texture at the fault'); print('\n'.join(decode('Texture', fault[128:])))
+        print(' Sampler at the fault'); print('\n'.join(decode('Sampler', fault[128:])))
     sh = blobs.get(side + '-shader')
     if sh:
         print(' shader: %s' % sh[:64].hex())

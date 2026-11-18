@@ -4215,7 +4215,7 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
    struct pipe_sampler_view *views[RWA_MAX_TEXTURES] = { 0 };
    struct pipe_image_view images[RWA_MAX_TEXTURES] = { 0 };
    void *samplers[RWA_MAX_TEXTURES] = { 0 };
-   unsigned num_views = 0, num_images = 0, num_samplers = 0;
+   unsigned num_views = 0, num_images = 0, num_samplers = 0, declared_samplers = 0;
 
    for (unsigned i = 0; i < info->num_resources; i++) {
       const struct air_resource *r = &info->resources[i];
@@ -4402,6 +4402,7 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
          break;
 
       case AIR_RESOURCE_SAMPLER:
+         declared_samplers = MAX2(declared_samplers, r->index + 1);
          if (r->inline_sampler) {
             /* The shader's own word, built once and kept with the pipeline. It goes
              * through Metal's vocabulary on the way (sampler_state_from_air), which is
@@ -4468,8 +4469,14 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
     * for it or not: see default_sampler() -- softpipe dereferences the state of every
     * unit the shader touches, so a slot left empty is a crash rather than a default.
     */
-   for (unsigned i = 0; i < num_views; i++) {
-      if (!views[i] || samplers[i])
+   /* ... and in every slot the shader declares a sampler at that nothing was bound to, and every gap below the last
+    * one: Metal numbers samplers apart from textures, so a declared sampler with no texture at the same index was
+    * left empty -- and panfrost writes an empty slot as a descriptor of zeros, which the Mali refuses when the shader
+    * samples through it (DATA_INVALID_FAULT 0x58: runs 256 to 331, the fault pointer of run 331 at a sampler
+    * descriptor of 32 zero bytes between three valid ones). */
+   const unsigned sampler_slots = MAX3(num_views, num_samplers, declared_samplers);
+   for (unsigned i = 0; i < sampler_slots && i < ARRAY_SIZE(samplers); i++) {
+      if (samplers[i] || (i < num_views && !views[i] && i >= declared_samplers && i >= num_samplers))
          continue;
       samplers[i] = default_sampler(device);
       if (!samplers[i]) {
