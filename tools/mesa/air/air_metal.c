@@ -8144,6 +8144,12 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
             for (unsigned k = 0; k < last_discard_count; k++)
                pipe->invalidate_resource(pipe, last_discard[k]);
          }
+         /* ... held by a reference of their own until here: CoreAnimation lets go of its memoryless targets right
+          * after the pass that used them, and a bare pointer to one was a texture freed and given to something else
+          * before this invalidated it -- panfrost writing into whatever had its memory now, and the Mali failing a
+          * fragment chain a frame from then on (status 0x58 and 0x5b, runs 256 to 279) */
+         for (unsigned k = 0; k < last_discard_count; k++)
+            pipe_resource_reference(&last_discard[k], NULL);
          if ((last_cbuf || last_zs) && syncpass) {
             struct pipe_fence_handle *fence = NULL;
 
@@ -8157,9 +8163,17 @@ rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
          last_cbuf = fb.nr_cbufs ? fb.cbufs[0] : NULL;
          last_zs = fb.zsbuf;
          last_discard_count = 0;
+         /* ... and only while one of the pass's attachments is kept: a pass that keeps none -- a blur level stored
+          * with DontCare, its one target -- became a fragment job writing nothing back, which the Mali fails with
+          * status 0x58 or 0x5b, every frame from the first such pass on (runs 256 to 280; run 281 with no discards:
+          * 0 of 28875 chains failed) */
+         unsigned kept = 0;
          for (unsigned k = 0; k < fb.nr_cbufs; k++)
+            if (fb.cbufs[k] && !((draw->discard_mask >> k) & 1))
+               kept++;
+         for (unsigned k = 0; kept != 0 && k < fb.nr_cbufs; k++)
             if ((draw->discard_mask >> k) & 1 && fb.cbufs[k])
-               last_discard[last_discard_count++] = fb.cbufs[k]->texture;
+               pipe_resource_reference(&last_discard[last_discard_count++], fb.cbufs[k]->texture);
       }
    }
    pipe->set_framebuffer_state(pipe, &fb);
