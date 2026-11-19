@@ -1819,6 +1819,53 @@ hakios_springboard_init(void)
 			}
 		}
 	}
+	/*
+	 * The methods of the poster's image cache and of PaperBoardUI's poster controllers with where each starts, as an
+	 * offset into its image (dladdr's dli_fbase): SpringBoard stopped in a BSAssert of PUIMappedImageCacheManager.m
+	 * (runs 301, 326, 337 at the same place), and the shared cache of the 27 release has no names for those frames.
+	 * Boot-arg sb_methods=1 only.
+	 */
+	{
+		char args[1024] = "";
+		size_t size = sizeof(args) - 1;
+
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "sb_methods=1") != NULL) {
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+				static const char *const names[] = { "PUIMappedImageCacheManager", "PBUIMappedImageCacheManager",
+				    "PBUIPosterViewController", "PBUIPosterWallpaperViewController", "PBUIPosterVariantViewController" };
+
+				for (unsigned n = 0; n < sizeof(names) / sizeof(names[0]); n++) {
+					for (int meta = 0; meta < 2; meta++) {
+						Class cls = objc_getClass(names[n]);
+						unsigned count = 0;
+						Method *list;
+
+						if (cls == Nil) {
+							if (meta == 0) {
+								keep_line("!sbm: %s: no such class", names[n]);
+							}
+							continue;
+						}
+						list = class_copyMethodList(meta ? object_getClass((id)cls) : cls, &count);
+						for (unsigned i = 0; i < count; i++) {
+							IMP imp = method_getImplementation(list[i]);
+							Dl_info info;
+#if __has_feature(ptrauth_calls)
+							imp = (IMP)__builtin_ptrauth_strip((void *)imp, 0);   /* (the address, not the signed pointer) */
+#endif
+
+							if (dladdr((void *)imp, &info) != 0) {
+								keep_line("!sbm: %c[%s %s] %s+%#lx", meta ? '+' : '-', names[n],
+								    sel_getName(method_getName(list[i])), info.dli_fname ? strrchr(info.dli_fname, '/') + 1 : "?",
+								    (unsigned long)((uintptr_t)imp - (uintptr_t)info.dli_fbase));
+							}
+						}
+						free(list);
+					}
+				}
+			});
+		}
+	}
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 		Class uidev = objc_getClass("UIDevice");
 		SEL current = sel_registerName("currentDevice");
