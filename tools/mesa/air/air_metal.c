@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #pragma GCC visibility push(default)   /* the contract, out of libOSMesa (tools/mesa/air-osmesa.patch) */
 #include "air_metal.h"
@@ -93,6 +94,18 @@
 struct rwa_device {
    struct pipe_screen *screen;
    struct pipe_context *pipe;
+
+   /* A second context of the same screen, for compiling a pipeline's two stages only (rwa_render_create), under
+    * build_lock and not the library's lock: Panfrost's compile of a stage's first variant, at create_*_state, was
+    * the part of a pipeline's build still under that lock -- about 1.1 s of the 2 s a pipeline takes on the Mali
+    * G52, up to 2.5 s for the slowest -- and every draw of the window server waited on it while the warm-up built
+    * its 200 (the first six minutes after the 27 release's boot, runs 333-341). Its stages are the screen's
+    * (caps.shareable_shaders: Gallium's promise that a state made on one context binds on another, which Panfrost
+    * keeps -- a variant's code and descriptors are buffers of their own, referenced, out of this context's pools);
+    * nothing is drawn on it. NULL with boot-arg rwa_buildctx=0, RWA_BUILDCTX=0, a screen without shareable shaders,
+    * or no second context to be had: the stages are then compiled on `pipe` under the library's lock, as before. */
+   struct pipe_context *build_pipe;
+   pthread_mutex_t build_lock;
 
    /* NIR's options for this screen, asked once: the translator needs them to know what
     * the consumer can be handed (what it may leave for the backend to lower).
@@ -760,6 +773,30 @@ rwa_device_open(char *why, size_t why_size)
       goto fail;
    }
 
+   /* ... and the one pipelines are compiled on (build_pipe above) */
+   pthread_mutex_init(&device->build_lock, NULL);
+   {
+      const char *env = getenv("RWA_BUILDCTX");
+      bool aside = !(env && strcmp(env, "0") == 0) && device->screen->caps.shareable_shaders;
+#ifdef __APPLE__
+      char args[1024] = "";
+      size_t size = sizeof(args) - 1;
+
+      if (aside && sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "rwa_buildctx=0"))
+         aside = false;
+#endif
+      if (aside)
+         device->build_pipe = device->screen->context_create(device->screen, NULL, 0);
+#ifdef __APPLE__
+      char line[160];
+
+      snprintf(line, sizeof(line), "!!rwa: pipelines compiled on %s", device->build_pipe ?
+               "a context of their own, the draws not waiting" : aside ? "the drawing context (no second one was had)" :
+               "the drawing context (rwa_buildctx=0 or no shareable shaders)");
+      sysctlbyname("kern.hakios.say", NULL, NULL, line, strlen(line));
+#endif
+   }
+
    /* The two numbers Metal requires of every pipeline and its own base class answers
     * with nothing (docs/metal.md 10.8). They are properties of the screen, asked once.
     *
@@ -794,6 +831,8 @@ rwa_device_open(char *why, size_t why_size)
    return device;
 
 fail:
+   if (device->build_pipe)
+      device->build_pipe->destroy(device->build_pipe);
    if (device->pipe)
       device->pipe->destroy(device->pipe);
    if (device->screen)
@@ -817,6 +856,9 @@ rwa_device_close(struct rwa_device *device)
          pipe_resource_reference(&device->blank_res[t][d], NULL);
       }
    }
+   if (device->build_pipe)
+      device->build_pipe->destroy(device->build_pipe);
+   pthread_mutex_destroy(&device->build_lock);
    device->pipe->destroy(device->pipe);
    device->screen->destroy(device->screen);
    free(device);
@@ -6133,8 +6175,8 @@ compact_vertex_inputs(nir_shader *nir, int remap[16])
 }
 
 static void *
-make_stage_cso_remap(struct rwa_device *device, nir_shader *nir, struct air_shader_info *info,
-                     int *remap, char *why, size_t why_size)
+make_stage_cso_remap(struct rwa_device *device, struct pipe_context *pipe, nir_shader *nir,
+                     struct air_shader_info *info, int *remap, char *why, size_t why_size)
 {
    nir_shader *clone = nir_shader_clone(NULL, nir);
    if (!clone) {
@@ -6156,7 +6198,6 @@ make_stage_cso_remap(struct rwa_device *device, nir_shader *nir, struct air_shad
       note_constant_reads(clone, info);
 
    struct pipe_shader_state templ = { .type = PIPE_SHADER_IR_NIR, .ir.nir = clone };
-   struct pipe_context *pipe = device->pipe;
    void *cso = nir->info.stage == MESA_SHADER_VERTEX
                   ? pipe->create_vs_state(pipe, &templ)
                   : pipe->create_fs_state(pipe, &templ);
@@ -6168,10 +6209,10 @@ make_stage_cso_remap(struct rwa_device *device, nir_shader *nir, struct air_shad
 }
 
 static void *
-make_stage_cso(struct rwa_device *device, nir_shader *nir, struct air_shader_info *info,
-               char *why, size_t why_size)
+make_stage_cso(struct rwa_device *device, struct pipe_context *pipe, nir_shader *nir,
+               struct air_shader_info *info, char *why, size_t why_size)
 {
-   return make_stage_cso_remap(device, nir, info, NULL, why, why_size);
+   return make_stage_cso_remap(device, pipe, nir, info, NULL, why, why_size);
 }
 
 /* Whether a vertex shader reads vertex attributes, which used to be the one thing the
@@ -7143,8 +7184,9 @@ rwa_render_create(struct rwa_device *device,
     * The translation without the lock (26 October): AIR -> NIR asks nothing of the context (the
     * function constants handed over are this thread's, the translator keeps no state), and it was
     * some 40% of a pipeline's 100 to 250 ms -- time the worker's draws waited, which is the hitch
-    * of an effect seen for the first time (run 202, "rwm pipelines"). Taken again before the
-    * driver compiles (make_stage_cso) and on the way out.
+    * of an effect seen for the first time (run 202, "rwm pipelines"). Taken again once the
+    * driver has compiled the stages on the device's second context (build_pipe), or before it
+    * compiles them where there is none (make_stage_cso), and on the way out.
     */
    bool unlocked = pthread_mutex_unlock(&rwa_lock) == 0;
 
@@ -7342,13 +7384,19 @@ rwa_render_create(struct rwa_device *device,
    if ((vertex_config_size || shrink_all) && !render->generated_vertex)
       shrink_decided(vs);
    int64_t made_translated = os_time_get_nano();
-   if (unlocked) {
+   /* the two stages compiled on the device's second context, under its own lock, the library's still let go
+    * (build_pipe, struct rwa_device); on the drawing context and under the library's lock where there is none */
+   struct pipe_context *compile_pipe = device->pipe;
+   bool aside = false;
+   if (unlocked && device->build_pipe) {
+      pthread_mutex_lock(&device->build_lock);
+      compile_pipe = device->build_pipe;
+      aside = true;
+   } else if (unlocked) {
       pthread_mutex_lock(&rwa_lock);
       unlocked = false;
    }
-   render->fs_cso = make_stage_cso(device, fs, &render->finfo, why, why_size);
-   if (!render->fs_cso)
-      goto fail;
+   render->fs_cso = make_stage_cso(device, compile_pipe, fs, &render->finfo, why, why_size);
    int vremap[16];
    static int nocompact = -1;
    if (nocompact < 0) {
@@ -7361,8 +7409,17 @@ rwa_render_create(struct rwa_device *device,
          nocompact = strstr(args, "rwa_nocompact=1") != NULL;
 #endif
    }
-   render->vs_cso = make_stage_cso_remap(device, vs, render->generated_vertex ? NULL : &render->vinfo,
-                                         render->generated_vertex || nocompact ? NULL : vremap, why, why_size);
+   if (render->fs_cso)
+      render->vs_cso = make_stage_cso_remap(device, compile_pipe, vs,
+                                            render->generated_vertex ? NULL : &render->vinfo,
+                                            render->generated_vertex || nocompact ? NULL : vremap, why, why_size);
+   if (aside) {
+      pthread_mutex_unlock(&device->build_lock);
+      pthread_mutex_lock(&rwa_lock);
+      unlocked = false;
+   }
+   if (!render->fs_cso)
+      goto fail;
    if (nocompact)
       for (unsigned i = 0; i < 16; i++)
          vremap[i] = (int)i;
