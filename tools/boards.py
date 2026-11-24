@@ -69,7 +69,8 @@ SOC_SCHEMA = {
         'topckgen', 'infracfg_ao', 'gpio', 'spm', 'toprgu', 'apmixed', 'pwrap', 'keypad', 'scp_sram', 'scp_cfg',
         'scp_clkctrl', 'ap_dma_btif_tx', 'i2c2', 'btif', 'i2c4', 'spi2', 'msdc0', 'msdc1', 'mipi_rx', 'mfgcfg',
         'mali', 'mmsys', 'disp_mutex0', 'smi_common', 'disp_ovl0', 'conn', 'conn_mcu', 'conn_hif_on',
-        'conn_top_misc_off', 'conn_wbg', 'conn_misc_on', 'camsys', 'smi_larb3', 'seninf', 'camsv0', 'camsv1')},
+        'conn_top_misc_off', 'conn_wbg', 'conn_misc_on', 'camsys', 'smi_larb3', 'seninf', 'camsv0', 'camsv1',
+        'spmi', 'adreno')},
     'cpufreq': {'armpll_big_con1': (X, True), 'big_mhz': (D, True)},
 }
 BOARD_SCHEMA = {
@@ -102,6 +103,13 @@ FEATURE_BLOCKS = {
                       'mipi_rx', 'seninf', 'camsv1', 'smi_larb3', 'i2c4'),
     'battery-mt6358': ('pwrap',),
     'display-ovl-flip': ('disp_ovl0',),
+    'spmi-qcom': ('spmi',),
+    'tlmm-qcom': ('gpio',),
+    'geni-uart': (),
+    'keys-qcom-spmi': ('spmi',),
+    'battery-qcom-spmi': ('spmi',),
+    'gpu-adreno-610': ('adreno',),
+    'touch-fts-i2c': ('i2c2',),
 }
 FEATURE_SECTIONS = {'battery-mt6358': ('battery',), 'connsys-mt6631': ('connsys',), 'display-ovl-flip': ('display',),
                     'touch-td4160': ('display',), 'emmc-msdc': ('loader',)}

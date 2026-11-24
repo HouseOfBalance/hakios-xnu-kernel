@@ -1,0 +1,44 @@
+# sapphire: Xiaomi Redmi Note 13 4G (Qualcomm Snapdragon 685 / SM6225)
+name = "sapphire"
+description = "Xiaomi Redmi Note 13 4G"
+soc = "sm6225"
+features = ["spmi-qcom", "tlmm-qcom", "geni-uart", "keys-qcom-spmi", "battery-qcom-spmi", "gpu-adreno-610", "touch-fts-i2c"]
+
+[loader]
+kernel_load = 0x70080000            # SM6225 ABL loads text_offset=0x80000 at 0x70080000 (verified by ELR 0x70085114)
+chain_stub = 0x4a000000             # Trampoline page in low DRAM
+scratch = 0x80200000                # 2 MB scratch region in System RAM (0x80000000-0x1bfffffff; 0x50000000 is TZ hole!)
+marker = 0x80000000                 # Boot marker page
+panic_log = 0x80100000              # Persistent panic log region
+panic_log_size = 0x80000            # 512 KB panic log buffer
+test_buffer = 0xa0000000            # 4 MB diagnostic test buffer
+xnu_base = 0xc0000000               # Kernel Carveout base in upper DRAM
+xnu_size = 0xf7000000               # 3952 MB memory extent (0xc0000000..0x1b7000000, clear of top reserved regions)
+core_order = [0, 7, 6, 5, 4, 1, 2, 3]
+system_partition = "cust"
+
+[ramoops]
+console = 0x5d080000                # pstore console ring buffer (ramoops@5D000000 + 0x80000 dmesg records)
+console_size = 0x80000              # 512 KB console buffer (verified from sapphire.dtb)
+pmsg = 0x5d100000                   # pstore pmsg ring buffer (ramoops@5D000000 + 0x100000)
+pmsg_size = 0x100000                # 1 MB pmsg buffer (verified from sapphire.dtb)
+
+[display]
+fb_base = 0x5c000000                # ABL splash_region@5c000000 continuous splash framebuffer
+fb_size = 0x00f00000                # 15 MiB (verified from sapphire.dtb; ends before ramoops@5D000000)
+fb_pitch = 4320                     # 1080 * 4 bytes per pixel (XRGB8888)
+width = 1080
+height = 2400
+
+[fbdiag]
+marker = 0xa1040000                 # Framebuffer diagnostic marker page
+probes = [0x42000000, 0x80000000]
+
+[battery]
+design_uah = 5000000                # 5000 mAh battery capacity in microamp-hours
+
+[boot]
+android_device = "sapphire"
+cpus = 4
+seconds = 120
+bootargs = ["ufs_root=1"]

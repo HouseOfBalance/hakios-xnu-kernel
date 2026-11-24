@@ -17,6 +17,10 @@
 #include <sys/hakios_audio.h>
 #include <sys/hakios_input.h>
 #include <sys/mtk_emmc.h>
+#include <sys/qcom_ufs.h>
+#include <sys/qcom_spmi.h>
+#include <sys/qcom_tlmm.h>
+#include <sys/qcom_geni_uart.h>
 #include <sys/hakios_sparse.h>
 #include <sys/hakios_virtio_blk.h>
 
@@ -55,9 +59,21 @@ hakios_drivers_init(void)
 
 	/* storage */
 	mtk_emmc_devfs();               /* /dev/emmc0: the system image on the eMMC (emmc_root=1) */
+	qcom_ufs_devfs();               /* /dev/ufs0: the system image on Qualcomm UFS (ufs_root=1) */
 	hakios_virtio_blk_init();      /* /dev/rvblk0: a disk image of the host (QEMU) */
 	hakios_sparse_init();          /* /dev/rsp0: part of an image too big to hold */
 #if APFS
 	hakios_apfs_check_init();      /* mounts and walks /dev/rvblk0 once userland has /private/var up */
 #endif
+
+	/* Qualcomm SM6225 (sapphire) bring-up drivers */
+	qcom_spmi_init();
+	qcom_tlmm_init();
+	qcom_geni_uart_init();
+	qcom_spmi_keys_init();
+	qcom_spmi_battery_init();
+	qcom_fts_touch_init();
+	qcom_adreno_init();
+	qcom_spmi_rtc_init();
+	qcom_spmi_vibra_init();
 }

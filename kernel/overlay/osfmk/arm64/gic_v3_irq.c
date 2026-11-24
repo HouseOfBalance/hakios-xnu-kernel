@@ -73,21 +73,22 @@
 
 #define GIC_SGI_SIGNAL          0           /* cpu_signal(): another processor wants this one's attention */
 #define GIC_SGI_STOP            1           /* psci_smp_stop_here(): the system is going back to the boot loader */
-#define GIC_INTID_VTIMER        27          /* EL1 virtual timer PPI */
+#define GIC_INTID_VTIMER_QCOM   19          /* Qualcomm Snapdragon EL1 virtual timer PPI (16 + 3 in sapphire.dtb) */
+#define GIC_INTID_VTIMER        27          /* Standard ARMv8 EL1 virtual timer PPI */
 #define GIC_INTID_SPI_MIN       32
 #define GIC_INTID_SPURIOUS_MIN  1020
 #define GIC_SPI_MOST            48          /* attached at a time */
 #define GIC_PRIORITY_DEFAULT    0xa0
 
 /*
- * MediaTek MT6768 / Helio G85 GICv3 physical base addresses:
- * Distributor (GICD):     0x0C000000
- * Redistributor (GICR):   0x0C040000
+ * Qualcomm SM6225 (Snapdragon 685 / Khaje) GICv3 physical base addresses:
+ * Distributor (GICD):     0x0f200000 (/soc/interrupt-controller@f200000)
+ * Redistributor (GICR):   0x0f300000 (size 0x100000, 8 * 128 KB)
  */
-#define MT6768_GICD_BASE        0x0C000000ULL
-#define MT6768_GICR_BASE        0x0C040000ULL
+#define MT6768_GICD_BASE        0x0f200000ULL
+#define MT6768_GICR_BASE        0x0f300000ULL
 #define MT6768_GICD_SIZE        0x10000ULL
-#define MT6768_GICR_SIZE        0x200000ULL     /* 2 MB covers up to 16 redistributors (128 KB each) */
+#define MT6768_GICR_SIZE        0x100000ULL     /* 1 MB covers 8 redistributors (128 KB each) */
 
 static vm_offset_t gicd_base, gicr_base;
 static vm_size_t   gicr_size;
@@ -322,7 +323,7 @@ gic_irq_handler(__unused void *target, __unused void *refCon, __unused void *nub
 		}
 		gic_active_iar[cpu] = iar | GIC_IAR_TAKEN;
 
-		if (intid == GIC_INTID_VTIMER) {
+		if (intid == GIC_INTID_VTIMER_QCOM || intid == GIC_INTID_VTIMER) {
 			/* same sequence as the FIQ path in sleh_fiq() */
 			getCpuDatap()->cpu_decrementer = -1; /* Large */
 			rtclock_intr(TRUE);
@@ -434,7 +435,7 @@ gic_v3_irq_cpu_init(void)
 {
 	int cpu = cpu_number();
 	vm_offset_t gicr;
-	uint32_t mine = 1u << GIC_INTID_VTIMER;
+	uint32_t mine = (1u << GIC_INTID_VTIMER_QCOM) | (1u << GIC_INTID_VTIMER);
 
 	if (gicd_base == 0) {
 		DTEntry entry;
@@ -476,6 +477,19 @@ gic_v3_irq_cpu_init(void)
 	__builtin_arm_wsr64("ICC_SRE_EL1", __builtin_arm_rsr64("ICC_SRE_EL1") | 1);
 	__builtin_arm_isb(ISB_SY);
 
+	/*
+	 * Distributor: enable affinity routing (ARE_NS) and Group 1 BEFORE programming GICR!
+	 * On ARM GIC-500 (SM6225), ABL leaves GICD_CTLR = 0 (ARE_NS == 0), and while ARE_NS == 0
+	 * all GICR_SGI_base writes (ISENABLER0, IPRIORITYR, IGROUPR0) are RAZ/WI (ignored).
+	 */
+	uint32_t ctlr = gic_read32(gicd_base + GICD_CTLR);
+	if ((ctlr & (GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS)) != (GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS)) {
+		gic_write32(gicd_base + GICD_CTLR, ctlr | GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS);
+		while (gic_read32(gicd_base + GICD_CTLR) & GICD_CTLR_RWP) {
+			/* wait for the write to take effect */
+		}
+	}
+
 	gicr = gicr_cpu_base[cpu] = gic_find_redistributor();
 
 	uint32_t waker = gic_read32(gicr + GICR_WAKER);
@@ -501,20 +515,12 @@ gic_v3_irq_cpu_init(void)
 		mine |= sgis;
 	}
 
-	/* Virtual timer PPI (and those): Group 1 (IRQ), default priority, enabled */
+	/* Virtual timer PPI (19 & 27) + SGIs: Group 1 (IRQ), default priority, enabled */
 	gic_write32(gicr + GICR_IGROUPR0, gic_read32(gicr + GICR_IGROUPR0) | mine);
 	gic_write32(gicr + GICR_IGRPMODR0, gic_read32(gicr + GICR_IGRPMODR0) & ~mine);
+	*(volatile uint8_t *)(gicr + GICR_IPRIORITYR(GIC_INTID_VTIMER_QCOM)) = GIC_PRIORITY_DEFAULT;
 	*(volatile uint8_t *)(gicr + GICR_IPRIORITYR(GIC_INTID_VTIMER)) = GIC_PRIORITY_DEFAULT;
 	gic_write32(gicr + GICR_ISENABLER0, mine);
-
-	/* Distributor: affinity routing, Group 1 enabled (normally already so) */
-	uint32_t ctlr = gic_read32(gicd_base + GICD_CTLR);
-	if ((ctlr & (GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS)) != (GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS)) {
-		gic_write32(gicd_base + GICD_CTLR, ctlr | GICD_CTLR_ENABLE_G1NS | GICD_CTLR_ARE_NS);
-		while (gic_read32(gicd_base + GICD_CTLR) & GICD_CTLR_RWP) {
-			/* wait for the write to take effect */
-		}
-	}
 
 	/*
 	 * CPU interface: accept all priorities, no preemption grouping, Group 1 on. And no priority

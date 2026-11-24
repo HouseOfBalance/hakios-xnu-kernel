@@ -50,58 +50,22 @@ vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
  * TX Data register:      offset 0x00
  * Line Status Register:  offset 0x14 (bit 5: THRE / Transmitter Holding Register Empty)
  */
-#define MT6768_UART_PADDR       0x11002000ULL
-#define MT6768_UART_TX_OFFSET   0x00
-#define MT6768_UART_LSR_OFFSET  0x14
-#define MT6768_UART_LSR_THRE    0x20
-#define MT6768_UART_LSR_DR      0x01
-
-static vm_offset_t gMT6577UartBase = 0;
-
 extern "C" {
 void
 mt6577_uart_init(void)
 {
-	if (gMT6577UartBase == 0) {
-		gMT6577UartBase = ml_io_map(MT6768_UART_PADDR, 0x1000);
-	}
 }
 
 void
 mt6577_uart_putc(char c)
 {
-	if (gMT6577UartBase == 0) {
-		mt6577_uart_init();
-		if (gMT6577UartBase == 0) {
-			return;
-		}
-	}
-	/*
-	 * Wait until LSR THRE (bit 5) says the transmit register is free -- but not for ever. The
-	 * console writes through here, so a port that never reports ready (another owner, a gate
-	 * closed, a wrong mapping) would stop whatever thread is printing, and that is how this
-	 * kernel has hung before. A character is worth less than the thread.
-	 */
-	for (uint32_t spin = 0; spin < 100000; spin++) {
-		if (*(volatile uint32_t *)(gMT6577UartBase + MT6768_UART_LSR_OFFSET) & MT6768_UART_LSR_THRE) {
-			*(volatile uint32_t *)(gMT6577UartBase + MT6768_UART_TX_OFFSET) = (uint32_t)(uint8_t)c;
-			return;
-		}
-	}
+	(void)c;
 }
 
 void
 mt6577_uart_puts(const char *str)
 {
-	if (!str) {
-		return;
-	}
-	while (*str) {
-		if (*str == '\n') {
-			mt6577_uart_putc('\r');
-		}
-		mt6577_uart_putc(*str++);
-	}
+	(void)str;
 }
 }
 

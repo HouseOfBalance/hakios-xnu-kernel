@@ -35,16 +35,25 @@ make_env() {
 		$DR/build-tools/theos/toolchain/linux/iphone/bin $OBJ
 	[ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ] || { echo "mtk27: no $THEOS/sdks/iPhoneOS16.5.sdk"; exit 1; }
 	ln -sfn "$THEOS/sdks/iPhoneOS16.5.sdk" $TH/sdks/iPhoneOS16.5.sdk
-	cp "$ROOT/system27/tools/macos/ldid" $TH/toolchain/linux/iphone/bin/ldid
-	cp "$ROOT/system27/tools/macos/ldid" $DR/build-tools/theos/toolchain/linux/iphone/bin/ldid
-	# GNU sed's -i without a suffix, which macOS's sed takes as -i ''
-	cat > $DR/bin/sed <<'SH'
+	if [ "$(uname -s)" = Darwin ]; then
+		cp "$ROOT/system27/tools/macos/ldid" $TH/toolchain/linux/iphone/bin/ldid
+		cp "$ROOT/system27/tools/macos/ldid" $DR/build-tools/theos/toolchain/linux/iphone/bin/ldid
+		# GNU sed's -i without a suffix, which macOS's sed takes as -i ''
+		cat > $DR/bin/sed <<'SH'
 #!/bin/bash
 args=()
 for a in "$@"; do if [ "$a" = -i ]; then args+=(-i ""); else args+=("$a"); fi; done
 exec /usr/bin/sed "${args[@]}"
 SH
-	chmod +x $DR/bin/sed
+		chmod +x $DR/bin/sed
+	else
+		REAL_LDID=$(command -v ldid || true)
+		[ -z "$REAL_LDID" ] && [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ] && REAL_LDID="$THEOS/toolchain/linux/iphone/bin/ldid"
+		[ -z "$REAL_LDID" ] && [ -x "$HOME/tools-dl/ldid" ] && REAL_LDID="$HOME/tools-dl/ldid"
+		[ -n "$REAL_LDID" ] || { echo "mtk27: no Linux ldid binary found"; exit 1; }
+		ln -sfn "$REAL_LDID" $TH/toolchain/linux/iphone/bin/ldid
+		ln -sfn "$REAL_LDID" $DR/build-tools/theos/toolchain/linux/iphone/bin/ldid
+	fi
 	cat > $DR/xnu-env.sh <<SH
 # darwin-renoir's xnu-env.sh, as the system27/ scripts use it: this repository's tools and theos
 source "$ROOT/kernel/env.sh"
@@ -67,9 +76,12 @@ SH
 	cp -a "$ROOT/userland/root" $DR/userland/root
 	if [ ! -x "$ROOT/system27/tools/pacstrip" ] || [ "$ROOT/system27/tools/pacstrip.c" -nt "$ROOT/system27/tools/pacstrip" ]; then
 		log "building pacstrip"
-		# macOS: CommonCrypto for OpenSSL's three digests, and no copy_file_range (pacstrip copies by itself then)
-		clang -O2 -w -I"$ROOT/system27/tools/macos" -include "$ROOT/system27/tools/macos/cfr.h" \
-			-o "$ROOT/system27/tools/pacstrip" "$ROOT/system27/tools/pacstrip.c"
+		if [ "$(uname -s)" = Darwin ]; then
+			clang -O2 -w -I"$ROOT/system27/tools/macos" -include "$ROOT/system27/tools/macos/cfr.h" \
+				-o "$ROOT/system27/tools/pacstrip" "$ROOT/system27/tools/pacstrip.c"
+		else
+			cc -O2 -w -o "$ROOT/system27/tools/pacstrip" "$ROOT/system27/tools/pacstrip.c" -lcrypto
+		fi
 	fi
 	# gl26.sh writes into system27/userland/obj26 whatever OBJ says: that is $OBJ here
 	ln -sfn "$OBJ" "$ROOT/system27/userland/obj26"

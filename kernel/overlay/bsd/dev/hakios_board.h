@@ -43,6 +43,16 @@ enum {
 	HAKIOS_HAS_TOUCH_TD4160     = 1u << 8,  /* an OmniVision TD4160 (TouchComm) on SPI2, its pins bit-banged (touchscreen=2) */
 	HAKIOS_HAS_CONNSYS_MT6631   = 1u << 9,  /* CONNSYS with an MT6631: Wi-Fi and Bluetooth (connsys_step=N) */
 	HAKIOS_HAS_CAMERA_S5KJN1    = 1u << 10, /* a Samsung S5K JN1 on CSI through SENINF and CAMSV (mtkcam=1) */
+	/*
+	 * Qualcomm SM6225 (Snapdragon 685 / Khaje) peripheral drivers.
+	 */
+	HAKIOS_HAS_SPMI_QCOM        = 1u << 16, /* Qualcomm SPMI PMIC Arbiter v5 (qcom_spmi=1) */
+	HAKIOS_HAS_TLMM_QCOM        = 1u << 17, /* Qualcomm TLMM GPIO/pinctrl controller (qcom_tlmm=1) */
+	HAKIOS_HAS_GENI_UART        = 1u << 18, /* Qualcomm QUPv3 GENI debug UART (qcom_uart=1) */
+	HAKIOS_HAS_KEYS_QCOM_SPMI   = 1u << 19, /* Qualcomm PMIC PON power/volume keys over SPMI (qcom_keys=1) */
+	HAKIOS_HAS_BATTERY_QCOM_SPMI = 1u << 20, /* Qualcomm PMIC fuel gauge / battery over SPMI (qcom_batt=1) */
+	HAKIOS_HAS_GPU_ADRENO_610   = 1u << 21, /* Qualcomm Adreno 610 GPU / KGSL-3D0 (qcom_adreno=1) */
+	HAKIOS_HAS_TOUCH_FTS_I2C    = 1u << 22, /* FocalTech FTS touch controller on QUPv3 GENI I2C2 (qcom_touch=1) */
 };
 
 struct hakios_board {
@@ -67,6 +77,7 @@ struct hakios_board {
 		uint64_t mmsys, disp_mutex0, smi_common, disp_ovl0;
 		uint64_t conn, conn_mcu, conn_hif_on, conn_top_misc_off, conn_wbg, conn_misc_on;
 		uint64_t camsys, smi_larb3, seninf, camsv0, camsv1;
+		uint64_t spmi, adreno;
 	} blocks;
 
 	/* the panel and the framebuffer LK leaves on it (board: [display]) */

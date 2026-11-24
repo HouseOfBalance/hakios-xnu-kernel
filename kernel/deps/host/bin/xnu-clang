@@ -8,16 +8,25 @@
 HB="$(cd "$(dirname "$0")" && pwd)"
 case "$(basename "$0")" in *++) drv=clang++; extra=(-fno-use-cxa-atexit);; *) drv=clang; extra=();; esac
 args=()
+arch=arm64
+skip_next=0
 for a in "$@"; do
+  if [ "$skip_next" = 1 ]; then
+    skip_next=0
+    [ "$a" = arm64e ] && arch=arm64e
+    if [ "$(uname -s)" = Darwin ]; then args+=(-arch "$a"); fi
+    continue
+  fi
   case "$a" in
+    -arch) skip_next=1 ;;
     -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang) ;;
     -fapple-kext-vtable-verify|-Wno-vla-cxx-extension|-mno-implicit-sme) ;;   # (Apple clang only)
     -Werror|-Werror=*|-Weverything|-pedantic-errors) ;;
     *) args+=("$a");;
   esac
 done
-# (not for arm64e: upstream LLVM compiles it to empty functions, so the 27 release's libraries take the system's clang)
+# (not for arm64e: upstream LLVM 19 compiles it to empty functions, whereas macOS clang or Linux LLVM 21+ handles it)
 CC_DIR=/usr/bin
-case " $* " in *" arm64e "*) ;; *) [ -x "$HB/../../llvm19/bin/$drv" ] && CC_DIR="$HB/../../llvm19/bin" ;; esac
-exec "$CC_DIR/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target arm64-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
+case "$arch" in arm64e) ;; *) [ -x "$HB/../../llvm19/bin/$drv" ] && CC_DIR="$HB/../../llvm19/bin" ;; esac
+exec "$CC_DIR/$drv" -include "$HB/../../hostinc/xnu_clang_compat.h" -target ${arch}-apple-ios${XNU_SDK_VERSION:-16.5} --ld-path="$HB/ld64" \
   -w "${extra[@]}" "${args[@]}"

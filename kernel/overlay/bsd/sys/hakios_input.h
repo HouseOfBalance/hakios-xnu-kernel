@@ -79,6 +79,14 @@ void mtk_wifi_net_early(void);        /* connsys_step 16 and on: en0, before the
 int hakios_wifi_tell(const char *format, ...) __printflike(1, 2);     /* a line of the station's for whoever runs the phone (hakios_wifi_given.c) */
 /* the network to join (fw/network of the small image): name and passphrase, buffer sizes in and lengths out */
 bool hakios_wifi_network(uint8_t *name, unsigned *name_length, uint8_t *passphrase, unsigned *passphrase_length);
+
+/* Qualcomm SM6225 (sapphire) peripheral bring-up hooks */
+void qcom_spmi_keys_init(void);
+void qcom_spmi_battery_init(void);
+void qcom_fts_touch_init(void);
+void qcom_adreno_init(void);
+void qcom_spmi_rtc_init(void);
+void qcom_spmi_vibra_init(void);
 #endif
 
 #endif /* _SYS_HAKIOS_INPUT_H_ */

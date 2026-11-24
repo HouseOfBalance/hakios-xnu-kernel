@@ -191,11 +191,12 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
-@@ -64,6 +64,7 @@ extern "C" {
+@@ -64,6 +64,8 @@ extern "C" {
  #endif
  
  extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
 +extern int mtk_emmc_root(dev_t *root);
++extern int qcom_ufs_root(dev_t *root);
  extern dev_t mdevlookup(int devid);
  extern void mdevremoveall(void);
  extern int mdevgetrange(int devid, uint64_t *base, uint64_t *size);
@@ -215,7 +216,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
  		OSSafeReleaseNULL(service);
  	} else {
  		IOLog("!BSD\n");
-@@ -791,10 +799,42 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+@@ -791,10 +800,54 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  #endif /* __LP64__ */
  				(void)mdevadd(-1, ml_static_ptovirt(ramdParms[0]) >> 12, (unsigned int) (ramdParms[1] >> 12), 0);        /* Initialize it and pass back the device number */
  			}
@@ -242,6 +243,7 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 +//
 +	{
 +		uint32_t emmcRoot = 0;
++		uint32_t ufsRoot = 0;
 +
 +		if (PE_parse_boot_argn("emmc_root", &emmcRoot, sizeof(emmcRoot)) && emmcRoot) {
 +			OSSafeReleaseNULL(matching);
@@ -249,6 +251,16 @@ diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 +				panic("IOFindBSDRoot: emmc_root=1, but the eMMC's xnusys partition could not be read");
 +			}
 +			strlcpy(rootName, "emmc0", rootNameSize);
++			IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
++			*oflags = 0;
++			goto iofrootx;
++		}
++		if (PE_parse_boot_argn("ufs_root", &ufsRoot, sizeof(ufsRoot)) && ufsRoot) {
++			OSSafeReleaseNULL(matching);
++			if (qcom_ufs_root(root) != 0) {
++				panic("IOFindBSDRoot: ufs_root=1, but the UFS system partition could not be read");
++			}
++			strlcpy(rootName, "ufs0", rootNameSize);
 +			IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
 +			*oflags = 0;
 +			goto iofrootx;

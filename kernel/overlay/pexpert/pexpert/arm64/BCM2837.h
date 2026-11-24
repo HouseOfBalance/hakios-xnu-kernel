@@ -15,11 +15,10 @@
 #define GENERIC_PSCI_SMP                  1 /* more cores are started through PSCI, see osfmk/arm64/psci_smp.c */
 
 /*
- * The cores this kernel really runs on (Cortex-A55/A78, QEMU cortex-a76) are
- * ARMv8.2: they set PSTATE.PAN on every exception entry, so the kernel must
- * know to lift it around user memory accesses.
+ * Qualcomm SM6225 (Kryo 265 / Cortex-A73 + A53) is ARMv8.0-A and does NOT
+ * implement FEAT_PAN (ARMv8.1): executing `msr pan, #1` triggers an EL1
+ * Undefined Instruction panic (0xd500419f). Leave __ARM_PAN_AVAILABLE__ unset.
  */
-#define __ARM_PAN_AVAILABLE__     1
 
 #define __ARM_ARCH__              8
 #define __ARM_VMSA__              8

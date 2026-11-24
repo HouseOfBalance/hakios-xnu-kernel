@@ -13,6 +13,7 @@ __pycache__/
 # device packages brought in with tools/device.py: they are kept on the devices branch, not here
 /devices/*/
 !/devices/_template/
+!/devices/sapphire/
 # yours and your phone's, never the repository's: the rooted boot image, firmware, logs, packages
 /backup/
 /logs/

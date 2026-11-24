@@ -66,7 +66,7 @@
 
 enum {
 	R_RETA, R_BRA, R_BLRA, R_BRAZ, R_BLRAZ, R_PACAUT, R_XPAC, R_PACGA,
-	R_LDRA_LDR, R_LDRA_LDUR, R_LDRA_PRE, R_LDAPUR0, R_STLUR0,
+	R_LDRA_LDR, R_LDRA_LDUR, R_LDRA_PRE, R_LDAPUR0, R_STLUR0, R_LDAPR,
 	NREW
 };
 static const char *const rew_name[NREW] = {
@@ -81,8 +81,9 @@ static const char *const rew_name[NREW] = {
 	"LDRAA/LDRAB #off>=0 -> LDR (imm12)",
 	"LDRAA/LDRAB #-256..-8 -> LDUR",
 	"LDRAA/LDRAB ! #-256..248 -> LDR pre-index",
-	"LDAPUR{B,H,W,X} #0 -> LDAPR",
+	"LDAPUR{B,H,W,X} #0 -> LDAR",
 	"STLUR{B,H,W,X} #0 -> STLR",
+	"LDAPR{B,H,W,X} -> LDAR (ARMv8.0)",
 };
 
 /* left over: what such a CPU cannot execute and pacstrip cannot rewrite */
@@ -204,16 +205,21 @@ classify(uint32_t x, uint32_t *out)
 				return LEFT0 + L_RCPC2_OFF;
 			*out = size << 30 | 0x089ffc00u | base;
 			return R_STLUR0;
-		case 1: /* LDAPURB/LDAPURH/LDAPUR W/X */
+		case 1: /* LDAPURB/LDAPURH/LDAPUR W/X -> ARMv8.0 LDAR */
 			if (imm9 != 0)
 				return LEFT0 + L_RCPC2_OFF;
-			*out = size << 30 | 0x38bfc000u | base;
+			*out = size << 30 | 0x08dffc00u | base;
 			return R_LDAPUR0;
 		case 2: /* LDAPURSB/LDAPURSH/LDAPURSW Xt; size 3 unallocated */
 			return size < 3 ? LEFT0 + L_LDAPURS : C_NONE;
 		default: /* LDAPURSB/LDAPURSH Wt; size 2/3 unallocated */
 			return size < 2 ? LEFT0 + L_LDAPURS : C_NONE;
 		}
+	}
+	if ((x & 0x3ffffc00u) == 0x38bfc000u) {
+		/* ARMv8.3 LDAPR{B,H,W,X} Rt, [Rn] -> ARMv8.0 LDAR{B,H,W,X} Rt, [Rn] */
+		*out = (x & 0xc00003ffu) | 0x08dffc00u;
+		return R_LDAPR;
 	}
 	if ((x & 0xffffff1fu) == 0xd503231fu || (x & 0xffffff1fu) == 0xd503211fu || x == 0xd50320ffu)
 		return C_HINT;

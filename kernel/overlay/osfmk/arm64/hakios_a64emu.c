@@ -23,6 +23,7 @@
  */
 #include <mach/mach_types.h>
 #include <mach/arm/thread_status.h>
+#include <kern/locks.h>
 #include <kern/task.h>
 #include <kern/misc_protos.h>
 #include <arm64/proc_reg.h>
@@ -31,12 +32,43 @@
 bool hakios_a64emu(arm_context_t *context);
 
 enum {
-	EMU_RET, EMU_BR, EMU_BLR, EMU_PAC, EMU_PACGA, EMU_LDRA, EMU_RCPC2, EMU_FJCVTZS, EMU_SB, EMU_KINDS
+	EMU_RET, EMU_BR, EMU_BLR, EMU_PAC, EMU_PACGA, EMU_LDRA, EMU_RCPC2, EMU_FJCVTZS, EMU_SB,
+	EMU_LDAPR, EMU_LSE_CAS, EMU_LSE_CASP, EMU_LSE_LDOP, EMU_DCCVAP, EMU_FLAGM,
+	EMU_KINDS
 };
 static const char *const emu_names[EMU_KINDS] = {
-	"RETAA/RETAB", "BRAA*", "BLRAA*", "PAC/AUT", "PACGA", "LDRAA/LDRAB", "LDAPUR/STLUR", "FJCVTZS", "SB"
+	"RETAA/RETAB", "BRAA*", "BLRAA*", "PAC/AUT", "PACGA", "LDRAA/LDRAB", "LDAPUR/STLUR", "FJCVTZS", "SB",
+	"LDAPR", "LSE-CAS", "LSE-CASP", "LSE-LDOP/SWP", "DC-CVAP", "FLAGM"
 };
 static uint64_t emu_count[EMU_KINDS];
+
+/*
+ * Striped mutex table for ARMv8.1 LSE atomic emulation on ARMv8.0 cores (SM6225 Kryo 265).
+ * Using XNU mutexes allows copyin/copyout to fault in paged-out user memory safely without panicking.
+ */
+#define LSE_LOCK_STRIPES 64u
+static LCK_GRP_DECLARE(a64emu_lse_grp, "a64emu-lse");
+static lck_mtx_t a64emu_lse_locks[LSE_LOCK_STRIPES];
+static uint32_t a64emu_lse_inited;
+
+static inline lck_mtx_t *
+lse_lock_for(uint64_t addr)
+{
+	if (__improbable(os_atomic_load(&a64emu_lse_inited, acquire) != 2u)) {
+		uint32_t expected = 0;
+		if (os_atomic_cmpxchg(&a64emu_lse_inited, expected, 1u, acq_rel)) {
+			for (unsigned i = 0; i < LSE_LOCK_STRIPES; i++) {
+				lck_mtx_init(&a64emu_lse_locks[i], &a64emu_lse_grp, LCK_ATTR_NULL);
+			}
+			os_atomic_store(&a64emu_lse_inited, 2u, release);
+		} else {
+			while (os_atomic_load(&a64emu_lse_inited, acquire) != 2u) {
+				__builtin_arm_yield();
+			}
+		}
+	}
+	return &a64emu_lse_locks[(addr >> 4) & (LSE_LOCK_STRIPES - 1u)];
+}
 
 static uint64_t
 xreg(arm_saved_state_t *ss, unsigned n, bool sp)
@@ -196,6 +228,154 @@ emulate(arm_context_t *context, uint32_t instr, unsigned *kind)
 	}
 	if (instr == 0xd50330ffU) {                                     /* SB */
 		*kind = EMU_SB;
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if ((instr & 0x3ffffc00U) == 0x38bfc000U) {                     /* LDAPR{B,H,W,X} Rt, [Rn] (ARMv8.3) */
+		unsigned size = 1U << (instr >> 30);
+		uint64_t address = xreg(ss, rn, true), value = 0;
+
+		*kind = EMU_LDAPR;
+		if (copyin((user_addr_t)address, &value, size) != 0) {
+			return false;
+		}
+		__builtin_arm_dmb(0x9);
+		set_xreg(ss, rd, value, false);
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if ((instr & 0x3fa07c00U) == 0x08a07c00U) {                     /* CAS{,A,L,AL}{B,H,W,X} Rs, Rt, [Rn] (ARMv8.1 LSE) */
+		unsigned size = 1U << (instr >> 30);
+		uint64_t mask = (size == 8) ? ~0ULL : ((1ULL << (size * 8)) - 1ULL);
+		uint64_t address = xreg(ss, rn, true);
+		uint64_t cmp_val = xreg(ss, rm, false) & mask;
+		uint64_t new_val = xreg(ss, rd, false) & mask;
+		uint64_t mem_val = 0;
+		lck_mtx_t *mtx = lse_lock_for(address);
+
+		*kind = EMU_LSE_CAS;
+		lck_mtx_lock(mtx);
+		if (copyin((user_addr_t)address, &mem_val, size) != 0) {
+			lck_mtx_unlock(mtx);
+			return false;
+		}
+		mem_val &= mask;
+		if (mem_val == cmp_val) {
+			if (copyout(&new_val, (user_addr_t)address, size) != 0) {
+				lck_mtx_unlock(mtx);
+				return false;
+			}
+		}
+		lck_mtx_unlock(mtx);
+		__builtin_arm_dmb(0xb);
+		set_xreg(ss, rm, mem_val, false);
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if ((instr & 0xbfa07c00U) == 0x08207c00U) {                     /* CASP{,A,L,AL} Rs, Rs+1, Rt, Rt+1, [Rn] (ARMv8.1 LSE) */
+		if ((rm & 1U) || (rd & 1U) || rm >= 30 || rd >= 30) {
+			return false;
+		}
+		bool is64 = ((instr >> 30) & 1U) != 0;
+		uint64_t address = xreg(ss, rn, true);
+		lck_mtx_t *mtx = lse_lock_for(address);
+
+		*kind = EMU_LSE_CASP;
+		lck_mtx_lock(mtx);
+		if (is64) {
+			uint64_t cur[2] = { 0, 0 };
+			uint64_t cmp0 = xreg(ss, rm, false), cmp1 = xreg(ss, rm + 1, false);
+			uint64_t rep[2] = { xreg(ss, rd, false), xreg(ss, rd + 1, false) };
+			if (copyin((user_addr_t)address, cur, 16) != 0) {
+				lck_mtx_unlock(mtx);
+				return false;
+			}
+			if (cur[0] == cmp0 && cur[1] == cmp1) {
+				if (copyout(rep, (user_addr_t)address, 16) != 0) {
+					lck_mtx_unlock(mtx);
+					return false;
+				}
+			}
+			lck_mtx_unlock(mtx);
+			__builtin_arm_dmb(0xb);
+			set_xreg(ss, rm, cur[0], false);
+			set_xreg(ss, rm + 1, cur[1], false);
+		} else {
+			uint32_t cur[2] = { 0, 0 };
+			uint32_t cmp0 = (uint32_t)xreg(ss, rm, false), cmp1 = (uint32_t)xreg(ss, rm + 1, false);
+			uint32_t rep[2] = { (uint32_t)xreg(ss, rd, false), (uint32_t)xreg(ss, rd + 1, false) };
+			if (copyin((user_addr_t)address, cur, 8) != 0) {
+				lck_mtx_unlock(mtx);
+				return false;
+			}
+			if (cur[0] == cmp0 && cur[1] == cmp1) {
+				if (copyout(rep, (user_addr_t)address, 8) != 0) {
+					lck_mtx_unlock(mtx);
+					return false;
+				}
+			}
+			lck_mtx_unlock(mtx);
+			__builtin_arm_dmb(0xb);
+			set_xreg(ss, rm, cur[0], false);
+			set_xreg(ss, rm + 1, cur[1], false);
+		}
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if ((instr & 0x3f208c00U) == 0x38200000U || (instr & 0x3f20fc00U) == 0x38208000U) { /* LD{ADD,CLR,EOR,SET,*MAX,*MIN}, SWP */
+		unsigned size = 1U << (instr >> 30);
+		unsigned bits = size * 8;
+		uint64_t mask = (size == 8) ? ~0ULL : ((1ULL << bits) - 1ULL);
+		bool is_swp = (instr & (1U << 15)) != 0;
+		unsigned opc = (instr >> 12) & 7U;
+		uint64_t address = xreg(ss, rn, true);
+		uint64_t rs = xreg(ss, rm, false) & mask;
+		uint64_t old_val = 0, new_val = 0;
+		lck_mtx_t *mtx = lse_lock_for(address);
+
+		*kind = EMU_LSE_LDOP;
+		lck_mtx_lock(mtx);
+		if (copyin((user_addr_t)address, &old_val, size) != 0) {
+			lck_mtx_unlock(mtx);
+			return false;
+		}
+		old_val &= mask;
+		if (is_swp) {
+			new_val = rs;
+		} else {
+			int64_t s_old = (int64_t)(old_val << (64 - bits)) >> (64 - bits);
+			int64_t s_rs = (int64_t)(rs << (64 - bits)) >> (64 - bits);
+			switch (opc) {
+			case 0: new_val = old_val + rs; break;                  /* LDADD */
+			case 1: new_val = old_val & ~rs; break;                 /* LDCLR */
+			case 2: new_val = old_val ^ rs; break;                  /* LDEOR */
+			case 3: new_val = old_val | rs; break;                  /* LDSET */
+			case 4: new_val = (s_old > s_rs) ? old_val : rs; break; /* LDSMAX */
+			case 5: new_val = (s_old < s_rs) ? old_val : rs; break; /* LDSMIN */
+			case 6: new_val = (old_val > rs) ? old_val : rs; break; /* LDUMAX */
+			case 7: new_val = (old_val < rs) ? old_val : rs; break; /* LDUMIN */
+			}
+		}
+		new_val &= mask;
+		if (copyout(&new_val, (user_addr_t)address, size) != 0) {
+			lck_mtx_unlock(mtx);
+			return false;
+		}
+		lck_mtx_unlock(mtx);
+		__builtin_arm_dmb(0xb);
+		set_xreg(ss, rd, old_val, false);
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if ((instr & 0xffffffe0U) == 0xd50b7c20U || (instr & 0xffffffe0U) == 0xd50b7d20U) { /* DC CVAP / DC CVADP Xt */
+		*kind = EMU_DCCVAP;
+		__builtin_arm_dmb(0xb);
+		set_saved_state_pc(ss, pc + 4);
+		return true;
+	}
+	if (instr == 0xd500401fU) {                                     /* CFINV (ARMv8.4 FlagM) */
+		*kind = EMU_FLAGM;
+		set_saved_state_cpsr(ss, get_saved_state_cpsr(ss) ^ (1U << 29));
 		set_saved_state_pc(ss, pc + 4);
 		return true;
 	}

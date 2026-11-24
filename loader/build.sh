@@ -43,6 +43,12 @@ CFLAGS=(--target=aarch64-linux-gnu -ffreestanding -nostdlib -fno-builtin -mgener
 	-I"$PLATFORM" -I"$OUT")
 LOAD=$(sed -n 's/^#define HAKIOS_LOADER_KERNEL_LOAD *\(0x[0-9a-f]*\)ULL$/\1/p' "$PLATFORM/hakios_platform.h")
 clang "${CFLAGS[@]}" "$@" -c "$HERE/start.S" -o "$OUT/start.o"
-clang "${CFLAGS[@]}" "$@" -c "$HERE/mtkloader.c" -o "$OUT/mtkloader.o"
-"${LLD[@]}" --defsym=KERNEL_LOAD="$LOAD" -T "$HERE/link.ld" --oformat binary "$OUT/start.o" "$OUT/mtkloader.o" -o "$OUT/mtkloader.bin"
-echo "build.sh: $BOARD: $(wc -c < "$OUT/mtkloader.bin" | tr -d ' ') bytes in build/loader/mtkloader.bin"
+if grep -q '"sm6225"' "$PLATFORM/hakios_platform.h" && [ -f "$HERE/qcomloader.c" ]; then
+	clang "${CFLAGS[@]}" "$@" -c "$HERE/qcomloader.c" -o "$OUT/qcomloader.o"
+	"${LLD[@]}" --defsym=KERNEL_LOAD="$LOAD" -T "$HERE/link.ld" --oformat binary "$OUT/start.o" "$OUT/qcomloader.o" -o "$OUT/qcomloader.bin"
+	echo "build.sh: $BOARD: $(wc -c < "$OUT/qcomloader.bin" | tr -d ' ') bytes in build/loader/qcomloader.bin"
+else
+	clang "${CFLAGS[@]}" "$@" -c "$HERE/mtkloader.c" -o "$OUT/mtkloader.o"
+	"${LLD[@]}" --defsym=KERNEL_LOAD="$LOAD" -T "$HERE/link.ld" --oformat binary "$OUT/start.o" "$OUT/mtkloader.o" -o "$OUT/mtkloader.bin"
+	echo "build.sh: $BOARD: $(wc -c < "$OUT/mtkloader.bin" | tr -d ' ') bytes in build/loader/mtkloader.bin"
+fi

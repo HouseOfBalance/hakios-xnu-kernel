@@ -1,0 +1,24 @@
+# sm6225: Qualcomm Snapdragon 685 (SM6225 / Khaje)
+# What every board with this chip shares, from the Qualcomm SM6225 device tree.
+name = "sm6225"
+description = "Qualcomm Snapdragon 685 (SM6225)"
+
+[platform]
+io_base = 0x00400000                # peripheral MMIO window base (covers TLMM 0x00400000 to GICv3 0x0f400000)
+io_size = 0x0fc00000                # peripheral MMIO window size
+gic_dist = 0x0f200000               # /soc/interrupt-controller@f200000: GICv3 distributor (GICD, verified on sapphire.dtb)
+gic_redist = 0x0f300000             # /soc/interrupt-controller@f200000: GICv3 redistributors (GICR, verified on sapphire.dtb)
+uart0 = 0x04a90000                  # /soc/qcom,qupv3_0_geni_se@4ac0000/qcom,qup_uart@4a90000: QUPv3 GENI debug UART
+cores = 8                           # 4x Kryo 265 Silver (Cortex-A53) + 4x Kryo 265 Gold (Cortex-A73)
+core_shift = 8                      # MPIDR Aff1 core numbering (0x000..0x700)
+big_cores = [4, 5, 6, 7]            # Kryo 265 Gold cluster (cores 4..7)
+psci = "smc"                        # /psci: method = "smc"
+
+[blocks]
+gpio = 0x00400000                   # /soc/pinctrl@400000: SM6225 TLMM GPIO controller (verified on sapphire)
+spmi = 0x01c40000                   # /soc/qcom,spmi@1c40000: SPMI PMIC arbiter core (verified on sapphire)
+i2c2 = 0x04a88000                   # /soc/qcom,qupv3_0_geni_se@4ac0000/i2c@4a88000: QUPv3 GENI I2C SE2 (FocalTech touch @ 0x38)
+adreno = 0x05900000                 # /soc/qcom,kgsl-3d0@5900000: Adreno 610 GPU (verified on sapphire)
+# Other SM6225 peripheral blocks (verified from sapphire /proc/iomem):
+# ufshc = 0x04804000                # /soc/ufshc@4804000: UFS host controller
+# mdss = 0x05e00000                 # /soc/qcom,mdss_mdp@5e00000: Snapdragon Display Engine (MDP/DPU)
